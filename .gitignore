@@ -1,0 +1,62 @@
+# macOS / editor metadata
+.DS_Store
+*.swp
+*.swo
+
+# Python / Node caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets and runtime configuration
+.env
+.env.*
+!.env.example
+config.yaml
+*.key
+*.pem
+*.p12
+
+# Runtime data, logs, probes, and temporary outputs
+data/
+tmp/
+output/
+*.log
+*.pid
+*.port
+captured-requests/
+unknown-requests/
+
+# Large binaries and local document corpora
+宗萨/
+藏文/
+未命名文件夹/
+*.pdf
+*.doc
+*.docx
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.tif
+*.tiff
+*.tar
+*.tar.gz
+*.zip
+
+# AS Yilin local deployment runtime bundle outputs
+sutra-image-package-*/images/
+sutra-image-package-*/server-runtime/
+sutra-image-package-*/.env
+
+# Keep example config files trackable
+!as-yilin-model-adapter/.env.example
+!sutra-image-package-*/.env.example

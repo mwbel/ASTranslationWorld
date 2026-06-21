@@ -1,0 +1,70 @@
+name: sutra
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sutra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sutra}
+      POSTGRES_USER: ${POSTGRES_USER:-sutra}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-sutra} -d $${POSTGRES_DB:-sutra}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [sutra-net]
+  redis:
+    image: redis:7-alpine
+    container_name: sutra-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [sutra-net]
+  sutra-server:
+    image: sutra-server:${SUTRA_VERSION:-latest}
+    container_name: sutra-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-sutra}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sutra}
+      REDIS_URL: redis://redis:6379/0
+      HOST: 0.0.0.0
+      PORT: 5555
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      STORAGE_PATH: /app/storage
+      OCR_VISION_MODEL: ${OCR_VISION_MODEL:-gpt-4o}
+      RUST_LOG: ${RUST_LOG:-sutra_server=info,tower_http=info}
+      TZ: Asia/Shanghai
+    volumes:
+      - sutra-storage:/app/storage
+    networks: [sutra-net]
+  sutra-web:
+    image: sutra-web:${SUTRA_VERSION:-latest}
+    container_name: sutra-web
+    restart: unless-stopped
+    depends_on: [sutra-server]
+    ports:
+      - "${WEB_PORT:-80}:80"
+    networks: [sutra-net]
+volumes:
+  pgdata:
+  redisdata:
+  sutra-storage:
+networks:
+  sutra-net:
+    driver: bridge

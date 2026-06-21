@@ -1,0 +1,4 @@
+bc4ec4bac97af8de5283f30c77ae8695be5ee7ca97c885f2747cacdf16c1bad8  images/sutra-images-20260611-2159-server-runtime-amd64.tar.gz
+f976aa0d6ec6bd9c34e13016aa02c38bf06ba72b1a25073c8f773adc21b6398b  docker-compose.yml
+156e252e0ca6a9c5324b76f594c6ddd3a29d57c0f0f28851146ef174abba0af9  .env.example
+2686e1aca71b77176315797613682fd4c75676c53baccf29d7380fbaae52fbf5  MANIFEST.txt

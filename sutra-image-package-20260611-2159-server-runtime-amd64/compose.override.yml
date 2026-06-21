@@ -1,0 +1,11 @@
+services:
+  sutra-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server-ubuntu
+    image: sutra-server:20260611-2159-server-runtime-amd64-ubuntu24
+  sutra-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web-login-patch
+    image: sutra-web:20260611-2159-server-runtime-amd64-loginpatch

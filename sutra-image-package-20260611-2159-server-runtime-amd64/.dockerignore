@@ -1,0 +1,9 @@
+images/
+*.tar
+*.tar.gz
+DEPLOY_CAMPUS_CPOLAR.md
+LOCAL_DEPLOY.md
+MANIFEST.txt
+SHA256SUMS
+.env
+.env.example

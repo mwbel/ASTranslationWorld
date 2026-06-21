@@ -1,0 +1,54 @@
+server:
+  host: 0.0.0.0
+  port: 18081
+  data_dir: data
+
+auth:
+  users:
+    - username: demo
+      password: demo-password
+      reseller_code: demo
+
+# 这个示例故意贴近 /UnivModel/宇宙模型MVP/models.yaml 的写法：
+# - provider 表示 provider 类型，而不是 provider 配置 id
+# - base_url/api_key/model/chat_path 可来自环境变量
+# - capabilities/privacy/cost/latency/priority 作为调度元数据
+models:
+  - id: local:qwen3.6-27b
+    provider: openai-compatible
+    base_url_env: MODEL_TESTER_BASE_URL
+    api_key_env: MODEL_TESTER_API_KEY
+    chat_path_env: MODEL_TESTER_CHAT_PATH
+    model: qwen3.6-27b:latest
+    category: quality_translation
+    capabilities: [chat, chinese, math, reasoning, rag_synthesis]
+    privacy: local
+    cost: free_local
+    latency: medium
+    priority: 82
+
+  - id: yunwu:gpt-5.5
+    provider: openai-compatible
+    base_url_env: YUNWU_API_BASE_URL
+    api_key_env: YUNWU_API_KEY
+    chat_path_env: YUNWU_CHAT_PATH
+    model_env: YUNWU_GPT55_MODEL
+    model: gpt-5.5
+    category: deep_reasoning
+    capabilities: [chat, chinese, math, reasoning, rag_synthesis, long_context]
+    privacy: remote
+    cost: paid
+    latency: medium
+    priority: 90
+
+  - id: gemini:flash
+    provider: gemini
+    base_url_env: GEMINI_BASE_URL
+    api_keys_env: GEMINI_API_KEYS
+    model: gemini-2.5-flash
+    category: fast_draft
+    capabilities: [chat, chinese, math, reasoning, rag_synthesis, long_context]
+    privacy: remote
+    cost: paid
+    latency: fast
+    priority: 76

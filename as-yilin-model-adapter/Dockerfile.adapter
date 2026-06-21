@@ -1,0 +1,15 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY common ./common
+COPY adapter_server ./adapter_server
+
+ENV ADAPTER_CONFIG=/config/config.yaml
+ENV ADAPTER_DATA_DIR=/data/adapter
+EXPOSE 18081
+
+CMD ["uvicorn", "adapter_server.app:app", "--host", "0.0.0.0", "--port", "18081"]

@@ -1,0 +1,114 @@
+FROM sutra-web:20260611-2159-server-runtime-amd64
+
+COPY login-fractal.png /usr/share/nginx/html/login-fractal.png
+
+RUN set -eux; \
+  css=/usr/share/nginx/html/assets/index-PLAjeyG7.css; \
+  cat >> "$css" <<'CSS'
+
+/* Login visual patch: neutralize religious couplet, use fractal background. */
+.auth-page {
+  background-color: #020518 !important;
+  background-image: url("/login-fractal.png") !important;
+  background-size: cover !important;
+  background-position: center center !important;
+}
+
+.auth-bg {
+  background:
+    linear-gradient(90deg, rgba(2, 5, 24, 0.74) 0%, rgba(4, 10, 48, 0.48) 42%, rgba(4, 12, 56, 0.18) 72%, rgba(0, 0, 0, 0.06) 100%) !important;
+}
+
+.auth-landing .auth-brand__subtitle--couplet {
+  display: none !important;
+}
+
+.auth-landing .auth-brand__title {
+  color: rgba(248, 250, 255, 0.94) !important;
+  text-shadow: 0 2px 18px rgba(0, 91, 255, 0.42), 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.auth-landing .auth-brand__icon {
+  color: rgba(248, 250, 255, 0.84) !important;
+  filter: drop-shadow(0 2px 12px rgba(0, 91, 255, 0.36));
+}
+
+.auth-enter-link {
+  color: rgba(248, 250, 255, 0.78) !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+@media (max-width: 860px) {
+  .auth-bg {
+    background: linear-gradient(180deg, rgba(2, 5, 24, 0.6), rgba(2, 5, 24, 0.78)) !important;
+  }
+}
+CSS
+
+RUN sed -i 's/as-yilin-v1/as-yilin-v3-local-dev-auth/g' /usr/share/nginx/html/sw.js
+
+RUN <<'SHELL'
+set -eux
+js=/usr/share/nginx/html/assets/index-ex7lBOJf.js
+tmp=/tmp/index-local-dev-auth.js
+cat > "$tmp" <<'JS'
+const __sutraLocalDevAuth = async () => {
+  try {
+    if (location.pathname.startsWith("/p/")) return;
+    const existingToken = localStorage.getItem("sutra_token");
+    if (existingToken) {
+      const me = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${existingToken}` },
+      });
+      if (me.ok) return;
+      localStorage.removeItem("sutra_token");
+      localStorage.removeItem("sutra_user");
+    }
+    const credentials = {
+      email: "local-dev@as-yilin.local",
+      password: "local-dev-password",
+      display_name: "本地测试",
+    };
+    const loginBody = JSON.stringify({
+      email: credentials.email,
+      password: credentials.password,
+    });
+    let response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: loginBody,
+    });
+    if (!response.ok) {
+      await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
+      });
+      response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: loginBody,
+      });
+    }
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.token) {
+        localStorage.setItem("sutra_token", data.token);
+        localStorage.setItem("sutra_user", JSON.stringify(data.user));
+        localStorage.setItem("sutra_login_email", credentials.email);
+        localStorage.setItem("sutra_remember_email", "1");
+      }
+    } else {
+      console.warn("AS译林本地自动登录失败", response.status);
+    }
+  } catch (error) {
+    console.warn("AS译林本地自动登录异常", error);
+  }
+};
+await __sutraLocalDevAuth();
+JS
+cat "$js" >> "$tmp"
+mv "$tmp" "$js"
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-localdev.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-localdev.js#g' /usr/share/nginx/html/index.html
+SHELL

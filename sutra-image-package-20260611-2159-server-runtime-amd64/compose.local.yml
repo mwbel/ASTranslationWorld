@@ -1,0 +1,34 @@
+name: sutra-local
+
+services:
+  postgres:
+    container_name: sutra-local-postgres
+    platform: linux/amd64
+
+  redis:
+    container_name: sutra-local-redis
+    platform: linux/amd64
+
+  sutra-server:
+    container_name: sutra-local-server
+    platform: linux/amd64
+    environment:
+      RUST_LOG: sutra_server=info,tower_http=info
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  sutra-web:
+    container_name: sutra-local-web
+    platform: linux/amd64
+
+volumes:
+  pgdata:
+    name: sutra-local-pgdata
+  redisdata:
+    name: sutra-local-redisdata
+  sutra-storage:
+    name: sutra-local-storage
+
+networks:
+  sutra-net:
+    name: sutra-local-net

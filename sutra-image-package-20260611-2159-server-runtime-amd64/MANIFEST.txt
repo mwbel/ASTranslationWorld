@@ -1,0 +1,5 @@
+version=20260611-2159-server-runtime-amd64
+platform=linux/amd64
+contains_source=false
+contains_private_docs=false
+images=sutra-server:20260611-2159-server-runtime-amd64,sutra-web:20260611-2159-server-runtime-amd64,postgres:16-alpine,redis:7-alpine

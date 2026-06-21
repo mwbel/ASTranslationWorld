@@ -1,0 +1,34 @@
+FROM --platform=linux/amd64 ubuntu:24.04
+
+ENV TZ=Asia/Shanghai \
+    DEBIAN_FRONTEND=noninteractive \
+    RUST_LOG=sutra_server=info,tower_http=info \
+    HOST=0.0.0.0 \
+    PORT=5555 \
+    STORAGE_PATH=/app/storage
+
+RUN sed -i 's#http://archive.ubuntu.com/ubuntu/#http://mirrors.aliyun.com/ubuntu/#g; s#http://security.ubuntu.com/ubuntu/#http://mirrors.aliyun.com/ubuntu/#g' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      pandoc \
+      poppler-utils \
+      tesseract-ocr \
+      tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r sutra \
+    && useradd -r -g sutra -d /app -s /usr/sbin/nologin sutra
+
+WORKDIR /app
+
+COPY server-runtime/sutra-server /usr/local/bin/sutra-server
+COPY --chown=sutra:sutra server-runtime/tessdata /app/tessdata
+
+RUN mkdir -p /app/storage \
+    && chown -R sutra:sutra /app \
+    && chmod +x /usr/local/bin/sutra-server
+
+USER sutra
+
+CMD ["/usr/local/bin/sutra-server"]

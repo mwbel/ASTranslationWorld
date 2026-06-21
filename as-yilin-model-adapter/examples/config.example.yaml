@@ -1,0 +1,39 @@
+server:
+  host: 0.0.0.0
+  port: 18081
+  data_dir: data
+
+auth:
+  users:
+    - username: demo
+      # 开发环境可用明文；生产环境请换成 password_hash。
+      password: demo-password
+      reseller_code: demo
+      allowed_models:
+        - local-qwen
+        - local-fast
+
+providers:
+  - id: local-openai
+    type: openai_compatible
+    base_url: http://127.0.0.1:8000/v1
+    api_key: local-dev-key
+    timeout_seconds: 120
+
+models:
+  - id: local-qwen
+    display_name: Qwen Local Translator
+    provider: local-openai
+    upstream_model: Qwen3-32B
+    category: quality_translation
+    supports_stream: true
+    supports_vision: false
+    context_window: 32768
+  - id: local-fast
+    display_name: Local Fast Draft
+    provider: local-openai
+    upstream_model: Qwen3-8B
+    category: fast_draft
+    supports_stream: true
+    supports_vision: false
+    context_window: 8192

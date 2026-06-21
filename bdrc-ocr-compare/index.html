@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>藏文典籍 OCR 对照工作台</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">藏</span>
+          <div>
+            <h1>藏文典籍 OCR 对照工作台</h1>
+            <p>PDF 分页原文与 BDRC OCR 识别结果逐页校对</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <label class="file-button" for="fileInput">
+            <i data-lucide="upload"></i>
+            <span>上传 PDF</span>
+          </label>
+          <input id="fileInput" type="file" accept="application/pdf,image/*" />
+          <button id="sampleButton" class="ghost-button" type="button">
+            <i data-lucide="file-plus"></i>
+            <span>载入本地样本</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="control-band" aria-label="OCR 和分页控制">
+        <div class="control-group wide">
+          <label for="endpointInput">BDRC OCR 接口</label>
+          <input id="endpointInput" type="url" value="http://127.0.0.1:18090/ocr" spellcheck="false" />
+        </div>
+        <div class="control-group">
+          <label for="dpiInput">OCR 图片 DPI</label>
+          <select id="dpiInput">
+            <option value="200">200</option>
+            <option value="260" selected>260</option>
+            <option value="300">300</option>
+            <option value="360">360</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label for="pageInput">页码</label>
+          <div class="stepper">
+            <button id="prevButton" class="icon-button" type="button" aria-label="上一页">
+              <i data-lucide="chevron-left"></i>
+            </button>
+            <input id="pageInput" type="number" min="1" value="1" />
+            <span id="pageTotal">/ 0</span>
+            <button id="nextButton" class="icon-button" type="button" aria-label="下一页">
+              <i data-lucide="chevron-right"></i>
+            </button>
+          </div>
+        </div>
+        <div class="control-group">
+          <label for="zoomInput">显示比例</label>
+          <select id="zoomInput">
+            <option value="fit" selected>适应宽度</option>
+            <option value="1">100%</option>
+            <option value="1.25">125%</option>
+            <option value="1.5">150%</option>
+            <option value="2">200%</option>
+          </select>
+        </div>
+        <div class="control-actions">
+          <button id="checkOcrButton" class="ghost-button" type="button">
+            <i data-lucide="plug-zap"></i>
+            <span>检查服务</span>
+          </button>
+          <button id="ocrButton" class="primary-button" type="button">
+            <i data-lucide="scan-text"></i>
+            <span>识别当前页</span>
+          </button>
+          <button id="downloadPageButton" class="ghost-button" type="button">
+            <i data-lucide="image-down"></i>
+            <span>导出页图</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="statusBar" class="status-bar" role="status">请先上传 PDF 或图片。</section>
+
+      <section class="workspace" aria-label="原文和 OCR 对照区">
+        <aside class="page-strip" aria-label="页面缩略图">
+          <div class="strip-header">
+            <i data-lucide="panel-left"></i>
+            <span>页</span>
+          </div>
+          <div id="thumbnailList" class="thumbnail-list"></div>
+        </aside>
+
+        <section class="viewer-pane" aria-label="原文单页显示">
+          <div class="pane-header">
+            <div>
+              <span class="eyebrow">原文单页</span>
+              <h2 id="sourceTitle">未载入文件</h2>
+            </div>
+            <div id="renderMeta" class="meta-pill">0 页</div>
+          </div>
+          <div id="pageViewport" class="page-viewport">
+            <canvas id="pdfCanvas"></canvas>
+            <img id="imagePage" alt="上传图片原文" />
+            <div id="emptyState" class="empty-state">
+              <i data-lucide="file-search"></i>
+              <p>上传藏文 PDF 后，这里显示当前单页原文。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="ocr-pane" aria-label="BDRC OCR 结果">
+          <div class="pane-header">
+            <div>
+              <span class="eyebrow">BDRC OCR 结果</span>
+              <h2 id="ocrTitle">等待识别</h2>
+            </div>
+            <div id="ocrMeta" class="meta-pill">未识别</div>
+          </div>
+
+          <div class="ocr-toolbar">
+            <button id="copyButton" class="ghost-button compact" type="button">
+              <i data-lucide="copy"></i>
+              <span>复制</span>
+            </button>
+            <button id="clearButton" class="ghost-button compact" type="button">
+              <i data-lucide="eraser"></i>
+              <span>清空本页</span>
+            </button>
+            <button id="downloadTextButton" class="ghost-button compact" type="button">
+              <i data-lucide="download"></i>
+              <span>导出全部</span>
+            </button>
+          </div>
+
+          <textarea
+            id="ocrText"
+            spellcheck="false"
+            placeholder="点击“识别当前页”后，BDRC OCR 文本会显示在这里；也可以直接粘贴外部识别结果进行校对。"
+          ></textarea>
+
+          <div class="result-summary">
+            <div>
+              <span class="summary-label">当前页字数</span>
+              <strong id="charCount">0</strong>
+            </div>
+            <div>
+              <span class="summary-label">已识别页</span>
+              <strong id="recognizedCount">0</strong>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

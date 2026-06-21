@@ -1,0 +1,27 @@
+name: as-yilin-model-adapter
+
+services:
+  probe:
+    build:
+      context: .
+      dockerfile: Dockerfile.probe
+    image: as-yilin-probe:local
+    ports:
+      - "${PROBE_PORT:-18080}:18080"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  adapter:
+    build:
+      context: .
+      dockerfile: Dockerfile.adapter
+    image: as-yilin-adapter:local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${ADAPTER_PORT:-18081}:18081"
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./data:/data
+    restart: unless-stopped

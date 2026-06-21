@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY common ./common
+COPY probe_server ./probe_server
+
+ENV PROBE_DATA_DIR=/data/probe
+EXPOSE 18080
+
+CMD ["uvicorn", "probe_server.app:app", "--host", "0.0.0.0", "--port", "18080"]
