@@ -1,5 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
-const PDF_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
+const CACHE_PREFIX = "bdrc-ocr-compare:v1:";
 
 const els = {};
 const state = {
@@ -7,10 +8,14 @@ const state = {
   imageUrl: "",
   imageBlob: null,
   sourceName: "",
+  sourceSize: 0,
+  sourceMime: "",
+  cacheKey: "",
   sourceType: "",
   pageNum: 1,
   pageCount: 0,
   ocrResults: new Map(),
+  translationResults: new Map(),
   renderToken: 0,
 };
 
@@ -20,6 +25,7 @@ window.addEventListener("DOMContentLoaded", () => {
   configurePdfJs();
   refreshControls();
   updateSummary();
+  updateTranslationSummary();
   if (window.lucide) {
     window.lucide.createIcons();
   }
@@ -30,6 +36,7 @@ function cacheElements() {
     "fileInput",
     "sampleButton",
     "endpointInput",
+    "translateEndpointInput",
     "dpiInput",
     "pageInput",
     "pageTotal",
@@ -37,11 +44,13 @@ function cacheElements() {
     "nextButton",
     "zoomInput",
     "checkOcrButton",
+    "checkTranslateButton",
     "ocrButton",
     "downloadPageButton",
     "statusBar",
     "thumbnailList",
     "sourceTitle",
+    "fileOcrStatus",
     "renderMeta",
     "pageViewport",
     "pdfCanvas",
@@ -55,6 +64,15 @@ function cacheElements() {
     "ocrText",
     "charCount",
     "recognizedCount",
+    "translationTitle",
+    "translationMeta",
+    "translateButton",
+    "copyTranslationButton",
+    "clearTranslationButton",
+    "downloadTranslationButton",
+    "translationText",
+    "translationCharCount",
+    "translatedCount",
   ].forEach((id) => {
     els[id] = document.getElementById(id);
   });
@@ -83,22 +101,50 @@ function wireEvents() {
 
   els.zoomInput.addEventListener("change", renderCurrentPage);
   els.checkOcrButton.addEventListener("click", checkOcrService);
+  els.checkTranslateButton.addEventListener("click", checkTranslateService);
   els.ocrButton.addEventListener("click", runOcrForCurrentPage);
   els.downloadPageButton.addEventListener("click", downloadCurrentPageImage);
   els.copyButton.addEventListener("click", copyCurrentText);
   els.clearButton.addEventListener("click", clearCurrentText);
   els.downloadTextButton.addEventListener("click", downloadAllOcrText);
+  els.translateButton.addEventListener("click", runTranslateForCurrentPage);
+  els.copyTranslationButton.addEventListener("click", copyCurrentTranslation);
+  els.clearTranslationButton.addEventListener("click", clearCurrentTranslation);
+  els.downloadTranslationButton.addEventListener("click", downloadAllTranslationText);
 
   els.ocrText.addEventListener("input", () => {
     if (!state.pageCount) return;
-    const existing = state.ocrResults.get(state.pageNum) || {};
-    state.ocrResults.set(state.pageNum, {
-      ...existing,
-      text: els.ocrText.value,
-      source: existing.source || "manual",
-      updatedAt: new Date().toISOString(),
-    });
+    if (els.ocrText.value.trim()) {
+      const existing = state.ocrResults.get(state.pageNum) || {};
+      state.ocrResults.set(state.pageNum, {
+        ...existing,
+        text: els.ocrText.value,
+        source: existing.source || "manual",
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      state.ocrResults.delete(state.pageNum);
+    }
+    saveCachedResults();
     updateSummary();
+    updateThumbnailState();
+  });
+
+  els.translationText.addEventListener("input", () => {
+    if (!state.pageCount) return;
+    if (els.translationText.value.trim()) {
+      const existing = state.translationResults.get(state.pageNum) || {};
+      state.translationResults.set(state.pageNum, {
+        ...existing,
+        text: els.translationText.value,
+        source: existing.source || "manual",
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      state.translationResults.delete(state.pageNum);
+    }
+    saveCachedResults();
+    updateTranslationSummary();
     updateThumbnailState();
   });
 
@@ -137,6 +183,9 @@ async function loadSamplePdf() {
 async function loadFile(file) {
   resetDocumentState();
   state.sourceName = file.name;
+  state.sourceSize = file.size || 0;
+  state.sourceMime = file.type || "";
+  state.cacheKey = makeCacheKey(file);
 
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
     await loadPdf(file);
@@ -166,7 +215,13 @@ async function loadPdf(file) {
 
   els.sourceTitle.textContent = state.sourceName;
   els.ocrTitle.textContent = "第 1 页 OCR";
-  setStatus(`已载入 ${state.sourceName}，共 ${state.pageCount} 页。`, "ok");
+  const restored = restoreCachedResults();
+  setStatus(
+    restored
+      ? `已载入 ${state.sourceName}，共 ${state.pageCount} 页，并恢复本地暂存的 OCR/译文。`
+      : `已载入 ${state.sourceName}，共 ${state.pageCount} 页。`,
+    "ok"
+  );
   refreshControls();
   renderCurrentPage();
   buildPdfThumbnails();
@@ -187,7 +242,13 @@ async function loadImage(file) {
 
   els.sourceTitle.textContent = state.sourceName;
   els.ocrTitle.textContent = "图片 OCR";
-  setStatus(`已载入图片 ${state.sourceName}。`, "ok");
+  const restored = restoreCachedResults();
+  setStatus(
+    restored
+      ? `已载入图片 ${state.sourceName}，并恢复本地暂存的 OCR/译文。`
+      : `已载入图片 ${state.sourceName}。`,
+    "ok"
+  );
   refreshControls();
   renderCurrentPage();
   buildImageThumbnail();
@@ -202,24 +263,120 @@ function resetDocumentState() {
   state.imageUrl = "";
   state.imageBlob = null;
   state.sourceName = "";
+  state.sourceSize = 0;
+  state.sourceMime = "";
+  state.cacheKey = "";
   state.sourceType = "";
   state.pageNum = 1;
   state.pageCount = 0;
   state.ocrResults.clear();
+  state.translationResults.clear();
   state.renderToken += 1;
 
   els.thumbnailList.innerHTML = "";
   els.ocrText.value = "";
+  els.translationText.value = "";
   els.imagePage.removeAttribute("src");
   els.pdfCanvas.style.display = "none";
   els.imagePage.style.display = "none";
   els.emptyState.style.display = "grid";
   els.sourceTitle.textContent = "未载入文件";
+  updateFileOcrStatus();
   els.ocrTitle.textContent = "等待识别";
+  els.translationTitle.textContent = "等待翻译";
   els.renderMeta.textContent = "0 页";
   els.ocrMeta.textContent = "未识别";
+  els.translationMeta.textContent = "未翻译";
   refreshControls();
   updateSummary();
+  updateTranslationSummary();
+}
+
+function makeCacheKey(file) {
+  const type = file.type || "unknown";
+  const size = file.size || 0;
+  return `${CACHE_PREFIX}${encodeURIComponent(file.name)}:${size}:${encodeURIComponent(type)}`;
+}
+
+function restoreCachedResults() {
+  if (!state.cacheKey || !state.pageCount) return false;
+
+  try {
+    const raw = window.localStorage.getItem(state.cacheKey);
+    if (!raw) return false;
+
+    const payload = JSON.parse(raw);
+    if (payload.pageCount && payload.pageCount !== state.pageCount) {
+      return false;
+    }
+
+    state.ocrResults.clear();
+    state.translationResults.clear();
+
+    for (const [page, result] of Object.entries(payload.ocrResults || {})) {
+      const pageNum = Number(page);
+      if (!isValidPageNumber(pageNum) || typeof result?.text !== "string") continue;
+      state.ocrResults.set(pageNum, {
+        text: result.text,
+        source: result.source || "cache",
+        updatedAt: result.updatedAt || payload.updatedAt || "",
+      });
+    }
+
+    for (const [page, result] of Object.entries(payload.translationResults || {})) {
+      const pageNum = Number(page);
+      if (!isValidPageNumber(pageNum) || typeof result?.text !== "string") continue;
+      state.translationResults.set(pageNum, {
+        text: result.text,
+        source: result.source || "cache",
+        updatedAt: result.updatedAt || payload.updatedAt || "",
+      });
+    }
+
+    updateSummary();
+    updateTranslationSummary();
+    return state.ocrResults.size > 0 || state.translationResults.size > 0;
+  } catch (error) {
+    console.warn("Failed to restore cached OCR state", error);
+    return false;
+  }
+}
+
+function saveCachedResults() {
+  if (!state.cacheKey || !state.pageCount) return;
+
+  try {
+    const payload = {
+      sourceName: state.sourceName,
+      sourceSize: state.sourceSize,
+      sourceMime: state.sourceMime,
+      pageCount: state.pageCount,
+      updatedAt: new Date().toISOString(),
+      ocrResults: serializeResultMap(state.ocrResults),
+      translationResults: serializeResultMap(state.translationResults),
+    };
+    window.localStorage.setItem(state.cacheKey, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("Failed to save cached OCR state", error);
+  }
+}
+
+function serializeResultMap(map) {
+  const output = {};
+  for (const [pageNum, result] of map.entries()) {
+    const text = result?.text || "";
+    if (!text.trim()) continue;
+    output[pageNum] = {
+      text,
+      source: result.source || "manual",
+      updatedAt: result.updatedAt || "",
+    };
+  }
+  return output;
+}
+
+function isValidPageNumber(pageNum) {
+  return Number.isInteger(pageNum) && pageNum >= 1 && pageNum <= state.pageCount;
 }
 
 async function renderCurrentPage() {
@@ -265,6 +422,7 @@ async function renderCurrentPage() {
   els.renderMeta.textContent = `${state.pageNum} / ${state.pageCount}`;
   els.pageInput.value = String(state.pageNum);
   updateOcrPanelForPage();
+  updateTranslationPanelForPage();
   updateThumbnailState();
 }
 
@@ -275,6 +433,7 @@ function renderImagePage() {
   els.renderMeta.textContent = "1 / 1";
   els.pageInput.value = "1";
   updateOcrPanelForPage();
+  updateTranslationPanelForPage();
   updateThumbnailState();
 }
 
@@ -385,6 +544,7 @@ async function runOcrForCurrentPage() {
       source: "bdrc",
       updatedAt: new Date().toISOString(),
     });
+    saveCachedResults();
     els.ocrText.value = text;
     setStatus(`第 ${state.pageNum} 页识别完成。`, "ok");
     updateOcrPanelForPage();
@@ -419,6 +579,127 @@ async function checkOcrService() {
   }
 }
 
+async function checkTranslateService() {
+  const endpoint = els.translateEndpointInput.value.trim();
+  if (!endpoint) {
+    setStatus("请填写藏译汉接口地址。", "warn");
+    return;
+  }
+
+  const healthUrl = endpoint.replace(/\/translate\/?$/, "/health");
+  try {
+    setStatus("正在检查本地藏译汉服务...", "warn");
+    const payload = await fetchTranslateHealth(endpoint);
+    const model = payload.model || payload.engine || "translate";
+    const status = payload.status || (payload.loaded ? "ready" : "unknown");
+    if (payload.loaded || status === "ready") {
+      setStatus(`藏译汉服务可用，当前模型：${model}。`, "ok");
+    } else if (status === "loading") {
+      setStatus(`藏译汉服务已启动，模型 ${model} 正在下载/加载。请稍后再点“检查翻译”。`, "warn");
+    } else if (status === "error") {
+      throw new Error(payload.error || "模型加载失败");
+    } else {
+      setStatus(`藏译汉服务已启动，但模型尚未就绪：${status}。`, "warn");
+    }
+  } catch (error) {
+    setStatus(`藏译汉服务不可用：${formatNetworkError(error, healthUrl, "translate")}`, "error");
+  }
+}
+
+async function fetchTranslateHealth(endpoint) {
+  const healthUrl = endpoint.replace(/\/translate\/?$/, "/health");
+  const response = await fetch(healthUrl, { method: "GET" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json().catch(() => ({}));
+}
+
+async function ensureTranslateReady(endpoint) {
+  const payload = await fetchTranslateHealth(endpoint);
+  const status = payload.status || (payload.loaded ? "ready" : "unknown");
+  if (payload.loaded || status === "ready") {
+    return true;
+  }
+  const model = payload.model || "translate";
+  if (status === "loading") {
+    setStatus(`藏译汉模型 ${model} 正在下载/加载，暂时不能翻译。请稍后点“检查翻译”。`, "warn");
+    return false;
+  }
+  if (status === "error") {
+    throw new Error(payload.error || "模型加载失败");
+  }
+  setStatus(`藏译汉模型尚未就绪：${status}。请先点“检查翻译”。`, "warn");
+  return false;
+}
+
+async function runTranslateForCurrentPage() {
+  if (!state.pageCount) {
+    setStatus("请先上传 PDF 或图片。", "warn");
+    return;
+  }
+
+  await syncPageInputBeforeAction();
+
+  const endpoint = els.translateEndpointInput.value.trim();
+  if (!endpoint) {
+    setStatus("请填写藏译汉接口地址。", "warn");
+    return;
+  }
+
+  const sourceText = (els.ocrText.value || "").trim();
+  if (!sourceText) {
+    setStatus("当前页还没有 OCR 藏文文本，无法翻译。", "warn");
+    return;
+  }
+
+  try {
+    setTranslateBusy(true);
+    const ready = await ensureTranslateReady(endpoint);
+    if (!ready) {
+      return;
+    }
+    setStatus(`正在翻译第 ${state.pageNum} 页 OCR 文本...`, "warn");
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: sourceText,
+        source_text: sourceText,
+        source_lang: "bo",
+        target_lang: "zh",
+        src_lang: "bod_Tibt",
+        tgt_lang: "zho_Hans",
+        page: state.pageNum,
+        source_name: state.sourceName,
+      }),
+    });
+
+    const parsed = await parseTranslationResponse(response);
+    if (!response.ok) {
+      throw new Error(parsed.error || `HTTP ${response.status}`);
+    }
+
+    const text = parsed.text.trim();
+    state.translationResults.set(state.pageNum, {
+      text,
+      raw: parsed.raw,
+      source: "api",
+      updatedAt: new Date().toISOString(),
+    });
+    saveCachedResults();
+    els.translationText.value = text;
+    setStatus(`第 ${state.pageNum} 页藏译汉完成。`, "ok");
+    updateTranslationPanelForPage();
+    updateTranslationSummary();
+    updateThumbnailState();
+  } catch (error) {
+    setStatus(`藏译汉调用失败：${formatNetworkError(error, endpoint, "translate")}`, "error");
+  } finally {
+    setTranslateBusy(false);
+  }
+}
+
 async function parseOcrResponse(response) {
   const contentType = response.headers.get("content-type") || "";
 
@@ -427,6 +708,22 @@ async function parseOcrResponse(response) {
     return {
       raw,
       text: extractTextFromJson(raw),
+      error: raw.error || raw.message || raw.detail,
+    };
+  }
+
+  const text = await response.text();
+  return { raw: text, text, error: response.ok ? "" : text };
+}
+
+async function parseTranslationResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    const raw = await response.json();
+    return {
+      raw,
+      text: extractTranslationFromJson(raw),
       error: raw.error || raw.message || raw.detail,
     };
   }
@@ -453,6 +750,42 @@ function extractTextFromJson(payload) {
       .map((line) => {
         if (typeof line === "string") return line;
         return line.text || line.content || line.value || "";
+      })
+      .filter(Boolean)
+      .join("\n");
+    if (text) return text;
+  }
+
+  return JSON.stringify(payload, null, 2);
+}
+
+function extractTranslationFromJson(payload) {
+  if (!payload) return "";
+  if (typeof payload === "string") return payload;
+
+  const direct = (
+    payload.translation ||
+    payload.translated_text ||
+    payload.translatedText ||
+    payload.target_text ||
+    payload.targetText ||
+    payload.zh ||
+    payload.text ||
+    payload.output
+  );
+  if (typeof direct === "string") return direct;
+
+  if (payload.result) {
+    const nested = extractTranslationFromJson(payload.result);
+    if (nested) return nested;
+  }
+
+  const candidates = payload.translations || payload.items || payload.lines;
+  if (Array.isArray(candidates)) {
+    const text = candidates
+      .map((item) => {
+        if (typeof item === "string") return item;
+        return item.translation || item.translated_text || item.text || item.content || "";
       })
       .filter(Boolean)
       .join("\n");
@@ -521,13 +854,36 @@ async function copyCurrentText() {
   }
 }
 
+async function copyCurrentTranslation() {
+  try {
+    await navigator.clipboard.writeText(els.translationText.value);
+    setStatus("当前页译文已复制。", "ok");
+  } catch {
+    els.translationText.select();
+    document.execCommand("copy");
+    setStatus("当前页译文已复制。", "ok");
+  }
+}
+
 function clearCurrentText() {
   if (!state.pageCount) return;
   state.ocrResults.delete(state.pageNum);
   els.ocrText.value = "";
+  saveCachedResults();
   setStatus(`已清空第 ${state.pageNum} 页 OCR 文本。`, "ok");
   updateOcrPanelForPage();
   updateSummary();
+  updateThumbnailState();
+}
+
+function clearCurrentTranslation() {
+  if (!state.pageCount) return;
+  state.translationResults.delete(state.pageNum);
+  els.translationText.value = "";
+  saveCachedResults();
+  setStatus(`已清空第 ${state.pageNum} 页藏译汉文本。`, "ok");
+  updateTranslationPanelForPage();
+  updateTranslationSummary();
   updateThumbnailState();
 }
 
@@ -554,6 +910,29 @@ function downloadAllOcrText() {
   setStatus("已导出全部 OCR 文本。", "ok");
 }
 
+function downloadAllTranslationText() {
+  if (!state.translationResults.size) {
+    setStatus("还没有可导出的藏译汉文本。", "warn");
+    return;
+  }
+
+  const pages = [...state.translationResults.entries()].sort((a, b) => a[0] - b[0]);
+  const body = [
+    `# ${state.sourceName || "藏译汉"} 翻译结果`,
+    "",
+    ...pages.flatMap(([pageNum, result]) => [
+      `## 第 ${pageNum} 页`,
+      "",
+      result.text || "",
+      "",
+    ]),
+  ].join("\n");
+  const blob = new Blob([body], { type: "text/markdown;charset=utf-8" });
+  const safeName = (state.sourceName || "tibetan-zh").replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]+/g, "_");
+  downloadBlob(blob, `${safeName}_zh.md`);
+  setStatus("已导出全部藏译汉文本。", "ok");
+}
+
 function downloadBlob(blob, fileName) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -574,19 +953,55 @@ function updateOcrPanelForPage() {
   updateSummary();
 }
 
+function updateTranslationPanelForPage() {
+  const result = state.translationResults.get(state.pageNum);
+  els.translationTitle.textContent = state.sourceType === "image" ? "图片藏译汉" : `第 ${state.pageNum} 页藏译汉`;
+  els.translationText.value = result?.text || "";
+  els.translationMeta.textContent = result?.text ? "已翻译" : "未翻译";
+  els.translationMeta.style.color = result?.text ? "var(--blue)" : "var(--muted)";
+  updateTranslationSummary();
+}
+
 function updateSummary() {
   const text = els.ocrText.value || "";
   els.charCount.textContent = String([...text.replace(/\s+/g, "")].length);
   const recognized = [...state.ocrResults.values()].filter((result) => (result.text || "").trim()).length;
   els.recognizedCount.textContent = `${recognized} / ${state.pageCount || 0}`;
+  updateFileOcrStatus(recognized);
+}
+
+function updateFileOcrStatus(recognizedCount = null) {
+  const recognized = recognizedCount ?? [...state.ocrResults.values()].filter((result) => (result.text || "").trim()).length;
+  let text = "ocr 识别未开始";
+  let className = "file-status status-not-started";
+
+  if (state.pageCount && recognized >= state.pageCount) {
+    text = "ocr 识别已完成";
+    className = "file-status status-complete";
+  } else if (recognized > 0) {
+    text = "ocr 识别进行中";
+    className = "file-status status-in-progress";
+  }
+
+  els.fileOcrStatus.textContent = text;
+  els.fileOcrStatus.className = className;
+}
+
+function updateTranslationSummary() {
+  const text = els.translationText.value || "";
+  els.translationCharCount.textContent = String([...text.replace(/\s+/g, "")].length);
+  const translated = [...state.translationResults.values()].filter((result) => (result.text || "").trim()).length;
+  els.translatedCount.textContent = `${translated} / ${state.pageCount || 0}`;
 }
 
 function updateThumbnailState() {
   els.thumbnailList.querySelectorAll(".thumbnail-button").forEach((button) => {
     const pageNum = Number(button.dataset.page);
     const recognized = Boolean((state.ocrResults.get(pageNum)?.text || "").trim());
+    const translated = Boolean((state.translationResults.get(pageNum)?.text || "").trim());
     button.classList.toggle("active", pageNum === state.pageNum);
     button.classList.toggle("recognized", recognized);
+    button.classList.toggle("translated", translated);
   });
 }
 
@@ -603,6 +1018,10 @@ function refreshControls() {
   els.copyButton.disabled = !hasDocument;
   els.clearButton.disabled = !hasDocument;
   els.downloadTextButton.disabled = !hasDocument;
+  els.translateButton.disabled = !hasDocument;
+  els.copyTranslationButton.disabled = !hasDocument;
+  els.clearTranslationButton.disabled = !hasDocument;
+  els.downloadTranslationButton.disabled = !hasDocument;
 }
 
 function setBusy(isBusy) {
@@ -611,8 +1030,17 @@ function setBusy(isBusy) {
   els.ocrButton.querySelector("span").textContent = isBusy ? "识别中..." : "识别当前页";
 }
 
-function formatNetworkError(error, url) {
+function setTranslateBusy(isBusy) {
+  els.translateButton.disabled = isBusy || !state.pageCount;
+  els.checkTranslateButton.disabled = isBusy;
+  els.translateButton.querySelector("span").textContent = isBusy ? "翻译中..." : "翻译当前页";
+}
+
+function formatNetworkError(error, url, service = "ocr") {
   if (String(error?.message || "").includes("Failed to fetch")) {
+    if (service === "translate") {
+      return `无法连接 ${url}。请先启动本地藏译汉服务：python3 bdrc-ocr-compare/nllb_translate_server.py；或把接口地址改成可用的翻译 API。`;
+    }
     return `无法连接 ${url}。请先启动本地 OCR 服务：python3 bdrc-ocr-compare/bdrc_ocr_server.py`;
   }
   return error?.message || String(error);

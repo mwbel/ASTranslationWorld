@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>藏文典籍 OCR 对照工作台</title>
     <link rel="stylesheet" href="./styles.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
-    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+    <script src="./vendor/pdf.min.js" defer></script>
+    <script src="./vendor/lucide.min.js" defer></script>
     <script src="./app.js" defer></script>
   </head>
   <body>
@@ -16,27 +16,20 @@
           <span class="brand-mark">藏</span>
           <div>
             <h1>藏文典籍 OCR 对照工作台</h1>
-            <p>PDF 分页原文与 BDRC OCR 识别结果逐页校对</p>
+            <p>PDF 分页原文、BDRC OCR 结果与藏译汉结果逐页校对</p>
           </div>
         </div>
 
-        <div class="actions">
-          <label class="file-button" for="fileInput">
-            <i data-lucide="upload"></i>
-            <span>上传 PDF</span>
-          </label>
-          <input id="fileInput" type="file" accept="application/pdf,image/*" />
-          <button id="sampleButton" class="ghost-button" type="button">
-            <i data-lucide="file-plus"></i>
-            <span>载入本地样本</span>
-          </button>
-        </div>
       </header>
 
       <section class="control-band" aria-label="OCR 和分页控制">
         <div class="control-group wide">
           <label for="endpointInput">BDRC OCR 接口</label>
           <input id="endpointInput" type="url" value="http://127.0.0.1:18090/ocr" spellcheck="false" />
+        </div>
+        <div class="control-group wide">
+          <label for="translateEndpointInput">藏译汉接口</label>
+          <input id="translateEndpointInput" type="url" value="http://127.0.0.1:18091/translate" spellcheck="false" />
         </div>
         <div class="control-group">
           <label for="dpiInput">OCR 图片 DPI</label>
@@ -70,25 +63,11 @@
             <option value="2">200%</option>
           </select>
         </div>
-        <div class="control-actions">
-          <button id="checkOcrButton" class="ghost-button" type="button">
-            <i data-lucide="plug-zap"></i>
-            <span>检查服务</span>
-          </button>
-          <button id="ocrButton" class="primary-button" type="button">
-            <i data-lucide="scan-text"></i>
-            <span>识别当前页</span>
-          </button>
-          <button id="downloadPageButton" class="ghost-button" type="button">
-            <i data-lucide="image-down"></i>
-            <span>导出页图</span>
-          </button>
-        </div>
       </section>
 
       <section id="statusBar" class="status-bar" role="status">请先上传 PDF 或图片。</section>
 
-      <section class="workspace" aria-label="原文和 OCR 对照区">
+      <section class="workspace" aria-label="原文、OCR 和藏译汉对照区">
         <aside class="page-strip" aria-label="页面缩略图">
           <div class="strip-header">
             <i data-lucide="panel-left"></i>
@@ -102,8 +81,24 @@
             <div>
               <span class="eyebrow">原文单页</span>
               <h2 id="sourceTitle">未载入文件</h2>
+              <span id="fileOcrStatus" class="file-status status-not-started">ocr 识别未开始</span>
             </div>
             <div id="renderMeta" class="meta-pill">0 页</div>
+          </div>
+          <div class="pane-toolbar">
+            <label class="file-button compact" for="fileInput">
+              <i data-lucide="upload"></i>
+              <span>上传 PDF</span>
+            </label>
+            <input id="fileInput" type="file" accept="application/pdf,image/*" />
+            <button id="sampleButton" class="ghost-button compact" type="button">
+              <i data-lucide="file-plus"></i>
+              <span>载入样本</span>
+            </button>
+            <button id="downloadPageButton" class="ghost-button compact" type="button">
+              <i data-lucide="image-down"></i>
+              <span>导出页图</span>
+            </button>
           </div>
           <div id="pageViewport" class="page-viewport">
             <canvas id="pdfCanvas"></canvas>
@@ -125,6 +120,14 @@
           </div>
 
           <div class="ocr-toolbar">
+            <button id="checkOcrButton" class="ghost-button compact" type="button">
+              <i data-lucide="plug-zap"></i>
+              <span>检查服务</span>
+            </button>
+            <button id="ocrButton" class="primary-button compact" type="button">
+              <i data-lucide="scan-text"></i>
+              <span>识别当前页</span>
+            </button>
             <button id="copyButton" class="ghost-button compact" type="button">
               <i data-lucide="copy"></i>
               <span>复制</span>
@@ -153,6 +156,56 @@
             <div>
               <span class="summary-label">已识别页</span>
               <strong id="recognizedCount">0</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="translation-pane" aria-label="藏译汉结果">
+          <div class="pane-header">
+            <div>
+              <span class="eyebrow">藏译汉结果</span>
+              <h2 id="translationTitle">等待翻译</h2>
+            </div>
+            <div id="translationMeta" class="meta-pill">未翻译</div>
+          </div>
+
+          <div class="ocr-toolbar">
+            <button id="checkTranslateButton" class="ghost-button compact" type="button">
+              <i data-lucide="plug-zap"></i>
+              <span>检查翻译</span>
+            </button>
+            <button id="translateButton" class="primary-button compact" type="button">
+              <i data-lucide="languages"></i>
+              <span>翻译当前页</span>
+            </button>
+            <button id="copyTranslationButton" class="ghost-button compact" type="button">
+              <i data-lucide="copy"></i>
+              <span>复制</span>
+            </button>
+            <button id="clearTranslationButton" class="ghost-button compact" type="button">
+              <i data-lucide="eraser"></i>
+              <span>清空本页</span>
+            </button>
+            <button id="downloadTranslationButton" class="ghost-button compact" type="button">
+              <i data-lucide="download"></i>
+              <span>导出全部</span>
+            </button>
+          </div>
+
+          <textarea
+            id="translationText"
+            spellcheck="false"
+            placeholder="点击“翻译当前页”后，会把右侧 OCR 藏文发送到藏译汉接口；也可以直接粘贴人工译文进行逐页校对。"
+          ></textarea>
+
+          <div class="result-summary">
+            <div>
+              <span class="summary-label">当前页中文字数</span>
+              <strong id="translationCharCount">0</strong>
+            </div>
+            <div>
+              <span class="summary-label">已翻译页</span>
+              <strong id="translatedCount">0</strong>
             </div>
           </div>
         </section>
