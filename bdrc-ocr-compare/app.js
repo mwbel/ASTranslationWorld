@@ -1,6 +1,10 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
 const CACHE_PREFIX = "bdrc-ocr-compare:v1:";
+const OCR_FONT_SIZE_KEY = "bdrc-ocr-compare:ocr-font-size";
+const OCR_FONT_SIZE_MIN = 16;
+const OCR_FONT_SIZE_MAX = 36;
+const OCR_FONT_SIZE_STEP = 2;
 
 const els = {};
 const state = {
@@ -18,6 +22,8 @@ const state = {
   ocrResults: new Map(),
   translationResults: new Map(),
   ocrView: "lines",
+  ocrFontSize: 22,
+  activeOcrLine: -1,
   renderToken: 0,
   thumbnailToken: 0,
   thumbnailObserver: null,
@@ -25,6 +31,7 @@ const state = {
 
 window.addEventListener("DOMContentLoaded", () => {
   cacheElements();
+  restoreOcrFontSize();
   wireEvents();
   configurePdfJs();
   refreshControls();
@@ -59,12 +66,15 @@ function cacheElements() {
     "pageViewport",
     "pdfCanvas",
     "imagePage",
+    "sourceLineHighlight",
     "emptyState",
     "ocrTitle",
     "ocrMeta",
     "copyButton",
     "clearButton",
     "downloadTextButton",
+    "decreaseOcrFontButton",
+    "increaseOcrFontButton",
     "ocrViewSwitch",
     "lineViewButton",
     "textViewButton",
@@ -115,6 +125,12 @@ function wireEvents() {
   els.copyButton.addEventListener("click", copyCurrentText);
   els.clearButton.addEventListener("click", clearCurrentText);
   els.downloadTextButton.addEventListener("click", downloadAllOcrText);
+  els.decreaseOcrFontButton.addEventListener("click", () => {
+    setOcrFontSize(state.ocrFontSize - OCR_FONT_SIZE_STEP);
+  });
+  els.increaseOcrFontButton.addEventListener("click", () => {
+    setOcrFontSize(state.ocrFontSize + OCR_FONT_SIZE_STEP);
+  });
   els.lineViewButton.addEventListener("click", () => setOcrView("lines"));
   els.textViewButton.addEventListener("click", () => setOcrView("text"));
   els.translateButton.addEventListener("click", runTranslateForCurrentPage);
@@ -133,7 +149,7 @@ function wireEvents() {
         text: textLines[index] ?? "",
       }));
       for (let index = existingLines.length; index < textLines.length; index += 1) {
-        lines.push({ text: textLines[index], image: "", index });
+        lines.push({ text: textLines[index], bbox: null, index });
       }
       state.ocrResults.set(state.pageNum, {
         ...existing,
@@ -172,6 +188,8 @@ function wireEvents() {
   window.addEventListener("resize", debounce(() => {
     if (state.pageCount && els.zoomInput.value === "fit") {
       renderCurrentPage();
+    } else {
+      renderActiveSourceHighlight();
     }
   }, 160));
 }
@@ -182,6 +200,28 @@ function configurePdfJs() {
     return;
   }
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_WORKER_URL;
+}
+
+function restoreOcrFontSize() {
+  const storedSize = Number(window.localStorage.getItem(OCR_FONT_SIZE_KEY));
+  setOcrFontSize(Number.isFinite(storedSize) ? storedSize : state.ocrFontSize, false);
+}
+
+function setOcrFontSize(size, persist = true) {
+  state.ocrFontSize = clamp(
+    Math.round(Number(size) || 22),
+    OCR_FONT_SIZE_MIN,
+    OCR_FONT_SIZE_MAX,
+  );
+  document.documentElement.style.setProperty("--ocr-font-size", `${state.ocrFontSize}px`);
+  els.decreaseOcrFontButton.disabled = state.ocrFontSize <= OCR_FONT_SIZE_MIN;
+  els.increaseOcrFontButton.disabled = state.ocrFontSize >= OCR_FONT_SIZE_MAX;
+  els.decreaseOcrFontButton.title = `减小 OCR 字体（当前 ${state.ocrFontSize}px）`;
+  els.increaseOcrFontButton.title = `增大 OCR 字体（当前 ${state.ocrFontSize}px）`;
+  els.ocrLineCompare.querySelectorAll(".ocr-line-editor").forEach(resizeLineEditor);
+  if (persist) {
+    window.localStorage.setItem(OCR_FONT_SIZE_KEY, String(state.ocrFontSize));
+  }
 }
 
 async function loadSamplePdf() {
@@ -354,6 +394,7 @@ function restoreCachedResults() {
       if (!isValidPageNumber(pageNum) || typeof result?.text !== "string") continue;
       state.ocrResults.set(pageNum, {
         text: result.text,
+        lines: Array.isArray(result.lines) ? result.lines : [],
         source: result.source || "cache",
         updatedAt: result.updatedAt || payload.updatedAt || "",
       });
@@ -404,6 +445,11 @@ function serializeResultMap(map) {
     if (!text.trim()) continue;
     output[pageNum] = {
       text,
+      lines: (result.lines || []).map((line, index) => ({
+        text: line.text || "",
+        bbox: normalizeBbox(line.bbox),
+        index,
+      })),
       source: result.source || "manual",
       updatedAt: result.updatedAt || "",
     };
@@ -457,6 +503,7 @@ async function renderCurrentPage() {
   els.emptyState.style.display = "none";
   els.renderMeta.textContent = `${state.pageNum} / ${state.pageCount}`;
   els.pageInput.value = String(state.pageNum);
+  renderActiveSourceHighlight();
   updateOcrPanelForPage();
   updateTranslationPanelForPage();
   updateThumbnailState();
@@ -469,6 +516,7 @@ function renderImagePage() {
   els.emptyState.style.display = "none";
   els.renderMeta.textContent = "1 / 1";
   els.pageInput.value = "1";
+  renderActiveSourceHighlight();
   updateOcrPanelForPage();
   updateTranslationPanelForPage();
   updateThumbnailState();
@@ -639,6 +687,7 @@ async function goToPage(pageNum) {
     return;
   }
   state.pageNum = nextPage;
+  clearSourceLineHighlight();
   await renderCurrentPage();
   requestThumbnailRender(state.pageNum);
   refreshControls();
@@ -920,11 +969,28 @@ function extractOcrLines(payload) {
       }
       return {
         text: line?.text || line?.content || line?.value || "",
-        image: line?.image || line?.image_url || line?.imageUrl || "",
+        bbox: normalizeBbox(line?.bbox || line?.box || line?.bounding_box),
         index,
       };
     })
-    .filter((line) => line.text || line.image);
+    .filter((line) => line.text || line.bbox);
+}
+
+function normalizeBbox(bbox) {
+  if (!bbox || typeof bbox !== "object") return null;
+  const x = Number(bbox.x);
+  const y = Number(bbox.y);
+  const width = Number(bbox.width ?? bbox.w);
+  const height = Number(bbox.height ?? bbox.h);
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return {
+    x: clamp(x, 0, 1),
+    y: clamp(y, 0, 1),
+    width: clamp(width, 0, Math.max(0, 1 - clamp(x, 0, 1))),
+    height: clamp(height, 0, Math.max(0, 1 - clamp(y, 0, 1))),
+  };
 }
 
 function extractTranslationFromJson(payload) {
@@ -1055,6 +1121,8 @@ function setOcrView(view) {
   els.textViewButton.setAttribute("aria-pressed", String(!showLines));
   if (showLines) {
     renderOcrLineComparison();
+  } else {
+    clearSourceLineHighlight();
   }
 }
 
@@ -1068,8 +1136,8 @@ function renderOcrLineComparison() {
     const empty = document.createElement("div");
     empty.className = "line-compare-empty";
     empty.innerHTML = result?.text
-      ? "<strong>当前结果没有原文行切片</strong><span>可切换到“纯文本”继续校对；重新使用本地 BDRC 服务识别可生成逐行对照。</span>"
-      : "<strong>等待 OCR 识别</strong><span>识别完成后，这里会按行显示原文图像与可编辑文字。</span>";
+      ? "<strong>当前结果没有行坐标</strong><span>可切换到“纯文本”继续校对；重新识别当前页后可点击藏文定位原文。</span>"
+      : "<strong>等待 OCR 识别</strong><span>识别完成后，这里会按行显示可编辑藏文；点击某行可在原页定位。</span>";
     els.ocrLineCompare.appendChild(empty);
     return;
   }
@@ -1077,6 +1145,7 @@ function renderOcrLineComparison() {
   lines.forEach((line, index) => {
     const row = document.createElement("section");
     row.className = "ocr-line-row";
+    row.classList.toggle("is-active", state.activeOcrLine === index);
 
     const rowHeader = document.createElement("div");
     rowHeader.className = "ocr-line-number";
@@ -1085,28 +1154,15 @@ function renderOcrLineComparison() {
     const content = document.createElement("div");
     content.className = "ocr-line-content";
 
-    if (line.image) {
-      const imageWrap = document.createElement("div");
-      imageWrap.className = "ocr-line-image";
-      const image = document.createElement("img");
-      image.src = line.image;
-      image.alt = `第 ${index + 1} 行原文`;
-      image.loading = "lazy";
-      imageWrap.appendChild(image);
-      content.appendChild(imageWrap);
-    } else {
-      const unavailable = document.createElement("div");
-      unavailable.className = "ocr-line-image unavailable";
-      unavailable.textContent = "无原文行切片";
-      content.appendChild(unavailable);
-    }
-
     const editor = document.createElement("textarea");
     editor.className = "ocr-line-editor";
     editor.rows = 1;
     editor.spellcheck = false;
     editor.value = line.text || "";
     editor.setAttribute("aria-label", `第 ${index + 1} 行 OCR 文本`);
+    const activateLine = () => activateOcrLine(line, index, row);
+    row.addEventListener("click", activateLine);
+    editor.addEventListener("focus", activateLine);
     editor.addEventListener("input", () => {
       line.text = editor.value;
       resizeLineEditor(editor);
@@ -1118,6 +1174,57 @@ function renderOcrLineComparison() {
     els.ocrLineCompare.appendChild(row);
     resizeLineEditor(editor);
   });
+}
+
+function activateOcrLine(line, index, row) {
+  state.activeOcrLine = index;
+  els.ocrLineCompare.querySelectorAll(".ocr-line-row.is-active").forEach((item) => {
+    item.classList.remove("is-active");
+  });
+  row.classList.add("is-active");
+  showSourceLineHighlight(line?.bbox);
+}
+
+function showSourceLineHighlight(bbox) {
+  const normalized = normalizeBbox(bbox);
+  const source = state.sourceType === "image" ? els.imagePage : els.pdfCanvas;
+  if (!normalized || !source || source.style.display === "none") {
+    els.sourceLineHighlight.classList.remove("is-visible");
+    return;
+  }
+
+  const left = source.offsetLeft + normalized.x * source.clientWidth;
+  const top = source.offsetTop + normalized.y * source.clientHeight;
+  const width = normalized.width * source.clientWidth;
+  const height = normalized.height * source.clientHeight;
+  Object.assign(els.sourceLineHighlight.style, {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${width}px`,
+    height: `${height}px`,
+  });
+  els.sourceLineHighlight.classList.add("is-visible");
+
+  els.pageViewport.scrollTo({
+    left: Math.max(0, left + width / 2 - els.pageViewport.clientWidth / 2),
+    top: Math.max(0, top + height / 2 - els.pageViewport.clientHeight / 2),
+    behavior: "smooth",
+  });
+}
+
+function renderActiveSourceHighlight() {
+  if (state.activeOcrLine < 0) {
+    clearSourceLineHighlight();
+    return;
+  }
+  const result = state.ocrResults.get(state.pageNum);
+  const line = result?.lines?.[state.activeOcrLine];
+  showSourceLineHighlight(line?.bbox);
+}
+
+function clearSourceLineHighlight() {
+  state.activeOcrLine = -1;
+  els.sourceLineHighlight.classList.remove("is-visible");
 }
 
 function resizeLineEditor(editor) {
