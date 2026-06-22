@@ -5,6 +5,7 @@ const CACHE_PREFIX = "bdrc-ocr-compare:v1:";
 const els = {};
 const state = {
   pdfDoc: null,
+  pdfUrl: "",
   imageUrl: "",
   imageBlob: null,
   sourceName: "",
@@ -16,7 +17,10 @@ const state = {
   pageCount: 0,
   ocrResults: new Map(),
   translationResults: new Map(),
+  ocrView: "lines",
   renderToken: 0,
+  thumbnailToken: 0,
+  thumbnailObserver: null,
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -61,6 +65,10 @@ function cacheElements() {
     "copyButton",
     "clearButton",
     "downloadTextButton",
+    "ocrViewSwitch",
+    "lineViewButton",
+    "textViewButton",
+    "ocrLineCompare",
     "ocrText",
     "charCount",
     "recognizedCount",
@@ -107,6 +115,8 @@ function wireEvents() {
   els.copyButton.addEventListener("click", copyCurrentText);
   els.clearButton.addEventListener("click", clearCurrentText);
   els.downloadTextButton.addEventListener("click", downloadAllOcrText);
+  els.lineViewButton.addEventListener("click", () => setOcrView("lines"));
+  els.textViewButton.addEventListener("click", () => setOcrView("text"));
   els.translateButton.addEventListener("click", runTranslateForCurrentPage);
   els.copyTranslationButton.addEventListener("click", copyCurrentTranslation);
   els.clearTranslationButton.addEventListener("click", clearCurrentTranslation);
@@ -116,9 +126,19 @@ function wireEvents() {
     if (!state.pageCount) return;
     if (els.ocrText.value.trim()) {
       const existing = state.ocrResults.get(state.pageNum) || {};
+      const textLines = els.ocrText.value.split("\n");
+      const existingLines = existing.lines || extractOcrLines(existing.raw);
+      const lines = existingLines.map((line, index) => ({
+        ...line,
+        text: textLines[index] ?? "",
+      }));
+      for (let index = existingLines.length; index < textLines.length; index += 1) {
+        lines.push({ text: textLines[index], image: "", index });
+      }
       state.ocrResults.set(state.pageNum, {
         ...existing,
         text: els.ocrText.value,
+        lines,
         source: existing.source || "manual",
         updatedAt: new Date().toISOString(),
       });
@@ -126,6 +146,7 @@ function wireEvents() {
       state.ocrResults.delete(state.pageNum);
     }
     saveCachedResults();
+    renderOcrLineComparison();
     updateSummary();
     updateThumbnailState();
   });
@@ -206,8 +227,8 @@ async function loadPdf(file) {
     return;
   }
 
-  const buffer = await file.arrayBuffer();
-  const task = window.pdfjsLib.getDocument({ data: buffer });
+  state.pdfUrl = URL.createObjectURL(file);
+  const task = window.pdfjsLib.getDocument({ url: state.pdfUrl });
   state.pdfDoc = await task.promise;
   state.sourceType = "pdf";
   state.pageNum = 1;
@@ -223,8 +244,13 @@ async function loadPdf(file) {
     "ok"
   );
   refreshControls();
-  renderCurrentPage();
-  buildPdfThumbnails();
+  await renderCurrentPage();
+  const loadedDoc = state.pdfDoc;
+  scheduleIdleWork(() => {
+    if (state.pdfDoc === loadedDoc) {
+      buildPdfThumbnails();
+    }
+  });
 }
 
 async function loadImage(file) {
@@ -255,11 +281,21 @@ async function loadImage(file) {
 }
 
 function resetDocumentState() {
+  if (state.thumbnailObserver) {
+    state.thumbnailObserver.disconnect();
+    state.thumbnailObserver = null;
+  }
+  state.thumbnailToken += 1;
+
+  if (state.pdfUrl) {
+    URL.revokeObjectURL(state.pdfUrl);
+  }
   if (state.imageUrl) {
     URL.revokeObjectURL(state.imageUrl);
   }
 
   state.pdfDoc = null;
+  state.pdfUrl = "";
   state.imageUrl = "";
   state.imageBlob = null;
   state.sourceName = "";
@@ -424,6 +460,7 @@ async function renderCurrentPage() {
   updateOcrPanelForPage();
   updateTranslationPanelForPage();
   updateThumbnailState();
+  requestThumbnailRender(state.pageNum);
 }
 
 function renderImagePage() {
@@ -439,34 +476,143 @@ function renderImagePage() {
 
 async function buildPdfThumbnails() {
   els.thumbnailList.innerHTML = "";
-  const doc = state.pdfDoc;
-  const count = state.pageCount;
-
-  for (let pageNum = 1; pageNum <= count; pageNum += 1) {
-    const button = document.createElement("button");
-    button.className = "thumbnail-button";
-    button.type = "button";
-    button.dataset.page = String(pageNum);
-    button.innerHTML = `<span>${pageNum}</span>`;
-    button.addEventListener("click", () => goToPage(pageNum));
-    els.thumbnailList.appendChild(button);
+  if (state.thumbnailObserver) {
+    state.thumbnailObserver.disconnect();
+    state.thumbnailObserver = null;
   }
 
-  updateThumbnailState();
+  const count = state.pageCount;
+  const token = ++state.thumbnailToken;
+  const hasObserver = setupThumbnailObserver(token);
+  let nextPage = 1;
+  let renderedFallbackBatch = false;
 
-  for (let pageNum = 1; pageNum <= count; pageNum += 1) {
-    const button = els.thumbnailList.querySelector(`[data-page="${pageNum}"]`);
-    if (!button || doc !== state.pdfDoc) return;
-    const page = await doc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 0.12 });
+  const appendChunk = (deadline) => {
+    if (!state.pdfDoc || token !== state.thumbnailToken) return;
+
+    const fragment = document.createDocumentFragment();
+    const newButtons = [];
+    let appended = 0;
+
+    while (
+      nextPage <= count &&
+      appended < 48 &&
+      (!deadline || deadline.timeRemaining() > 4 || appended < 8)
+    ) {
+      const button = createThumbnailButton(nextPage);
+      fragment.appendChild(button);
+      newButtons.push(button);
+      nextPage += 1;
+      appended += 1;
+    }
+
+    els.thumbnailList.appendChild(fragment);
+
+    if (hasObserver) {
+      newButtons.forEach((button) => state.thumbnailObserver.observe(button));
+    } else if (!renderedFallbackBatch) {
+      renderInitialThumbnailBatch(token);
+      renderedFallbackBatch = true;
+    }
+
+    updateThumbnailState();
+    requestThumbnailRender(state.pageNum, token);
+
+    if (nextPage <= count) {
+      scheduleIdleWork(appendChunk);
+    }
+  };
+
+  appendChunk();
+}
+
+function setupThumbnailObserver(token) {
+  if (!("IntersectionObserver" in window)) {
+    return false;
+  }
+
+  state.thumbnailObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const pageNum = Number(entry.target.dataset.page);
+      requestThumbnailRender(pageNum, token);
+      state.thumbnailObserver?.unobserve(entry.target);
+    });
+  }, {
+    root: els.thumbnailList,
+    rootMargin: "160px 0px",
+    threshold: 0.01,
+  });
+
+  return true;
+}
+
+function createThumbnailButton(pageNum) {
+  const button = document.createElement("button");
+  button.className = "thumbnail-button";
+  button.type = "button";
+  button.dataset.page = String(pageNum);
+  button.innerHTML = `<span class="thumbnail-placeholder">第 ${pageNum} 页</span><span>${pageNum}</span>`;
+  button.addEventListener("click", () => goToPage(pageNum));
+  return button;
+}
+
+function scheduleIdleWork(callback) {
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(callback, { timeout: 500 });
+  } else {
+    window.setTimeout(() => callback(), 16);
+  }
+}
+
+function renderInitialThumbnailBatch(token) {
+  const start = Math.max(1, state.pageNum - 2);
+  const end = Math.min(state.pageCount, state.pageNum + 6);
+  for (let pageNum = start; pageNum <= end; pageNum += 1) {
+    requestThumbnailRender(pageNum, token);
+  }
+}
+
+function requestThumbnailRender(pageNum, token = state.thumbnailToken) {
+  const button = els.thumbnailList.querySelector(`[data-page="${pageNum}"]`);
+  if (!button || button.dataset.thumbRendered === "1" || button.dataset.thumbLoading === "1") {
+    return;
+  }
+
+  const run = () => renderPdfThumbnail(pageNum, button, token);
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(run, { timeout: 900 });
+  } else {
+    window.setTimeout(run, 0);
+  }
+}
+
+async function renderPdfThumbnail(pageNum, button, token) {
+  if (!state.pdfDoc || token !== state.thumbnailToken) return;
+
+  try {
+    button.dataset.thumbLoading = "1";
+    const page = await state.pdfDoc.getPage(pageNum);
+    if (!button.isConnected || token !== state.thumbnailToken) return;
+
+    const viewport = page.getViewport({ scale: 0.1 });
     const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(viewport.width);
-    canvas.height = Math.floor(viewport.height);
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
     const context = canvas.getContext("2d", { alpha: false });
     context.fillStyle = "#fff";
     context.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvasContext: context, viewport }).promise;
+    if (!button.isConnected || token !== state.thumbnailToken) return;
+
+    button.querySelector("canvas")?.remove();
+    button.querySelector(".thumbnail-placeholder")?.remove();
     button.prepend(canvas);
+    button.dataset.thumbRendered = "1";
+  } catch (error) {
+    console.warn(`Failed to render thumbnail for page ${pageNum}`, error);
+  } finally {
+    delete button.dataset.thumbLoading;
   }
 }
 
@@ -494,6 +640,7 @@ async function goToPage(pageNum) {
   }
   state.pageNum = nextPage;
   await renderCurrentPage();
+  requestThumbnailRender(state.pageNum);
   refreshControls();
 }
 
@@ -541,11 +688,13 @@ async function runOcrForCurrentPage() {
     state.ocrResults.set(state.pageNum, {
       text,
       raw: parsed.raw,
+      lines: extractOcrLines(parsed.raw),
       source: "bdrc",
       updatedAt: new Date().toISOString(),
     });
     saveCachedResults();
     els.ocrText.value = text;
+    setOcrView("lines");
     setStatus(`第 ${state.pageNum} 页识别完成。`, "ok");
     updateOcrPanelForPage();
     updateSummary();
@@ -759,6 +908,25 @@ function extractTextFromJson(payload) {
   return JSON.stringify(payload, null, 2);
 }
 
+function extractOcrLines(payload) {
+  if (!payload || typeof payload === "string") return [];
+  const candidates = payload.lines || payload.blocks || payload.items;
+  if (!Array.isArray(candidates)) return [];
+
+  return candidates
+    .map((line, index) => {
+      if (typeof line === "string") {
+        return { text: line, image: "", index };
+      }
+      return {
+        text: line?.text || line?.content || line?.value || "",
+        image: line?.image || line?.image_url || line?.imageUrl || "",
+        index,
+      };
+    })
+    .filter((line) => line.text || line.image);
+}
+
 function extractTranslationFromJson(payload) {
   if (!payload) return "";
   if (typeof payload === "string") return payload;
@@ -876,6 +1044,103 @@ function clearCurrentText() {
   updateThumbnailState();
 }
 
+function setOcrView(view) {
+  state.ocrView = view === "text" ? "text" : "lines";
+  const showLines = state.ocrView === "lines";
+  els.ocrLineCompare.classList.toggle("is-hidden", !showLines);
+  els.ocrText.classList.toggle("is-hidden", showLines);
+  els.lineViewButton.classList.toggle("active", showLines);
+  els.textViewButton.classList.toggle("active", !showLines);
+  els.lineViewButton.setAttribute("aria-pressed", String(showLines));
+  els.textViewButton.setAttribute("aria-pressed", String(!showLines));
+  if (showLines) {
+    renderOcrLineComparison();
+  }
+}
+
+function renderOcrLineComparison() {
+  els.ocrLineCompare.innerHTML = "";
+  if (!state.pageCount) return;
+
+  const result = state.ocrResults.get(state.pageNum);
+  const lines = result?.lines || extractOcrLines(result?.raw);
+  if (!lines?.length) {
+    const empty = document.createElement("div");
+    empty.className = "line-compare-empty";
+    empty.innerHTML = result?.text
+      ? "<strong>当前结果没有原文行切片</strong><span>可切换到“纯文本”继续校对；重新使用本地 BDRC 服务识别可生成逐行对照。</span>"
+      : "<strong>等待 OCR 识别</strong><span>识别完成后，这里会按行显示原文图像与可编辑文字。</span>";
+    els.ocrLineCompare.appendChild(empty);
+    return;
+  }
+
+  lines.forEach((line, index) => {
+    const row = document.createElement("section");
+    row.className = "ocr-line-row";
+
+    const rowHeader = document.createElement("div");
+    rowHeader.className = "ocr-line-number";
+    rowHeader.textContent = String(index + 1).padStart(2, "0");
+
+    const content = document.createElement("div");
+    content.className = "ocr-line-content";
+
+    if (line.image) {
+      const imageWrap = document.createElement("div");
+      imageWrap.className = "ocr-line-image";
+      const image = document.createElement("img");
+      image.src = line.image;
+      image.alt = `第 ${index + 1} 行原文`;
+      image.loading = "lazy";
+      imageWrap.appendChild(image);
+      content.appendChild(imageWrap);
+    } else {
+      const unavailable = document.createElement("div");
+      unavailable.className = "ocr-line-image unavailable";
+      unavailable.textContent = "无原文行切片";
+      content.appendChild(unavailable);
+    }
+
+    const editor = document.createElement("textarea");
+    editor.className = "ocr-line-editor";
+    editor.rows = 1;
+    editor.spellcheck = false;
+    editor.value = line.text || "";
+    editor.setAttribute("aria-label", `第 ${index + 1} 行 OCR 文本`);
+    editor.addEventListener("input", () => {
+      line.text = editor.value;
+      resizeLineEditor(editor);
+      syncLineEditorsToResult(lines);
+    });
+
+    content.appendChild(editor);
+    row.append(rowHeader, content);
+    els.ocrLineCompare.appendChild(row);
+    resizeLineEditor(editor);
+  });
+}
+
+function resizeLineEditor(editor) {
+  editor.style.height = "auto";
+  editor.style.height = `${Math.max(48, editor.scrollHeight)}px`;
+}
+
+function syncLineEditorsToResult(lines) {
+  const text = lines.map((line) => line.text || "").join("\n");
+  const existing = state.ocrResults.get(state.pageNum) || {};
+  state.ocrResults.set(state.pageNum, {
+    ...existing,
+    text,
+    lines,
+    source: existing.source || "manual",
+    updatedAt: new Date().toISOString(),
+  });
+  els.ocrText.value = text;
+  saveCachedResults();
+  updateSummary();
+  updateThumbnailState();
+}
+
 function clearCurrentTranslation() {
   if (!state.pageCount) return;
   state.translationResults.delete(state.pageNum);
@@ -950,6 +1215,7 @@ function updateOcrPanelForPage() {
   els.ocrText.value = result?.text || "";
   els.ocrMeta.textContent = result?.text ? "已识别" : "未识别";
   els.ocrMeta.style.color = result?.text ? "var(--green-deep)" : "var(--muted)";
+  renderOcrLineComparison();
   updateSummary();
 }
 

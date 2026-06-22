@@ -12,6 +12,7 @@ OCR models by default.
 
 from __future__ import annotations
 
+import base64
 import cgi
 import json
 import os
@@ -42,10 +43,32 @@ BBOX_TOLERANCE = float(os.environ.get("BDRC_BBOX_TOLERANCE", "4.0"))
 MERGE_LINES = os.environ.get("BDRC_MERGE_LINES", "1") not in {"0", "false", "False"}
 USE_TPS = os.environ.get("BDRC_USE_TPS", "0") in {"1", "true", "True"}
 MAX_DESKEW_ANGLE = float(os.environ.get("BDRC_MAX_DESKEW_ANGLE", "8.0"))
+LINE_PREVIEW_MAX_WIDTH = int(os.environ.get("BDRC_LINE_PREVIEW_MAX_WIDTH", "1800"))
+LINE_PREVIEW_JPEG_QUALITY = int(os.environ.get("BDRC_LINE_PREVIEW_JPEG_QUALITY", "78"))
 
 _pipeline_lock = threading.Lock()
 _pipeline: Any = None
 _bdrc_loaded = False
+
+
+def encode_line_preview(line_image: np.ndarray) -> str:
+    height, width = line_image.shape[:2]
+    if width > LINE_PREVIEW_MAX_WIDTH:
+        scale = LINE_PREVIEW_MAX_WIDTH / width
+        line_image = cv2.resize(
+            line_image,
+            (LINE_PREVIEW_MAX_WIDTH, max(1, round(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    success, encoded = cv2.imencode(
+        ".jpg",
+        line_image,
+        [cv2.IMWRITE_JPEG_QUALITY, LINE_PREVIEW_JPEG_QUALITY],
+    )
+    if not success:
+        return ""
+    return "data:image/jpeg;base64," + base64.b64encode(encoded).decode("ascii")
 
 
 def load_bdrc_modules() -> None:
@@ -166,16 +189,21 @@ def run_ocr(image_bytes: bytes) -> dict[str, Any]:
         )
 
         converter = pyewts.pyewts()
-        line_texts = []
+        line_results = []
         for line_img in line_images:
             pred = pipeline.ocr_inference.run(line_img).strip().replace("§", " ")
             if pipeline.encoder == CharsetEncoder.Wylie:
                 pred = converter.toUnicode(pred)
-            line_texts.append(pred)
+            line_results.append({
+                "text": pred,
+                "image": encode_line_preview(line_img),
+            })
+
+    line_texts = [line["text"] for line in line_results]
 
     return {
         "text": "\n".join(line_texts),
-        "lines": [{"text": text} for text in line_texts],
+        "lines": line_results,
         "line_count": len(line_texts),
         "detected_line_count": len(sorted_lines),
         "raw_angle": raw_angle,

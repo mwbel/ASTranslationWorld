@@ -344,6 +344,14 @@ button:disabled {
   font-size: 12px;
 }
 
+.thumbnail-placeholder {
+  min-height: 74px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed #d7e1dd;
+  background: #f8faf9;
+}
+
 .thumbnail-button canvas,
 .thumbnail-button img {
   width: 100%;
@@ -507,6 +515,133 @@ button:disabled {
   font-size: 22px;
   line-height: 1.85;
   letter-spacing: 0;
+}
+
+.is-hidden {
+  display: none !important;
+}
+
+.view-switch {
+  height: 34px;
+  margin-left: auto;
+  padding: 3px;
+  display: inline-grid;
+  grid-template-columns: repeat(2, auto);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f3f6f4;
+}
+
+.view-switch-button {
+  min-width: 70px;
+  padding: 0 10px;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.view-switch-button.active {
+  color: var(--green-deep);
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(20, 45, 36, 0.14);
+}
+
+.ocr-line-compare {
+  min-height: 0;
+  overflow: auto;
+  background: #edf0ee;
+}
+
+.ocr-line-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  border-bottom: 1px solid #cbd5d0;
+  background: #fff;
+}
+
+.ocr-line-number {
+  padding-top: 13px;
+  color: #7d8a84;
+  border-right: 1px solid var(--line);
+  background: #f5f7f6;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.ocr-line-content {
+  min-width: 0;
+}
+
+.ocr-line-image {
+  min-height: 50px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  overflow: auto hidden;
+  border-bottom: 1px solid #e0e6e3;
+  background: #fafbfa;
+}
+
+.ocr-line-image img {
+  display: block;
+  width: auto;
+  max-width: none;
+  height: 48px;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.ocr-line-image.unavailable {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ocr-line-editor {
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px 10px;
+  resize: none;
+  overflow: hidden;
+  border: 0;
+  color: #101814;
+  background: #fff;
+  font-family: "Noto Serif Tibetan", "Kailasa", "Microsoft Himalaya", "Noto Sans Tibetan", serif;
+  font-size: 22px;
+  line-height: 1.45;
+  letter-spacing: 0;
+}
+
+.ocr-line-editor:focus {
+  outline: 2px solid rgba(35, 115, 77, 0.3);
+  outline-offset: -2px;
+  background: #fbfffd;
+}
+
+.line-compare-empty {
+  min-height: 240px;
+  padding: 28px;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  color: var(--muted);
+  background: #fff;
+  text-align: center;
+}
+
+.line-compare-empty strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.line-compare-empty span {
+  max-width: 320px;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 #translationText {

@@ -2,21 +2,60 @@
 
 这是一个独立静态前端页面，用于逐页对照藏文 PDF 原文、BDRC OCR 识别结果和藏译汉结果。
 
-## 启动
+BDRC 本地接口会同时返回每一行的原文图像切片和识别文字。OCR 栏默认采用逐行校对视图，每行上方显示原文切片、下方显示可直接修改的 OCR 文本；也可以切换到纯文本视图。使用不提供行图的外部 OCR 接口时，页面仍可使用纯文本模式。
+
+## 一键启动前后端
+
+首次使用翻译服务时，先安装 NLLB 依赖：
+
+```bash
+python3 -m pip install -r bdrc-ocr-compare/requirements-translate.txt
+```
+
+随后在项目根目录运行：
+
+```bash
+./bdrc-ocr-compare/start_services.sh
+```
+
+脚本会启动并检查：
+
+- 前端：`http://127.0.0.1:8790/bdrc-ocr-compare/`
+- BDRC OCR：`http://127.0.0.1:18090/health`
+- 藏译汉：`http://127.0.0.1:18091/health`
+
+启动日志和 PID 默认保存在系统临时目录
+`$TMPDIR/bdrc-ocr-compare-services-$UID/`。再次执行启动脚本不会重复启动已经运行的服务。
+
+停止三个服务：
+
+```bash
+./bdrc-ocr-compare/stop_services.sh
+```
+
+不希望启动后自动打开浏览器时：
+
+```bash
+OPEN_BROWSER=0 ./bdrc-ocr-compare/start_services.sh
+```
+
+## 仅启动前端
 
 在项目根目录运行：
 
 ```bash
-python3 -m http.server 8787
+python3 -m http.server 8790 --bind 127.0.0.1
 ```
 
 然后打开：
 
 ```text
-http://127.0.0.1:8787/bdrc-ocr-compare/
+http://127.0.0.1:8790/bdrc-ocr-compare/
 ```
 
 页面依赖已放在 `vendor/`，包括 PDF.js、PDF worker 和 lucide 图标库；启动后不需要再从 CDN 加载前端依赖。
+
+为降低首次打开大 PDF 的等待时间，页面载入 PDF 后只优先渲染当前页；左侧缩略图列表会在浏览器空闲时分批创建，缩略图先显示页码占位，并在滚动到可见区域时再逐步渲染。
 
 ## 文件状态标签
 
