@@ -1,6 +1,7 @@
 FROM sutra-web:20260611-2159-server-runtime-amd64
 
 COPY login-fractal.png /usr/share/nginx/html/login-fractal.png
+COPY pdfjs/ /usr/share/nginx/html/pdfjs/
 
 RUN set -eux; \
   css=/usr/share/nginx/html/assets/index-PLAjeyG7.css; \
@@ -45,7 +46,7 @@ RUN set -eux; \
 }
 CSS
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v3-local-dev-auth/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v4-local-file-router/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -106,9 +107,195 @@ const __sutraLocalDevAuth = async () => {
   }
 };
 await __sutraLocalDevAuth();
+
+const __sutraInstallFileRouter = () => {
+  if (window.__sutraLocalFileRouterInstalled) return;
+  window.__sutraLocalFileRouterInstalled = true;
+  document.documentElement.setAttribute("data-sutra-file-router", "ready");
+  const originalFetch = window.fetch.bind(window);
+  const PDFJS_URL = "/pdfjs/pdf.min.js";
+  const PDFJS_WORKER_URL = "/pdfjs/pdf.worker.min.js";
+  const MIN_EXTRACTED_CHARS = 40;
+
+  const toUrl = (input) => {
+    const raw = typeof input === "string" ? input : input && input.url;
+    if (!raw) return null;
+    try {
+      return new URL(raw, location.origin);
+    } catch {
+      return null;
+    }
+  };
+
+  const uploadRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    let match = url.pathname.match(/^\/api\/chapters\/([^/]+)\/upload$/);
+    if (match) return { kind: "chapter", id: match[1] };
+    match = url.pathname.match(/^\/api\/projects\/([^/]+)\/upload$/);
+    if (match) return { kind: "project", id: match[1] };
+    return null;
+  };
+
+  const methodOf = (init = {}) => String(init.method || "GET").toUpperCase();
+
+  const getUploadFile = (init = {}) => {
+    const body = init.body;
+    if (!(body instanceof FormData)) return null;
+    const file = body.get("file");
+    return file instanceof File ? file : null;
+  };
+
+  const extensionOf = (file) => {
+    const name = (file && file.name ? file.name : "").toLowerCase();
+    const index = name.lastIndexOf(".");
+    return index >= 0 ? name.slice(index + 1) : "";
+  };
+
+  const compactText = (text) => String(text || "").replace(/\s+/g, "");
+
+  const hasEnoughText = (text) => compactText(text).length >= MIN_EXTRACTED_CHARS;
+
+  const headersToObject = (headers) => {
+    const out = {};
+    if (!headers) return out;
+    if (headers instanceof Headers) {
+      headers.forEach((value, key) => {
+        out[key] = value;
+      });
+      return out;
+    }
+    if (Array.isArray(headers)) {
+      for (const [key, value] of headers) out[key] = value;
+      return out;
+    }
+    return { ...headers };
+  };
+
+  const jsonHeadersFrom = (headers) => {
+    const out = headersToObject(headers);
+    out["Content-Type"] = "application/json";
+    return out;
+  };
+
+  const loadPdfJs = async () => {
+    if (window.pdfjsLib) return window.pdfjsLib;
+    await new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${PDFJS_URL}"]`);
+      if (existing) {
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener("error", reject, { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = PDFJS_URL;
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("PDF.js failed to load"));
+      document.head.appendChild(script);
+    });
+    if (!window.pdfjsLib) throw new Error("PDF.js is not available");
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+    return window.pdfjsLib;
+  };
+
+  const extractPdfText = async (file) => {
+    const pdfjsLib = await loadPdfJs();
+    const data = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data }).promise;
+    const pages = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const textContent = await page.getTextContent();
+      const line = textContent.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ")
+        .replace(/[ \t]+/g, " ")
+        .trim();
+      if (line) pages.push(line);
+    }
+    return pages.join("\n\n");
+  };
+
+  const extractText = async (file) => {
+    const ext = extensionOf(file);
+    if (ext === "pdf") return extractPdfText(file);
+    if (ext === "md" || ext === "markdown" || ext === "txt") return file.text();
+    return null;
+  };
+
+  const resolveProjectChapter = async (projectId, init) => {
+    const headers = headersToObject(init.headers);
+    const chaptersResponse = await originalFetch(`/api/projects/${projectId}/chapters`, { headers });
+    if (chaptersResponse.ok) {
+      const chapters = await chaptersResponse.json();
+      if (Array.isArray(chapters) && chapters.length > 0) {
+        return chapters[chapters.length - 1].id;
+      }
+    }
+    const createResponse = await originalFetch(`/api/projects/${projectId}/chapters`, {
+      method: "POST",
+      headers: jsonHeadersFrom(init.headers),
+      body: JSON.stringify({ title: "未分章" }),
+    });
+    if (!createResponse.ok) return null;
+    const chapter = await createResponse.json();
+    return chapter && chapter.id ? chapter.id : null;
+  };
+
+  const routeTextUpload = async (route, init) => {
+    const file = getUploadFile(init);
+    if (!file) return null;
+    const ext = extensionOf(file);
+    if (!["pdf", "md", "markdown", "txt"].includes(ext)) return null;
+
+    const text = await extractText(file);
+    if (!text || !hasEnoughText(text)) return null;
+
+    const form = init.body;
+    const sourceLang = String(form.get("source_lang") || "zh");
+    const chapterId = route.kind === "chapter" ? route.id : await resolveProjectChapter(route.id, init);
+    if (!chapterId) return null;
+
+    const metadata = {
+      filename: file.name,
+      extension: ext,
+      extracted_chars: compactText(text).length,
+    };
+    const payload = {
+      content: text,
+      source_lang: sourceLang,
+      split_mode: "line",
+    };
+
+    console.info("AS译林本地文件路由：文本层直读，跳过 OCR", metadata);
+    return originalFetch(`/api/chapters/${chapterId}/upload-text`, {
+      method: "POST",
+      headers: jsonHeadersFrom(init.headers),
+      body: JSON.stringify(payload),
+    });
+  };
+
+  window.fetch = async (input, init = {}) => {
+    const route = uploadRouteFor(input);
+    if (route && methodOf(init) === "POST" && getUploadFile(init)) {
+      try {
+        const routedResponse = await routeTextUpload(route, init);
+        if (routedResponse) return routedResponse;
+      } catch (error) {
+        console.warn("AS译林本地文件路由失败，回退原上传链路", error);
+      }
+    }
+    return originalFetch(input, init);
+  };
+};
+__sutraInstallFileRouter();
 JS
 cat "$js" >> "$tmp"
+sed -i 's/拆分 PDF 页面/检测 PDF 文本层/g' "$tmp"
+sed -i 's/正在将 PDF 拆为图片（不会立即识别）\.\.\./正在检测 PDF 文本层；可直读则跳过 OCR，否则拆分页面.../g' "$tmp"
 mv "$tmp" "$js"
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-localdev.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-localdev.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v2.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v2.js#g' /usr/share/nginx/html/index.html
 SHELL
