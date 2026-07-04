@@ -46,7 +46,7 @@ RUN set -eux; \
 }
 CSS
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v4-local-file-router/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v5-local-text-layer-router/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -207,12 +207,28 @@ const __sutraInstallFileRouter = () => {
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
       const textContent = await page.getTextContent();
-      const line = textContent.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .join(" ")
-        .replace(/[ \t]+/g, " ")
-        .trim();
-      if (line) pages.push(line);
+      const items = Array.isArray(textContent.items) ? textContent.items : [];
+      const rows = new Map();
+      for (const item of items) {
+        const str = "str" in item ? String(item.str || "") : "";
+        if (!str.trim()) continue;
+        const transform = Array.isArray(item.transform) ? item.transform : [];
+        const x = Number(transform[4] || 0);
+        const y = Number(transform[5] || 0);
+        const key = String(Math.round(y / 4) * 4);
+        if (!rows.has(key)) rows.set(key, []);
+        rows.get(key).push({ str, x });
+      }
+      const pageLines = [...rows.entries()]
+        .sort((a, b) => Number(b[0]) - Number(a[0]))
+        .map(([, row]) => row
+          .sort((a, b) => a.x - b.x)
+          .map((item) => item.str)
+          .join("")
+          .replace(/[ \t]+/g, " ")
+          .trim())
+        .filter(Boolean);
+      if (pageLines.length) pages.push(pageLines.join("\n"));
     }
     return pages.join("\n\n");
   };
@@ -261,6 +277,7 @@ const __sutraInstallFileRouter = () => {
       filename: file.name,
       extension: ext,
       extracted_chars: compactText(text).length,
+      route: route.kind,
     };
     const payload = {
       content: text,
@@ -269,11 +286,15 @@ const __sutraInstallFileRouter = () => {
     };
 
     console.info("AS译林本地文件路由：文本层直读，跳过 OCR", metadata);
-    return originalFetch(`/api/chapters/${chapterId}/upload-text`, {
+    const response = await originalFetch(`/api/chapters/${chapterId}/upload-text`, {
       method: "POST",
       headers: jsonHeadersFrom(init.headers),
       body: JSON.stringify(payload),
     });
+    if (response.ok) {
+      window.dispatchEvent(new CustomEvent("sutra:file-router:direct-text", { detail: metadata }));
+    }
+    return response;
   };
 
   window.fetch = async (input, init = {}) => {
@@ -296,6 +317,6 @@ sed -i 's/拆分 PDF 页面/检测 PDF 文本层/g' "$tmp"
 sed -i 's/正在将 PDF 拆为图片（不会立即识别）\.\.\./正在检测 PDF 文本层；可直读则跳过 OCR，否则拆分页面.../g' "$tmp"
 mv "$tmp" "$js"
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-localdev.js
-cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v2.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v2.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v3.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v3.js#g' /usr/share/nginx/html/index.html
 SHELL
