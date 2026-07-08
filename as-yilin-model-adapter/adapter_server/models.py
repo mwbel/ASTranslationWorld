@@ -29,6 +29,7 @@ def model_to_wire(model: ModelConfig) -> dict[str, Any]:
         "context_window": model.context_window,
         "provider": model.provider,
         "upstream_model": model.upstream_model,
+        "aliases": model.aliases,
         "capabilities": model.capabilities,
         "privacy": model.privacy,
         "cost": model.cost,
@@ -56,7 +57,10 @@ def model_response(models: list[dict[str, Any]]) -> dict[str, Any]:
 def find_model(config: AppConfig, model_id: str | None) -> ModelConfig:
     if model_id:
         for model in config.adapter.models:
-            if model.enabled and (model.id == model_id or model.upstream_model == model_id):
+            if not model.enabled:
+                continue
+            aliases = set(model.aliases or [])
+            if model.id == model_id or model.upstream_model == model_id or model_id in aliases:
                 return model
     for model in config.adapter.models:
         if model.enabled:

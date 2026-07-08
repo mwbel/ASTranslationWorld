@@ -105,6 +105,7 @@ class ModelConfig(BaseModel):
     category: str = "quality_translation"
     supports_stream: bool = True
     supports_vision: bool = False
+    aliases: list[str] = Field(default_factory=list)
     context_window: int | None = None
     base_url: str | None = None
     base_url_env: str | None = None
@@ -129,6 +130,7 @@ class ModelConfig(BaseModel):
             self.upstream_model = self.source_model or env_value(self.model_env) or self.id
         if not self.display_name:
             self.display_name = self.id
+        self.aliases = split_list(self.aliases)
         self.api_keys = self.api_keys or ([self.api_key] if self.api_key else [])
         self.capabilities = infer_capabilities(self.upstream_model, self.provider, self.capabilities)
         if any(item in self.capabilities for item in ("vision", "ocr", "multimodal")):

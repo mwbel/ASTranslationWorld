@@ -1,0 +1,45 @@
+server:
+  host: 0.0.0.0
+  port: 18081
+  data_dir: data
+
+auth:
+  users:
+    - username: demo
+      # 开发环境可用明文；生产环境请换成 password_hash。
+      password: demo-password
+      reseller_code: demo
+      allowed_models:
+        - agg-local-qwen25
+
+providers:
+  - id: model-aggregator
+    type: model_aggregator
+    # Docker/Colima 容器内访问 Mac 宿主机上的 ModelAggregatorService。
+    base_url: http://host.docker.internal:8890
+    chat_path: /api/aggregate/chat
+    timeout_seconds: 120
+
+models:
+  - id: agg-local-qwen25
+    display_name: ModelAggregator Local Qwen2.5 14B
+    provider: model-aggregator
+    upstream_model: local:qwen2.5:14b
+    aliases:
+      - agg-gemini-flash
+      - local:qwen2.5:14b
+      - gemini-3-flash-preview
+      - gemini-3.1-pro-preview
+      - gpt-5.4
+      - claude-sonnet-4-6
+      - glm4.7
+      - qwen3.5
+      - deepseek-v3.1
+      - minimax-m2.7
+      - grok-4.20
+      - hf-qwen-zh-en
+      - Qwen/Qwen2.5-7B-Instruct
+    category: quality_translation
+    supports_stream: true
+    supports_vision: false
+    context_window: 32768

@@ -13,12 +13,30 @@
 - 提供 OpenAI-compatible 非流式 chat completions 转发。
 - 保留兜底 catch-all，用于继续观察未知协议。
 
+## 当前 MVP 方案
+
+当前探测到的 AS译林 关键协议是：
+
+- `POST /api/user/login`
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+
+因此 MVP 不改 AS译林 前端，只改适配器网关。当前默认配置已切到用户自己的 `ModelAggregatorService`：
+
+- `base_url = http://host.docker.internal:8890`
+- `chat_path = /api/aggregate/chat`
+- `upstream_model = local:qwen2.5:14b`
+
+AS译林后端仍然只访问本目录的 adapter；adapter 再把请求转成 `ModelAggregatorService /api/aggregate/chat`。这样 AS译林不直接持有 Hugging Face、Gemini、云雾或本地模型服务的 API key。
+
+默认配置给这个模型加了别名 `agg-gemini-flash`、`gemini-3-flash-preview` 和 `hf-qwen-zh-en`，这样 AS译林里已经保存过的角色配置即使还在请求旧模型名，也会落到新的本地聚合器通路，不必先手工改角色。
+
 ## 快速开始
 
 复制配置：
 
 ```bash
-cp examples/config.example.yaml config.yaml
+cp examples/model-aggregator.config.yaml config.yaml
 ```
 
 如果要直接参考 `宇宙模型MVP/models.yaml` 的聚合模型配置方式，可以改用：
@@ -62,6 +80,15 @@ gateway_endpoint = http://服务器内网IP:18081  # 适配器验证阶段
 username = demo
 password = demo-password
 ```
+
+使用默认聚合器配置时，需要先启动：
+
+```bash
+cd "/Users/Min369/Documents/同步空间/Manju/AIProjects/ModelAggregatorService"
+./start.sh
+```
+
+如果适配器跑在 Docker Compose 里，`config.yaml` 中的 `http://host.docker.internal:8890` 会从容器访问 Mac 宿主机上的聚合器服务。
 
 注意：如果 AS译林后端运行在 Docker 容器里，`127.0.0.1` 指向的是容器自身，不是宿主机。应使用宿主机内网 IP、Docker 网络别名，或把适配器加入同一个 Docker network。
 

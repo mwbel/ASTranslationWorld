@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -12,6 +14,124 @@ from adapter_server.models import find_model
 
 class ProviderError(RuntimeError):
     pass
+
+
+LITERAL_TOKEN_ID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}-t\d+\b"
+)
+
+
+def _message_text(messages: list[dict[str, str]]) -> str:
+    return "\n".join(message.get("content", "") for message in messages)
+
+
+def _literal_token_ids(messages: list[dict[str, str]]) -> list[str]:
+    seen: set[str] = set()
+    token_ids: list[str] = []
+    for token_id in LITERAL_TOKEN_ID_RE.findall(_message_text(messages)):
+        if token_id in seen:
+            continue
+        seen.add(token_id)
+        token_ids.append(token_id)
+    return token_ids
+
+
+def _looks_like_literal_request(messages: list[dict[str, str]]) -> bool:
+    text = _message_text(messages).lower()
+    return bool(_literal_token_ids(messages)) and "token_id" in text and "literal" in text
+
+
+def _repair_json_array_text(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    start = stripped.find("[")
+    end = stripped.rfind("]")
+    if start >= 0 and end > start:
+        stripped = stripped[start : end + 1]
+    stripped = re.sub(r",\s*([}\]])", r"\1", stripped)
+    return stripped
+
+
+def _coerce_literal_items(content: str, messages: list[dict[str, str]]) -> str:
+    token_ids = _literal_token_ids(messages)
+    if not token_ids:
+        return content
+
+    parsed: Any = None
+    try:
+        parsed = json.loads(_repair_json_array_text(content))
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        for key in ("items", "tokens", "literals", "entries", "translations"):
+            if isinstance(parsed.get(key), list):
+                parsed = parsed[key]
+                break
+    if not isinstance(parsed, list):
+        parsed = []
+
+    by_id: dict[str, dict[str, Any]] = {}
+    loose_items: list[dict[str, Any]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        raw_token_id = item.get("token_id") or item.get("source_token_id") or item.get("tid") or item.get("id")
+        literal = item.get("literal") or item.get("literal_text") or item.get("translation") or item.get("text")
+        if not isinstance(literal, str) or not literal.strip():
+            continue
+        normalized = {
+            "token_id": str(raw_token_id or ""),
+            "literal": literal.strip(),
+            "alt": item.get("alt") if isinstance(item.get("alt"), list) else [],
+            "note": item.get("note") if isinstance(item.get("note"), str) else "",
+        }
+        if normalized["token_id"] in token_ids and normalized["token_id"] not in by_id:
+            by_id[normalized["token_id"]] = normalized
+        else:
+            loose_items.append(normalized)
+
+    output: list[dict[str, Any]] = []
+    for index, token_id in enumerate(token_ids):
+        item = by_id.get(token_id)
+        if item is None and len(token_ids) == 1 and loose_items:
+            item = loose_items[0]
+        if item is None and len(token_ids) == 1 and content.strip():
+            item = {"literal": content.strip(), "alt": [], "note": ""}
+        if item is None:
+            continue
+        output.append(
+            {
+                "token_id": token_id,
+                "literal": str(item.get("literal") or "").strip(),
+                "alt": item.get("alt") if isinstance(item.get("alt"), list) else [],
+                "note": item.get("note") if isinstance(item.get("note"), str) else "",
+            }
+        )
+
+    if not output:
+        return content
+    return json.dumps(output, ensure_ascii=False, separators=(",", ":"))
+
+
+def _prepare_messages_for_provider(payload: dict[str, Any]) -> list[dict[str, str]]:
+    messages = normalize_messages(payload)
+    if _looks_like_literal_request(messages):
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "For this literal-generation request, return only a strict JSON array. "
+                    "Use exactly the token_id values present in the input, at most one object per token_id. "
+                    "Each object must be {\"token_id\":\"...\",\"literal\":\"...\",\"alt\":[],\"note\":\"\"}. "
+                    "Do not add markdown, comments, duplicate token_id values, or trailing commas."
+                ),
+            }
+        )
+        payload["_adapter_literal_request"] = True
+    return messages
 
 
 @dataclass(slots=True)
@@ -127,21 +247,28 @@ async def call_openai_compatible(
     if provider.api_key:
         headers["Authorization"] = f"Bearer {provider.api_key}"
 
+    messages = _prepare_messages_for_provider(payload)
     upstream_payload: dict[str, Any] = {
         "model": model.upstream_model,
-        "messages": normalize_messages(payload),
+        "messages": messages,
         "stream": False,
     }
     for key in ("temperature", "top_p", "max_tokens", "presence_penalty", "frequency_penalty"):
         if key in payload and payload[key] is not None:
             upstream_payload[key] = payload[key]
+    if payload.get("_adapter_literal_request"):
+        upstream_payload["temperature"] = 0
 
     errors: list[str] = []
     data: dict[str, Any] | None = None
     timeout = httpx.Timeout(provider.timeout_seconds)
     async with httpx.AsyncClient(timeout=timeout) as client:
         for path in _path_candidates(provider.chat_path, "/v1/chat/completions"):
-            response = await client.post(_join_url(provider.base_url, path), headers=headers, json=upstream_payload)
+            try:
+                response = await client.post(_join_url(provider.base_url, path), headers=headers, json=upstream_payload)
+            except httpx.HTTPError as exc:
+                errors.append(f"{path} -> {exc.__class__.__name__}: {exc}")
+                break
             if response.status_code >= 400:
                 errors.append(f"{path} -> HTTP {response.status_code}: {response.text[:500]}")
                 if response.status_code not in {404, 405}:
@@ -157,6 +284,8 @@ async def call_openai_compatible(
         content = data["choices"][0]["message"]["content"] or ""
     except Exception:
         content = data.get("text") or data.get("content") or ""
+    if payload.get("_adapter_literal_request"):
+        content = _coerce_literal_items(content, messages)
     return {
         "text": content,
         "content": content,
@@ -168,6 +297,87 @@ async def call_openai_compatible(
     }
 
 
+def extract_model_aggregator_content(payload: dict[str, Any]) -> str:
+    for key in ("answer", "content", "translation", "translated_text", "text", "output"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+
+    raw = payload.get("raw")
+    if isinstance(raw, dict):
+        try:
+            content = raw["choices"][0]["message"]["content"]
+            if isinstance(content, str):
+                return content
+        except Exception:
+            pass
+
+    return ""
+
+
+async def call_model_aggregator(
+    provider: RuntimeProvider,
+    model: ModelConfig,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if not provider.base_url:
+        raise ProviderError(f"Model {model.id} is missing ModelAggregatorService base_url")
+
+    headers = {"Content-Type": "application/json"}
+    if provider.api_key:
+        headers["Authorization"] = f"Bearer {provider.api_key}"
+
+    messages = _prepare_messages_for_provider(payload)
+    upstream_payload: dict[str, Any] = {
+        "model": model.upstream_model,
+        "messages": messages,
+        "metadata": {
+            "adapter_model_id": model.id,
+            "adapter_provider": provider.id,
+            "source": "as-yilin-model-adapter",
+        },
+    }
+    if payload.get("temperature") is not None:
+        upstream_payload["temperature"] = payload["temperature"]
+    if payload.get("top_p") is not None:
+        upstream_payload["topP"] = payload["top_p"]
+    if payload.get("maxTokens") is not None:
+        upstream_payload["maxTokens"] = payload["maxTokens"]
+    elif payload.get("max_tokens") is not None:
+        upstream_payload["maxTokens"] = payload["max_tokens"]
+    if payload.get("_adapter_literal_request"):
+        upstream_payload["temperature"] = 0
+
+    timeout = httpx.Timeout(provider.timeout_seconds)
+    url = _join_url(provider.base_url, provider.chat_path or "/api/aggregate/chat")
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, headers=headers, json=upstream_payload)
+    except httpx.HTTPError as exc:
+        raise ProviderError(f"/api/aggregate/chat -> {exc.__class__.__name__}: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise ProviderError(f"/api/aggregate/chat -> HTTP {response.status_code}: {response.text[:500]}")
+
+    data = response.json()
+    if data.get("ok") is False:
+        raise ProviderError(str(data.get("error") or data.get("message") or "ModelAggregatorService returned ok=false"))
+
+    content = extract_model_aggregator_content(data)
+    if payload.get("_adapter_literal_request"):
+        content = _coerce_literal_items(content, messages)
+    usage = data.get("usage") or {}
+    return {
+        "text": content,
+        "content": content,
+        "translation": content,
+        "message": {"role": "assistant", "content": content},
+        "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": data.get("finishReason")}],
+        "usage": usage,
+        "provider_response": data,
+    }
+
+
 async def call_gemini(provider: RuntimeProvider, model: ModelConfig, payload: dict[str, Any]) -> dict[str, Any]:
     if not provider.base_url:
         raise ProviderError(f"Gemini model {model.id} is missing base_url")
@@ -175,7 +385,7 @@ async def call_gemini(provider: RuntimeProvider, model: ModelConfig, payload: di
     if not api_keys:
         raise ProviderError(f"Gemini model {model.id} is missing api_keys")
 
-    messages = normalize_messages(payload)
+    messages = _prepare_messages_for_provider(payload)
     system_parts: list[str] = []
     contents: list[dict[str, Any]] = []
     for message in messages:
@@ -191,7 +401,7 @@ async def call_gemini(provider: RuntimeProvider, model: ModelConfig, payload: di
 
     request_body: dict[str, Any] = {
         "contents": contents,
-        "generationConfig": {"temperature": payload.get("temperature", 0.2)},
+        "generationConfig": {"temperature": 0 if payload.get("_adapter_literal_request") else payload.get("temperature", 0.2)},
     }
     if system_parts:
         request_body["systemInstruction"] = {"parts": [{"text": "\n\n".join(system_parts)}]}
@@ -222,6 +432,8 @@ async def call_gemini(provider: RuntimeProvider, model: ModelConfig, payload: di
             if not content:
                 errors.append(f"key#{index} -> empty response")
                 continue
+            if payload.get("_adapter_literal_request"):
+                content = _coerce_literal_items(content, messages)
             usage = data.get("usageMetadata") or {}
             return {
                 "text": content,
@@ -243,6 +455,8 @@ async def call_gemini(provider: RuntimeProvider, model: ModelConfig, payload: di
 async def generate_text(config: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
     model = find_model(config, extract_model_id(payload))
     provider = _provider_from_model(config, model)
+    if provider.type == "model_aggregator":
+        return await call_model_aggregator(provider, model, payload)
     if provider.type == "gemini":
         return await call_gemini(provider, model, payload)
     if provider.type != "openai_compatible":

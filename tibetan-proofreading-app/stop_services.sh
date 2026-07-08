@@ -3,7 +3,7 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RUNTIME_DIR="${BDRC_RUNTIME_DIR:-${TMPDIR:-/tmp}/bdrc-ocr-compare-services-${UID}}"
+RUNTIME_DIR="${BDRC_RUNTIME_DIR:-${TMPDIR:-/tmp}/tibetan-proofreading-app-services-${UID}}"
 
 stop_service() {
   name="$1"
@@ -38,6 +38,7 @@ stop_service() {
 
 stop_service frontend
 stop_service ocr
+stop_service ai_ocr
 stop_service translate
 
 echo "日志保留在：$RUNTIME_DIR"

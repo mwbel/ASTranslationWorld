@@ -44,9 +44,102 @@ RUN set -eux; \
     background: linear-gradient(180deg, rgba(2, 5, 24, 0.6), rgba(2, 5, 24, 0.78)) !important;
   }
 }
+
+/* Local workspace patch: make the left navigation sidebar resizable. */
+.sidebar {
+  position: relative;
+}
+
+.sidebar__resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 30;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar__resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.sidebar__resize-handle:hover::after,
+body.sidebar-resizing .sidebar__resize-handle::after {
+  background: var(--gold, #b8963e);
+}
+
+.sidebar.collapsed .sidebar__resize-handle {
+  display: none;
+}
+
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* Local workspace patch: keep fallback text source compact; PDF uses original page images. */
+.text-source-viewer__content {
+  padding: 14px 18px 80px !important;
+  background: #fbfaf6 !important;
+}
+
+.text-source-viewer__segment {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 10px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  margin: 0 0 4px !important;
+  padding: 4px 6px !important;
+  min-height: auto !important;
+  border: 0 !important;
+  border-left: 2px solid transparent !important;
+  border-radius: 3px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.text-source-viewer__segment:hover,
+.text-source-viewer__segment[data-sutra-sync-block="ready"]:hover {
+  border-left-color: rgba(184, 150, 62, 0.98) !important;
+  background: rgba(184, 150, 62, 0.08) !important;
+}
+
+.text-source-viewer__num {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 999px !important;
+  background: rgba(184, 150, 62, 0.1) !important;
+  color: #8a6e25 !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  font-weight: 600 !important;
+}
+
+.text-source-viewer__text {
+  min-width: 0 !important;
+  color: #4d4639 !important;
+  font-size: 16px !important;
+  line-height: 1.62 !important;
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+}
 CSS
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v5-local-text-layer-router/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v21-direct-read-token-refresh/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -108,6 +201,115 @@ const __sutraLocalDevAuth = async () => {
 };
 await __sutraLocalDevAuth();
 
+const __sutraInstallLocalStyles = () => {
+  if (document.getElementById("sutra-local-block-sync-styles")) return;
+  const style = document.createElement("style");
+  style.id = "sutra-local-block-sync-styles";
+  style.textContent = `
+    .text-source-viewer__content {
+      padding: 14px 18px 80px !important;
+      background: #fbfaf6 !important;
+    }
+    .text-source-viewer__segment {
+      display: flex !important;
+      align-items: baseline !important;
+      gap: 10px !important;
+      box-sizing: border-box !important;
+      width: 100% !important;
+      margin: 0 0 4px !important;
+      padding: 4px 6px !important;
+      min-height: auto !important;
+      border: 0 !important;
+      border-left: 2px solid transparent !important;
+      border-radius: 3px !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .text-source-viewer__segment:hover,
+    .text-source-viewer__segment[data-sutra-sync-block="ready"]:hover {
+      border-left-color: rgba(184, 150, 62, 0.98) !important;
+      background: rgba(184, 150, 62, 0.08) !important;
+    }
+    .text-source-viewer__num {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      width: 22px !important;
+      height: 22px !important;
+      border-radius: 999px !important;
+      background: rgba(184, 150, 62, 0.1) !important;
+      color: #8a6e25 !important;
+      font-size: 13px !important;
+      line-height: 1 !important;
+      font-weight: 600 !important;
+    }
+    .text-source-viewer__text {
+      min-width: 0 !important;
+      color: #4d4639 !important;
+      font-size: 16px !important;
+      line-height: 1.62 !important;
+      white-space: pre-wrap !important;
+      overflow-wrap: anywhere !important;
+    }
+  `;
+  document.head.appendChild(style);
+};
+__sutraInstallLocalStyles();
+
+const __sutraInstallAutoEnglishTarget = () => {
+  if (window.__sutraLocalAutoEnglishTargetInstalled) return;
+  window.__sutraLocalAutoEnglishTargetInstalled = true;
+
+  let timer = 0;
+  let lastSwitchKey = "";
+
+  const countMatches = (text, pattern) => (String(text || "").match(pattern) || []).length;
+
+  const currentSourceSample = () => Array.from(document.querySelectorAll(
+    ".text-source-viewer__text, .source-token"
+  ))
+    .slice(0, 120)
+    .map((node) => node.textContent || "")
+    .join("")
+    .slice(0, 1200);
+
+  const shouldPreferEnglish = () => {
+    const sample = currentSourceSample();
+    if (!sample) return false;
+    const zhCount = countMatches(sample, /[\u3400-\u9fff]/g);
+    const boCount = countMatches(sample, /[\u0f00-\u0fff]/g);
+    return zhCount >= Math.max(16, boCount * 2);
+  };
+
+  const maybeSwitch = () => {
+    timer = 0;
+    const activeTab = document.querySelector(".lang-tab.active");
+    if (!activeTab || !activeTab.textContent.includes("中文")) return;
+    const englishTab = Array.from(document.querySelectorAll(".lang-tab"))
+      .find((tab) => tab.textContent.includes("English"));
+    if (!englishTab || !shouldPreferEnglish()) return;
+
+    const key = `${location.pathname}|${currentSourceSample().slice(0, 160)}`;
+    if (key === lastSwitchKey) return;
+    lastSwitchKey = key;
+    englishTab.click();
+    console.info("AS译林本地补丁：检测到中文源文，自动切到 English 译文栏");
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(maybeSwitch, 180);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  window.addEventListener("sutra:file-router:direct-text", schedule);
+  window.addEventListener("focus", schedule);
+  [600, 1500, 3500, 7000].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraInstallAutoEnglishTarget();
+
 const __sutraInstallFileRouter = () => {
   if (window.__sutraLocalFileRouterInstalled) return;
   window.__sutraLocalFileRouterInstalled = true;
@@ -116,6 +318,7 @@ const __sutraInstallFileRouter = () => {
   const PDFJS_URL = "/pdfjs/pdf.min.js";
   const PDFJS_WORKER_URL = "/pdfjs/pdf.worker.min.js";
   const MIN_EXTRACTED_CHARS = 40;
+  const MIN_PAGE_EXTRACTED_CHARS = 2;
 
   const toUrl = (input) => {
     const raw = typeof input === "string" ? input : input && input.url;
@@ -137,6 +340,34 @@ const __sutraInstallFileRouter = () => {
     return null;
   };
 
+  const pagesRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    const match = url.pathname.match(/^\/api\/chapters\/([^/]+)\/pages$/);
+    return match ? { chapterId: match[1] } : null;
+  };
+
+  const segmentsRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    const match = url.pathname.match(/^\/api\/pages\/([^/]+)\/segments$/);
+    return match ? { pageId: match[1] } : null;
+  };
+
+  const pageOcrRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    const match = url.pathname.match(/^\/api\/pages\/([^/]+)\/ocr$/);
+    return match ? { pageId: match[1] } : null;
+  };
+
+  const chapterOcrAllRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    const match = url.pathname.match(/^\/api\/chapters\/([^/]+)\/ocr-all$/);
+    return match ? { chapterId: match[1] } : null;
+  };
+
   const methodOf = (init = {}) => String(init.method || "GET").toUpperCase();
 
   const getUploadFile = (init = {}) => {
@@ -152,9 +383,121 @@ const __sutraInstallFileRouter = () => {
     return index >= 0 ? name.slice(index + 1) : "";
   };
 
+  const chapterTitleFor = (file) => {
+    const name = file && file.name ? String(file.name) : "";
+    const clean = name.replace(/\.[^.]+$/, "").trim();
+    return clean || "文本层导入";
+  };
+
   const compactText = (text) => String(text || "").replace(/\s+/g, "");
 
   const hasEnoughText = (text) => compactText(text).length >= MIN_EXTRACTED_CHARS;
+
+  const hasEnoughPageText = (text) => {
+    const value = compactText(text);
+    return value.length >= MIN_PAGE_EXTRACTED_CHARS && /[\u3400-\u9fff\u0f00-\u0fffA-Za-z0-9]/.test(value);
+  };
+
+  const pageTextLength = (page) => compactText(page && page.digital_text).length;
+
+  const isDirectTextPage = (page) => (
+    page &&
+    page.source_type === "text" &&
+    page.ocr_status === "done" &&
+    pageTextLength(page) >= MIN_EXTRACTED_CHARS
+  );
+
+  const isLocalSmokeTextPage = (page) => {
+    const sample = String(page && page.digital_text ? page.digital_text : "").slice(0, 240).toLowerCase();
+    return sample.includes("as yilin file router test pdf text layer");
+  };
+
+  const pageRedirects = new Map();
+  const pageCache = new Map();
+  const pdfDocumentCache = new Map();
+  const directReadInFlight = new Map();
+  const directReadTried = new Set();
+
+  const rememberPages = (pages, chapterId) => {
+    if (!Array.isArray(pages)) return;
+    for (const page of pages) {
+      if (!page || !page.id) continue;
+      pageCache.set(page.id, {
+        ...page,
+        chapter_id: page.chapter_id || chapterId,
+      });
+    }
+  };
+
+  const isEditablePdfPage = (page) => (
+    page &&
+    page.source_type === "pdf_page" &&
+    page.chapter_id &&
+    page.source_file &&
+    String(page.source_file).toLowerCase().endsWith(".pdf")
+  );
+
+  const detectSourceLang = (text, fallback = "zh") => {
+    const value = String(text || "");
+    const zhCount = (value.match(/[\u3400-\u9fff]/g) || []).length;
+    const boCount = (value.match(/[\u0f00-\u0fff]/g) || []).length;
+    if (zhCount >= Math.max(8, boCount * 2)) return "zh";
+    if (boCount >= Math.max(8, zhCount * 2)) return "bo";
+    return fallback || "zh";
+  };
+
+  const normalizePages = (pages, chapterId) => {
+    if (!Array.isArray(pages)) return pages;
+    const pdfPages = pages.filter((page) => page && page.source_type === "pdf_page");
+    const directTextPages = pages.filter(isDirectTextPage).filter((page) => !isLocalSmokeTextPage(page));
+    if (!pdfPages.length || !directTextPages.length) return pages;
+
+    const selectedPdfPages = pdfPages
+      .slice()
+      .sort((a, b) => (
+        Number(a.page_number || 0) - Number(b.page_number || 0) ||
+        new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+      ));
+    if (!selectedPdfPages.length) return pages;
+
+    console.info("AS译林本地文件路由：章节存在 PDF 页，保留原图页并隐藏旧直读文本页", {
+      chapterId,
+      original_pages: pages.length,
+      pdf_pages: selectedPdfPages.length,
+      hidden_text_pages: directTextPages.length,
+    });
+
+    return selectedPdfPages.map((page, index) => ({
+      ...page,
+      page_number: index + 1,
+      source_type: "pdf_page",
+    }));
+  };
+
+  const rewritePagesResponse = async (input, response) => {
+    const route = pagesRouteFor(input);
+    if (!route || !response || !response.ok) return response;
+    const contentType = response.headers && response.headers.get ? response.headers.get("content-type") || "" : "";
+    if (!contentType.includes("application/json")) return response;
+    try {
+      const payload = await response.clone().json();
+      rememberPages(payload, route.chapterId);
+      const normalized = normalizePages(payload, route.chapterId);
+      if (normalized === payload) return response;
+      const headers = new Headers(response.headers);
+      headers.set("Content-Type", "application/json");
+      headers.delete("Content-Length");
+      headers.delete("content-length");
+      return new Response(JSON.stringify(normalized), {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    } catch (error) {
+      console.warn("AS译林本地文件路由：页面列表修正失败，使用原始响应", error);
+      return response;
+    }
+  };
 
   const headersToObject = (headers) => {
     const out = {};
@@ -199,6 +542,32 @@ const __sutraInstallFileRouter = () => {
     return window.pdfjsLib;
   };
 
+  const extractPdfJsPageText = async (page) => {
+    const textContent = await page.getTextContent();
+    const items = Array.isArray(textContent.items) ? textContent.items : [];
+    const rows = new Map();
+    for (const item of items) {
+      const str = "str" in item ? String(item.str || "") : "";
+      if (!str.trim()) continue;
+      const transform = Array.isArray(item.transform) ? item.transform : [];
+      const x = Number(transform[4] || 0);
+      const y = Number(transform[5] || 0);
+      const key = String(Math.round(y / 4) * 4);
+      if (!rows.has(key)) rows.set(key, []);
+      rows.get(key).push({ str, x });
+    }
+    const pageLines = [...rows.entries()]
+      .sort((a, b) => Number(b[0]) - Number(a[0]))
+      .map(([, row]) => row
+        .sort((a, b) => a.x - b.x)
+        .map((item) => item.str)
+        .join("")
+        .replace(/[ \t]+/g, " ")
+        .trim())
+      .filter(Boolean);
+    return pageLines.join("\n");
+  };
+
   const extractPdfText = async (file) => {
     const pdfjsLib = await loadPdfJs();
     const data = await file.arrayBuffer();
@@ -206,31 +575,40 @@ const __sutraInstallFileRouter = () => {
     const pages = [];
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
-      const textContent = await page.getTextContent();
-      const items = Array.isArray(textContent.items) ? textContent.items : [];
-      const rows = new Map();
-      for (const item of items) {
-        const str = "str" in item ? String(item.str || "") : "";
-        if (!str.trim()) continue;
-        const transform = Array.isArray(item.transform) ? item.transform : [];
-        const x = Number(transform[4] || 0);
-        const y = Number(transform[5] || 0);
-        const key = String(Math.round(y / 4) * 4);
-        if (!rows.has(key)) rows.set(key, []);
-        rows.get(key).push({ str, x });
-      }
-      const pageLines = [...rows.entries()]
-        .sort((a, b) => Number(b[0]) - Number(a[0]))
-        .map(([, row]) => row
-          .sort((a, b) => a.x - b.x)
-          .map((item) => item.str)
-          .join("")
-          .replace(/[ \t]+/g, " ")
-          .trim())
-        .filter(Boolean);
-      if (pageLines.length) pages.push(pageLines.join("\n"));
+      const text = await extractPdfJsPageText(page);
+      if (text) pages.push(text);
     }
     return pages.join("\n\n");
+  };
+
+  const storagePdfUrlForPage = (page) => {
+    if (!isEditablePdfPage(page)) return null;
+    const filename = String(page.source_file).split("/").map(encodeURIComponent).join("/");
+    return `/storage/${page.chapter_id}/${filename}`;
+  };
+
+  const getStoredPdf = async (page) => {
+    const pdfjsLib = await loadPdfJs();
+    const url = storagePdfUrlForPage(page);
+    if (!url) return null;
+    if (!pdfDocumentCache.has(url)) {
+      pdfDocumentCache.set(url, (async () => {
+        const response = await originalFetch(url);
+        if (!response.ok) throw new Error(`PDF 获取失败 HTTP ${response.status}`);
+        const data = await response.arrayBuffer();
+        return pdfjsLib.getDocument({ data }).promise;
+      })());
+    }
+    return pdfDocumentCache.get(url);
+  };
+
+  const extractStoredPdfPageText = async (page) => {
+    const pdf = await getStoredPdf(page);
+    if (!pdf) return "";
+    const pageNumber = Number(page.pdf_page_index || page.page_number || 1);
+    const safePageNumber = Math.max(1, Math.min(pdf.numPages, pageNumber));
+    const pdfPage = await pdf.getPage(safePageNumber);
+    return extractPdfJsPageText(pdfPage);
   };
 
   const extractText = async (file) => {
@@ -240,19 +618,62 @@ const __sutraInstallFileRouter = () => {
     return null;
   };
 
-  const resolveProjectChapter = async (projectId, init) => {
-    const headers = headersToObject(init.headers);
-    const chaptersResponse = await originalFetch(`/api/projects/${projectId}/chapters`, { headers });
-    if (chaptersResponse.ok) {
-      const chapters = await chaptersResponse.json();
-      if (Array.isArray(chapters) && chapters.length > 0) {
-        return chapters[chapters.length - 1].id;
+  const terminalPunctuationFor = (sourceLang) => {
+    if (sourceLang === "bo") return /[།༎༏༐༑༔]$/;
+    return /[。！？!?；;]$/;
+  };
+
+  const isLikelyStandaloneLine = (line, sourceLang) => {
+    const value = compactText(line);
+    if (!value) return false;
+    if (/^[-*+•·]\s+/.test(line) || /^\d+[.)、]/.test(line)) return true;
+    if (sourceLang === "bo") return value.length <= 12 && !terminalPunctuationFor(sourceLang).test(value);
+    return value.length <= 12 && !/[，,、。！？!?；;：:]/.test(value);
+  };
+
+  const normalizeDirectTextForSegmentation = (text, sourceLang, extension) => {
+    const normalized = String(text || "")
+      .replace(/\r\n?/g, "\n")
+      .replace(/\u00a0/g, " ");
+    if (extension !== "pdf") return normalized;
+
+    const endPunctuation = terminalPunctuationFor(sourceLang);
+    const blocks = [];
+    let buffer = [];
+
+    const flush = () => {
+      const value = buffer
+        .join("")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\s+([，,。！？!?；;：:])/g, "$1")
+        .trim();
+      if (value) blocks.push(value);
+      buffer = [];
+    };
+
+    for (const rawLine of normalized.split("\n")) {
+      const line = rawLine.replace(/[ \t]+/g, " ").trim();
+      if (!line) {
+        flush();
+        continue;
       }
+      if (!buffer.length && isLikelyStandaloneLine(line, sourceLang)) {
+        blocks.push(line);
+        continue;
+      }
+      buffer.push(line);
+      if (endPunctuation.test(line)) flush();
     }
+    flush();
+
+    return blocks.length ? blocks.join("\n") : normalized;
+  };
+
+  const resolveProjectChapter = async (projectId, init, file) => {
     const createResponse = await originalFetch(`/api/projects/${projectId}/chapters`, {
       method: "POST",
       headers: jsonHeadersFrom(init.headers),
-      body: JSON.stringify({ title: "未分章" }),
+      body: JSON.stringify({ title: chapterTitleFor(file) }),
     });
     if (!createResponse.ok) return null;
     const chapter = await createResponse.json();
@@ -263,24 +684,29 @@ const __sutraInstallFileRouter = () => {
     const file = getUploadFile(init);
     if (!file) return null;
     const ext = extensionOf(file);
-    if (!["pdf", "md", "markdown", "txt"].includes(ext)) return null;
+    if (ext === "pdf") return null;
+    if (!["md", "markdown", "txt"].includes(ext)) return null;
 
     const text = await extractText(file);
     if (!text || !hasEnoughText(text)) return null;
 
     const form = init.body;
-    const sourceLang = String(form.get("source_lang") || "zh");
-    const chapterId = route.kind === "chapter" ? route.id : await resolveProjectChapter(route.id, init);
+    const sourceLang = detectSourceLang(text, String(form.get("source_lang") || "zh"));
+    const chapterId = route.kind === "chapter" ? route.id : await resolveProjectChapter(route.id, init, file);
     if (!chapterId) return null;
+    const segmentedText = normalizeDirectTextForSegmentation(text, sourceLang, ext);
+    const blockCount = segmentedText.split("\n").filter((line) => line.trim()).length;
 
     const metadata = {
       filename: file.name,
       extension: ext,
       extracted_chars: compactText(text).length,
+      segmented_blocks: blockCount,
+      segmentation: ext === "pdf" ? "paragraph" : "source",
       route: route.kind,
     };
     const payload = {
-      content: text,
+      content: segmentedText,
       source_lang: sourceLang,
       split_mode: "line",
     };
@@ -297,6 +723,268 @@ const __sutraInstallFileRouter = () => {
     return response;
   };
 
+  const responseFromJson = (payload, status = 200) => new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  const showDirectReadNotice = (message, type = "info", timeout = 4200) => {
+    if (!message || !document || !document.body) return;
+    const id = "__sutra-local-direct-read-notice";
+    let notice = document.getElementById(id);
+    if (!notice) {
+      notice = document.createElement("div");
+      notice.id = id;
+      notice.style.position = "fixed";
+      notice.style.top = "18px";
+      notice.style.right = "18px";
+      notice.style.zIndex = "2147483647";
+      notice.style.maxWidth = "460px";
+      notice.style.padding = "12px 16px";
+      notice.style.borderRadius = "8px";
+      notice.style.boxShadow = "0 14px 36px rgba(33, 27, 18, 0.2)";
+      notice.style.fontSize = "14px";
+      notice.style.lineHeight = "1.55";
+      notice.style.fontWeight = "600";
+      notice.style.transition = "opacity 160ms ease, transform 160ms ease";
+      document.body.appendChild(notice);
+    }
+    const palette = {
+      info: ["#f9f4e7", "#c59d36", "#5a4b22"],
+      success: ["#edf8f1", "#2f8a54", "#24543a"],
+      warning: ["#fff7e6", "#d4911c", "#6a470f"],
+      error: ["#fff0ed", "#cf5647", "#8b2f25"],
+    };
+    const [background, border, color] = palette[type] || palette.info;
+    notice.textContent = message;
+    notice.style.background = background;
+    notice.style.border = `1px solid ${border}`;
+    notice.style.color = color;
+    notice.style.opacity = "1";
+    notice.style.transform = "translateY(0)";
+    window.clearTimeout(window.__sutraLocalDirectReadNoticeTimer);
+    window.__sutraLocalDirectReadNoticeTimer = window.setTimeout(() => {
+      notice.style.opacity = "0";
+      notice.style.transform = "translateY(-6px)";
+    }, timeout);
+  };
+
+  const revealWorkbenchForDirectRead = (message) => {
+    window.setTimeout(() => {
+      const candidates = Array.from(document.querySelectorAll("button, [role='tab'], a"))
+        .filter((node) => /工作台/.test((node.textContent || "").trim()));
+      const workbenchTab = candidates.find((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      if (!workbenchTab) {
+        showDirectReadNotice(`${message}；请点击顶部「工作台」查看源文分段。`, "warning", 7600);
+        return;
+      }
+      const className = String(workbenchTab.className || "");
+      const isActive = workbenchTab.getAttribute("aria-selected") === "true" || /active|selected|current/.test(className);
+      if (!isActive) workbenchTab.click();
+      window.setTimeout(() => {
+        const hasSegmentCards = Boolean(document.querySelector(".segments-list .segment-card"));
+        if (hasSegmentCards) {
+          showDirectReadNotice(`${message}；已切回「工作台」查看源文分段。`, "success", 5200);
+        } else {
+          showDirectReadNotice(`${message}；如右栏仍未出现分段，请再次点击顶部「工作台」。`, "warning", 7600);
+        }
+      }, 450);
+    }, 120);
+  };
+
+  const directReadFailure = (message, extra = {}) => {
+    showDirectReadNotice(message, "error", 7200);
+    return responseFromJson({
+      error: message,
+      routed: "pdf_text_layer",
+      ...extra,
+    }, 422);
+  };
+
+  const installConfirmTextGuard = () => {
+    if (window.__sutraLocalDirectReadConfirmGuardInstalled) return;
+    window.__sutraLocalDirectReadConfirmGuardInstalled = true;
+    const originalConfirm = window.confirm.bind(window);
+    window.confirm = (message) => {
+      const rawText = String(message || "");
+      const text = String(message || "")
+        .replace(/对章节"([^"]+)"里所有 pending 页跑 OCR？/g, '对章节"$1"里所有 pending 页执行文本层直读？')
+        .replace(/每页一次 LLM Vision 调用，耗时取决于页数（每页 5–20 秒）。/g, "优先读取 PDF 文本层；无法读出有效文本时会停止并提示，不再自动识别。")
+        .replace(/OCR/g, "文本层直读")
+        .replace(/LLM Vision/g, "PDF 文本层");
+      const isDirectReadPrompt = /pending 页跑 OCR|pending 页执行文本层直读|这一页执行 OCR|PDF 文本层|LLM Vision/.test(rawText) || /文本层直读|PDF 文本层/.test(text);
+      if (isDirectReadPrompt) {
+        showDirectReadNotice("已开始 PDF 文本层直读，请稍候。", "info", 3200);
+        return true;
+      }
+      return originalConfirm(text);
+    };
+  };
+  installConfirmTextGuard();
+
+  const routePdfPageOcrAsText = async (pageId, init = {}) => {
+    const page = pageCache.get(pageId);
+    if (!isEditablePdfPage(page)) return null;
+    const text = await extractStoredPdfPageText(page);
+    if (!hasEnoughPageText(text)) {
+      return directReadFailure("该 PDF 页未读出有效文本层，已停止直读；请确认是否为扫描件后再手动 OCR。", {
+        page_id: pageId,
+        page_number: page.page_number,
+        extracted_chars: compactText(text).length,
+      });
+    }
+    const sourceLang = detectSourceLang(text, "zh");
+    const segmentedText = normalizeDirectTextForSegmentation(text, sourceLang, "pdf");
+    const blockCount = segmentedText.split("\n").filter((line) => line.trim()).length;
+    const payload = {
+      content: segmentedText,
+      source_lang: sourceLang,
+      split_mode: "line",
+    };
+    showDirectReadNotice(`正在直读 P${page.page_number || ""} 文本层...`, "info", 2600);
+    console.info("AS译林本地文件路由：当前 PDF 页有文本层，改用直接分段，跳过 OCR", {
+      page_id: pageId,
+      page_number: page.page_number,
+      source_file: page.source_file,
+      extracted_chars: compactText(text).length,
+      segmented_blocks: blockCount,
+      segmentation: "paragraph",
+      source_lang: sourceLang,
+    });
+    const response = await originalFetch(`/api/pages/${pageId}/resegment`, {
+      method: "POST",
+      headers: jsonHeadersFrom(init.headers),
+      body: JSON.stringify(payload),
+    });
+    let routedResponse = response;
+    if (response.ok) {
+      const responseBody = await response.clone().json().catch(() => ({}));
+      routedResponse = responseFromJson({
+        ...responseBody,
+        page_id: pageId,
+        page_number: page.page_number,
+        token_count: Number(responseBody.token_count || blockCount || 1),
+        segment_count: Number(responseBody.segment_count || blockCount || 1),
+        routed: "pdf_text_layer",
+      }, response.status);
+      pageCache.set(pageId, {
+        ...page,
+        ocr_status: "done",
+        digital_text: text,
+      });
+      window.dispatchEvent(new CustomEvent("sutra:file-router:direct-page-text", {
+        detail: { page_id: pageId, page_number: page.page_number, source_lang: sourceLang },
+      }));
+      if (typeof window.__sutraLocalMarkDirectReadDone === "function") {
+        window.__sutraLocalMarkDirectReadDone(page.page_number);
+      }
+      revealWorkbenchForDirectRead(`P${page.page_number || ""} 已直读完成，生成 ${blockCount} 段结构`);
+    } else {
+      showDirectReadNotice(`P${page.page_number || ""} 直读请求失败，请查看当前页错误提示。`, "error", 6200);
+    }
+    return routedResponse;
+  };
+
+  const shouldAutoDirectReadPage = (page) => (
+    isEditablePdfPage(page) &&
+    page.ocr_status !== "done" &&
+    !hasEnoughPageText(page.digital_text)
+  );
+
+  const ensurePdfPageTextSegments = async (pageId, init = {}) => {
+    const page = pageCache.get(pageId);
+    if (!shouldAutoDirectReadPage(page) || directReadTried.has(pageId)) return false;
+    if (!directReadInFlight.has(pageId)) {
+      directReadTried.add(pageId);
+      directReadInFlight.set(pageId, routePdfPageOcrAsText(pageId, init)
+        .then((response) => Boolean(response && response.ok))
+        .catch((error) => {
+          console.warn("AS译林本地文件路由：自动直读 PDF 文本层失败，保留原分段响应", {
+            page_id: pageId,
+            error,
+          });
+          return false;
+        })
+        .finally(() => {
+          directReadInFlight.delete(pageId);
+        }));
+    }
+    return directReadInFlight.get(pageId);
+  };
+
+  const routeChapterOcrAllAsText = async (chapterId, init) => {
+    const pages = [...pageCache.values()]
+      .filter((page) => page && page.chapter_id === chapterId && isEditablePdfPage(page))
+      .sort((a, b) => Number(a.page_number || 0) - Number(b.page_number || 0));
+    if (!pages.length) {
+      return responseFromJson({
+        error: "当前章节的 PDF 页面缓存尚未就绪，已停止直读；请刷新页面后重试，不会自动跑 OCR。",
+        total: 0,
+        done: 0,
+        errors: 1,
+        routed: "pdf_text_layer",
+      }, 409);
+    }
+
+    const targetPages = pages.filter(shouldAutoDirectReadPage);
+    if (!targetPages.length) {
+      const message = `当前章节没有待直读页面；已完成 ${pages.length} 页可直接查看右栏结构。`;
+      showDirectReadNotice(message, "success", 5200);
+      return responseFromJson({
+        total: pages.length,
+        target: 0,
+        done: 0,
+        errors: 0,
+        skipped: pages.length,
+        message,
+        routed: "pdf_text_layer",
+      });
+    }
+
+    showDirectReadNotice(`开始批量直读 ${targetPages.length} 个待处理页面...`, "info", 4200);
+    let done = 0;
+    let errors = 0;
+    let totalTokens = 0;
+    for (const page of targetPages) {
+      try {
+        const response = await routePdfPageOcrAsText(page.id, init);
+        if (!response || !response.ok) {
+          errors += 1;
+          continue;
+        }
+        const data = await response.clone().json().catch(() => ({}));
+        totalTokens += Number(data.token_count || 0);
+        done += 1;
+      } catch (error) {
+        console.warn("AS译林本地文件路由：PDF 文本层批量分段失败", {
+          page_id: page.id,
+          error,
+        });
+        errors += 1;
+      }
+    }
+    const message = errors
+      ? `批量直读完成：${done} 页生成结构，${errors} 页无有效文本层或请求失败。`
+      : `批量直读完成：${done} 页已生成右栏结构。`;
+    if (done > 0) {
+      revealWorkbenchForDirectRead(message);
+    } else {
+      showDirectReadNotice(message, errors ? "warning" : "success", 7200);
+    }
+    return responseFromJson({
+      total: targetPages.length,
+      done,
+      errors,
+      skipped: pages.length - targetPages.length,
+      message,
+      token_count: totalTokens,
+      routed: "pdf_text_layer",
+    });
+  };
+
   window.fetch = async (input, init = {}) => {
     const route = uploadRouteFor(input);
     if (route && methodOf(init) === "POST" && getUploadFile(init)) {
@@ -307,16 +995,302 @@ const __sutraInstallFileRouter = () => {
         console.warn("AS译林本地文件路由失败，回退原上传链路", error);
       }
     }
-    return originalFetch(input, init);
+    const method = methodOf(init);
+    if (method === "POST") {
+      const pageOcrRoute = pageOcrRouteFor(input);
+      if (pageOcrRoute) {
+        try {
+          const routedResponse = await routePdfPageOcrAsText(pageOcrRoute.pageId, init);
+          if (routedResponse) return routedResponse;
+        } catch (error) {
+          const page = pageCache.get(pageOcrRoute.pageId);
+          if (isEditablePdfPage(page)) {
+            console.warn("AS译林本地文件路由：PDF 页文本层分段失败，停止 OCR 回退", error);
+            return directReadFailure("PDF 页文本层直读失败，已停止；不会自动跑 OCR。", {
+              page_id: pageOcrRoute.pageId,
+              message: error && error.message ? error.message : String(error),
+            });
+          }
+          console.warn("AS译林本地文件路由：非 PDF 页文本层分段失败，回退 OCR", error);
+        }
+      }
+      const chapterOcrAllRoute = chapterOcrAllRouteFor(input);
+      if (chapterOcrAllRoute) {
+        try {
+          const routedResponse = await routeChapterOcrAllAsText(chapterOcrAllRoute.chapterId, init);
+          if (routedResponse) return routedResponse;
+        } catch (error) {
+          console.warn("AS译林本地文件路由：PDF 批量文本层分段失败，停止 OCR 回退", error);
+          return directReadFailure("PDF 批量文本层直读失败，已停止；不会自动跑 OCR。", {
+            chapter_id: chapterOcrAllRoute.chapterId,
+            message: error && error.message ? error.message : String(error),
+          });
+        }
+      }
+    }
+    const segmentsRoute = segmentsRouteFor(input);
+    if (segmentsRoute && method === "GET") {
+      const redirectedPageId = pageRedirects.get(segmentsRoute.pageId);
+      if (redirectedPageId && redirectedPageId !== segmentsRoute.pageId) {
+        return originalFetch(`/api/pages/${redirectedPageId}/segments`, init);
+      }
+      await ensurePdfPageTextSegments(segmentsRoute.pageId, init);
+    }
+    const response = await originalFetch(input, init);
+    if (method === "GET" && pagesRouteFor(input)) {
+      return rewritePagesResponse(input, response);
+    }
+    return response;
   };
 };
 __sutraInstallFileRouter();
+
+const __sutraInstallDirectReadStatusLabels = () => {
+  if (window.__sutraLocalDirectReadStatusLabelsInstalled) return;
+  window.__sutraLocalDirectReadStatusLabelsInstalled = true;
+  const donePageNumbers = new Set();
+  let timer = 0;
+
+  const patchVisibleStatus = () => {
+    if (!donePageNumbers.size) return;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      let value = node.nodeValue || "";
+      for (const pageNumber of donePageNumbers) {
+        value = value.replace(new RegExp(`P${pageNumber}\\s*\\(pending\\)`, "g"), `P${pageNumber}`);
+      }
+      if (value.trim() === "pending") value = value.replace("pending", "已直读");
+      if (value !== node.nodeValue) node.nodeValue = value;
+      node = walker.nextNode();
+    }
+  };
+
+  const schedulePatch = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(patchVisibleStatus, 80);
+  };
+
+  window.__sutraLocalDirectReadDonePageNumbers = donePageNumbers;
+  window.__sutraLocalMarkDirectReadDone = (pageNumberValue) => {
+    const pageNumber = Number(pageNumberValue);
+    if (pageNumber) donePageNumbers.add(pageNumber);
+    patchVisibleStatus();
+    [250, 900, 1800].forEach((delay) => window.setTimeout(patchVisibleStatus, delay));
+  };
+
+  window.addEventListener("sutra:file-router:direct-page-text", (event) => {
+    window.__sutraLocalMarkDirectReadDone(event.detail && event.detail.page_number);
+  });
+
+  const observer = new MutationObserver(schedulePatch);
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+};
+__sutraInstallDirectReadStatusLabels();
+
+const __sutraInstallSidebarResizer = () => {
+  if (window.__sutraLocalSidebarResizerInstalled) return;
+  window.__sutraLocalSidebarResizerInstalled = true;
+  const storageKey = "sutra_local_sidebar_width";
+  const defaultWidth = 240;
+  const minWidth = 220;
+  const maxWidth = 560;
+
+  const viewportMax = () => Math.max(minWidth, Math.min(maxWidth, Math.floor(window.innerWidth * 0.42)));
+  const clampWidth = (value) => Math.max(minWidth, Math.min(viewportMax(), Math.round(Number(value) || defaultWidth)));
+  const applyWidth = (value) => {
+    const width = clampWidth(value);
+    document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
+    return width;
+  };
+
+  const storedWidth = Number(localStorage.getItem(storageKey));
+  if (storedWidth) applyWidth(storedWidth);
+
+  const bindSidebar = () => {
+    const sidebar = document.querySelector(".sidebar");
+    if (!sidebar || sidebar.querySelector(".sidebar__resize-handle")) return Boolean(sidebar);
+
+    const handle = document.createElement("div");
+    handle.className = "sidebar__resize-handle";
+    handle.title = "拖拽调整左侧栏宽度，双击恢复默认";
+    sidebar.appendChild(handle);
+
+    handle.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      localStorage.removeItem(storageKey);
+      applyWidth(defaultWidth);
+    });
+
+    handle.addEventListener("pointerdown", (event) => {
+      if (sidebar.classList.contains("collapsed")) return;
+      event.preventDefault();
+      handle.setPointerCapture?.(event.pointerId);
+      const startX = event.clientX;
+      const startWidth = sidebar.getBoundingClientRect().width || defaultWidth;
+      document.body.classList.add("sidebar-resizing");
+
+      const onPointerMove = (moveEvent) => {
+        applyWidth(startWidth + moveEvent.clientX - startX);
+      };
+
+      const onPointerUp = (upEvent) => {
+        const width = applyWidth(startWidth + upEvent.clientX - startX);
+        localStorage.setItem(storageKey, String(width));
+        document.body.classList.remove("sidebar-resizing");
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp, { once: true });
+      window.addEventListener("pointercancel", onPointerUp, { once: true });
+    });
+
+    return true;
+  };
+
+  if (!bindSidebar()) {
+    const observer = new MutationObserver(() => {
+      if (bindSidebar()) observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  window.addEventListener("resize", () => {
+    const width = Number(localStorage.getItem(storageKey)) || defaultWidth;
+    applyWidth(width);
+  });
+};
+__sutraInstallSidebarResizer();
+
+const __sutraInstallSourceBlockSync = () => {
+  if (window.__sutraLocalSourceBlockSyncInstalled) return;
+  window.__sutraLocalSourceBlockSyncInstalled = true;
+  window.__sutraLocalSourceBlockSyncVersion = "v9-perf";
+
+  let rafId = 0;
+  let bindTimer = 0;
+  let mutationTimer = 0;
+  let roots = { source: null, target: null };
+  let contentObserver = null;
+  let resizeObserver = null;
+  const heightCache = new WeakMap();
+  const clampHeight = (height) => Math.max(176, Math.min(420, Math.ceil(Number(height) || 0)));
+
+  const syncHeights = () => {
+    rafId = 0;
+    const sourceRoot = roots.source || document.querySelector(".text-source-viewer__content");
+    const targetRoot = roots.target || document.querySelector(".segments-list");
+    if (!sourceRoot || !targetRoot) return;
+
+    const sourceBlocks = Array.from(sourceRoot.querySelectorAll(".text-source-viewer__segment"));
+    const targetBlocks = Array.from(targetRoot.querySelectorAll(".segment-card"));
+    if (!sourceBlocks.length || !targetBlocks.length) return;
+
+    const count = Math.min(sourceBlocks.length, targetBlocks.length);
+    for (let index = 0; index < count; index += 1) {
+      const block = sourceBlocks[index];
+      const target = targetBlocks[index];
+      const targetHeight = target.getBoundingClientRect().height;
+      const height = clampHeight(targetHeight);
+      if (heightCache.get(block) !== height) {
+        heightCache.set(block, height);
+        block.style.setProperty("--sutra-sync-height", `${height}px`);
+      }
+      if (block.dataset.sutraSyncBlock !== "ready") {
+        block.dataset.sutraSyncBlock = "ready";
+      }
+    }
+  };
+
+  const scheduleSync = () => {
+    if (!rafId) rafId = window.requestAnimationFrame(syncHeights);
+  };
+
+  const scheduleContentSync = () => {
+    window.clearTimeout(mutationTimer);
+    mutationTimer = window.setTimeout(scheduleSync, 120);
+  };
+
+  const bindRoots = () => {
+    const sourceRoot = document.querySelector(".text-source-viewer__content");
+    const targetRoot = document.querySelector(".segments-list");
+    if (!sourceRoot || !targetRoot) return false;
+    if (roots.source === sourceRoot && roots.target === targetRoot) return true;
+
+    roots = { source: sourceRoot, target: targetRoot };
+    contentObserver?.disconnect();
+    resizeObserver?.disconnect();
+
+    contentObserver = new MutationObserver(scheduleContentSync);
+    contentObserver.observe(sourceRoot, { childList: true, subtree: true, characterData: true });
+    contentObserver.observe(targetRoot, { childList: true, subtree: true, characterData: true });
+
+    if (window.ResizeObserver) {
+      resizeObserver = new ResizeObserver(scheduleContentSync);
+      resizeObserver.observe(targetRoot);
+    }
+    scheduleSync();
+    return true;
+  };
+
+  const scheduleBind = () => {
+    if (bindTimer) return;
+    bindTimer = window.setTimeout(() => {
+      bindTimer = 0;
+      bindRoots();
+    }, 200);
+  };
+
+  const rootObserver = new MutationObserver(scheduleBind);
+  rootObserver.observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener("resize", scheduleSync);
+  window.addEventListener("sutra:file-router:direct-text", () => {
+    scheduleBind();
+    scheduleContentSync();
+  });
+  bindRoots();
+  window.setTimeout(() => {
+    bindRoots();
+    scheduleSync();
+  }, 500);
+  window.setTimeout(() => {
+    bindRoots();
+    scheduleSync();
+  }, 1500);
+};
+__sutraInstallSourceBlockSync();
 JS
 cat "$js" >> "$tmp"
 sed -i 's/拆分 PDF 页面/检测 PDF 文本层/g' "$tmp"
+sed -i 's/执行 OCR/直读文本/g' "$tmp"
+sed -i 's/重新 OCR/重新直读/g' "$tmp"
+sed -i 's/全部识别/全部直读/g' "$tmp"
+sed -i 's/对这一页执行 OCR（一次 LLM Vision 调用）/对这一页直读 PDF 文本层；无有效文本层时停止并提示/g' "$tmp"
+sed -i 's/对这一页直读文本（一次 LLM Vision 调用）/对这一页直读 PDF 文本层；无有效文本层时停止并提示/g' "$tmp"
+sed -i 's/对当前章节里所有 pending 状态的页统一跑 OCR/对当前章节里所有 pending 状态的 PDF 页批量直读文本层；无有效文本层时停止并提示/g' "$tmp"
+sed -i 's/对章节"${_e.title}"里所有 pending 页跑 OCR？/对章节"${_e.title}"里所有 pending 页执行文本层直读？/g' "$tmp"
+sed -i 's/每页一次 LLM Vision 调用，耗时取决于页数（每页 5–20 秒）。/优先读取 PDF 文本层；无法读出有效文本时会停止并提示，不再自动识别。/g' "$tmp"
+sed -i 's/批量 OCR 失败：/批量直读失败：/g' "$tmp"
 sed -i 's/正在将 PDF 拆为图片（不会立即识别）\.\.\./正在检测 PDF 文本层；可直读则跳过 OCR，否则拆分页面.../g' "$tmp"
 mv "$tmp" "$js"
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-localdev.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v3.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v3.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v6.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v7.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v8.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v9.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v10.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v11.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v12.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v13.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v14.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v15.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v16.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v17.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v21.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v21.js#g' /usr/share/nginx/html/index.html
 SHELL

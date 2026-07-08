@@ -17,6 +17,11 @@ services:
       context: .
       dockerfile: Dockerfile.adapter
     image: as-yilin-adapter:local
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ./.env
+        required: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

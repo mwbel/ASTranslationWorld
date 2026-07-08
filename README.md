@@ -1,52 +1,45 @@
 # ASTranslationWorld
 
-This workspace contains tooling around AS Yilin model routing and Tibetan OCR comparison workflows.
+This workspace contains AS Yilin routing work plus a Tibetan OCR and translation toolchain that is now split by repository boundary.
 
 ## Modules
 
-- `bdrc-ocr-compare/`: browser-based Tibetan source/OCR comparison workbench.
-  - Upload or load PDF files.
-  - Render PDF pages side by side with OCR text.
-  - Call a local BDRC OCR wrapper service at `http://127.0.0.1:18090/ocr`.
-- `as-yilin-model-adapter/`: model gateway/probe services for AS Yilin BYO key integration.
-- `sutra-image-package-20260611-2159-server-runtime-amd64/`: local deployment notes and compose files for the AS Yilin runtime package. Binary runtime assets and images are intentionally excluded from git.
+- `tibetan-ocr-core/`
+  - Standalone Tibetan OCR service layer.
+  - Provides the local BDRC HTTP wrapper and OCR-specific docs.
+- `tibetan-translation-services/`
+  - Translation service layer.
+  - Hosts Tibetan-to-Chinese now, with room for Chinese-to-English and future model backends.
+- `tibetan-proofreading-app/`
+  - Browser workbench for PDF comparison, OCR review, translation review, and export.
+  - Depends on the OCR and translation service repos through HTTP endpoints.
+- `as-yilin-model-adapter/`
+  - Model gateway/probe services for AS Yilin BYO key integration.
+- `sutra-image-package-20260611-2159-server-runtime-amd64/`
+  - Local deployment notes and compose files for the AS Yilin runtime package.
 
-## Run the OCR comparison page
+## Split direction
 
-Start the static frontend from the repository root:
+The Tibetan stack is organized so it can be published as three independent GitHub repositories:
+
+- `tibetan-ocr-core`
+- `tibetan-translation-services`
+- `tibetan-proofreading-app`
+
+At the moment they still live in one workspace so local integration remains simple.
+
+## Local run
+
+From the workspace root:
 
 ```bash
-python3 -m http.server 8790 --bind 127.0.0.1
+./tibetan-proofreading-app/start_services.sh
 ```
 
-Open:
+Frontend:
 
 ```text
-http://127.0.0.1:8790/bdrc-ocr-compare/
-```
-
-Start the local BDRC OCR wrapper:
-
-```bash
-python3 bdrc-ocr-compare/bdrc_ocr_server.py
-```
-
-Health check:
-
-```bash
-curl http://127.0.0.1:18090/health
-```
-
-The wrapper expects the BDRC source checkout under `tmp/tibetan-ocr-app` and the installed macOS client models under:
-
-```text
-/Applications/BDRC Tibetan OCR.app/Contents/MacOS/OCRModels
-```
-
-`tmp/` is intentionally ignored by git. Recreate it with:
-
-```bash
-git clone https://github.com/buda-base/tibetan-ocr-app.git tmp/tibetan-ocr-app
+http://127.0.0.1:8790/tibetan-proofreading-app/
 ```
 
 ## Repository hygiene

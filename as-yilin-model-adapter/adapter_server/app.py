@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from adapter_server.auth import authenticate_login, require_user_from_request
 from adapter_server.models import list_models, model_response
@@ -62,6 +64,76 @@ async def payload_from_request(request: Request) -> dict[str, Any]:
 
 def adapter_models_response(request_models: list[dict[str, Any]]) -> JSONResponse:
     return JSONResponse(model_response(request_models))
+
+
+def extract_response_text(result: dict[str, Any]) -> str:
+    for key in ("text", "content", "translation", "answer", "translated_text", "output"):
+        value = result.get(key)
+        if isinstance(value, str):
+            return value
+
+    try:
+        content = result["choices"][0]["message"]["content"]
+        if isinstance(content, str):
+            return content
+    except Exception:
+        pass
+
+    message = result.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+
+    return ""
+
+
+def openai_stream_response(result: dict[str, Any], payload: dict[str, Any], request_id: str) -> StreamingResponse:
+    content = extract_response_text(result)
+    model = str(payload.get("model") or payload.get("model_id") or result.get("model") or "adapter-model")
+    created = int(time.time())
+
+    async def events() -> AsyncIterator[str]:
+        if content:
+            chunk = {
+                "id": f"chatcmpl-{request_id}",
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": content},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+        done_chunk = {
+            "id": f"chatcmpl-{request_id}",
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": result.get("finish_reason") or "stop",
+                }
+            ],
+        }
+        yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "cache-control": "no-cache",
+            "x-adapter-request-id": request_id,
+        },
+    )
 
 
 @app.on_event("startup")
@@ -126,6 +198,8 @@ async def completions(request: Request) -> JSONResponse:
                 "usage": result.get("usage", {}),
             }
         )
+        if payload.get("stream") is True:
+            return openai_stream_response(result, payload, request_id)
         response = JSONResponse(result)
         response.headers["x-adapter-request-id"] = request_id
         return response
