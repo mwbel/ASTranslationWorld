@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260708-proofread-blocks-27";
+const APP_BUILD_ID = "20260710-shared-errors-28";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
 const OCR_FONT_SIZE_KEY = "tibetan-proofreading-app:ocr-font-size";
@@ -1878,7 +1878,40 @@ function normalizeOcrCompare(compare) {
   const bdrc = normalizeOcrCompareSide(compare.bdrc || compare.bdrC || compare.left);
   const llm = normalizeOcrCompareSide(compare.llm || compare.ai || compare.right);
   if (!bdrc.text && !llm.text) return null;
-  return { note: String(compare.note || ""), bdrc, llm };
+  return {
+    note: String(compare.note || ""),
+    bdrc,
+    llm,
+    sharedErrors: normalizeSharedErrorMarks(compare.sharedErrors || compare.commonErrors || compare.sharedErrorMarks),
+  };
+}
+
+function normalizeSharedErrorMarks(marks) {
+  if (!Array.isArray(marks)) return [];
+  return marks
+    .map((mark, index) => {
+      if (!mark || typeof mark !== "object") return null;
+      const blockIndex = Number(mark.blockIndex ?? mark.rowIndex ?? mark.index);
+      if (!Number.isInteger(blockIndex) || blockIndex < 0) return null;
+      const normalized = {
+        id: String(mark.id || `shared-error-${blockIndex}-${index}`),
+        blockIndex,
+        text: String(mark.text || ""),
+        bdrcRanges: normalizeTextRanges(mark.bdrcRanges || mark.bdrc || mark.leftRanges),
+        llmRanges: normalizeTextRanges(mark.llmRanges || mark.aiRanges || mark.ai || mark.rightRanges),
+        createdAt: String(mark.createdAt || ""),
+      };
+      return normalized.bdrcRanges.length || normalized.llmRanges.length ? normalized : null;
+    })
+    .filter(Boolean);
+}
+
+function normalizeTextRanges(ranges) {
+  if (!Array.isArray(ranges)) return [];
+  return mergeRanges(ranges.map((range) => ({
+    start: Number(range?.start),
+    end: Number(range?.end),
+  })));
 }
 
 function normalizeOcrCompareSide(side) {
@@ -2786,7 +2819,7 @@ function renderOcrSourceCompareOnly() {
   els.ocrLineCompare.innerHTML = "";
   els.ocrLineCompare.classList.remove("proofread-block-list");
   const compare = getCurrentOcrCompareOrEmpty();
-  renderOcrSourceSide(els.ocrLineCompare, compare.bdrc, compare.llm, "bdrc");
+  renderOcrSourceSide(els.ocrLineCompare, compare.bdrc, compare.llm, "bdrc", compare);
   renderAiOcrPanelForPage(compare);
 }
 
@@ -2801,7 +2834,7 @@ function renderOcrLineComparison() {
   const result = state.ocrResults.get(state.pageNum);
   const sourceCompare = getOcrSourceCompare(result);
   if (sourceCompare) {
-    renderOcrSourceSide(els.ocrLineCompare, sourceCompare.bdrc, sourceCompare.llm, "bdrc");
+    renderOcrSourceSide(els.ocrLineCompare, sourceCompare.bdrc, sourceCompare.llm, "bdrc", sourceCompare);
     renderAiOcrPanelForPage(sourceCompare);
     return;
   }
@@ -2863,7 +2896,7 @@ function renderOcrLineComparison() {
 function renderAiOcrPanelForPage(compare = null) {
   if (!els.aiOcrLineCompare) return;
   const sourceCompare = compare || getCurrentOcrCompareOrEmpty();
-  renderOcrSourceSide(els.aiOcrLineCompare, sourceCompare.llm, sourceCompare.bdrc, "llm");
+  renderOcrSourceSide(els.aiOcrLineCompare, sourceCompare.llm, sourceCompare.bdrc, "llm", sourceCompare);
   updateAiOcrPanelMeta(sourceCompare);
 }
 
@@ -2908,6 +2941,7 @@ function renderProofreadMergedView() {
       aiLine,
       finalLine: finalLines[index] || null,
       sourceLine,
+      compare,
     }));
   });
   els.ocrLineCompare.appendChild(fragment);
@@ -2916,7 +2950,7 @@ function renderProofreadMergedView() {
   }
 }
 
-function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLine }) {
+function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLine, compare }) {
   const card = document.createElement("section");
   card.className = "proofread-block-card";
   card.dataset.proofreadBlock = String(index);
@@ -2941,6 +2975,8 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
   options.append(
     renderProofreadChoice(index, "bdrc", "采用 BDRC", savedSide === "bdrc"),
     renderProofreadChoice(index, "llm", "采用 AI Vision", savedSide === "llm"),
+    renderSharedErrorButton(index, card),
+    renderClearSharedErrorButton(index, card),
     saveButton,
   );
 
@@ -2953,6 +2989,7 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
       label: "BDRC 识别",
       line: bdrcLine,
       peerLine: aiLine,
+      compare,
     }),
     renderProofreadEditorGroup({
       index,
@@ -2960,6 +2997,7 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
       label: "AI Vision 识别",
       line: aiLine,
       peerLine: bdrcLine,
+      compare,
     }),
   );
 
@@ -3008,6 +3046,28 @@ function renderProofreadChoice(index, value, label, checked) {
   input.checked = checked;
   choice.append(input, document.createTextNode(label));
   return choice;
+}
+
+function renderSharedErrorButton(index, card) {
+  const button = document.createElement("button");
+  button.className = "ghost-button compact proofread-shared-error-button";
+  button.type = "button";
+  button.innerHTML = '<i data-lucide="circle-alert"></i>标记同错';
+  button.title = "选中 BDRC 或 AI Vision 中两边都识别错的字母后点击";
+  button.addEventListener("mousedown", (event) => event.preventDefault());
+  button.addEventListener("click", () => markSelectedSharedError(index, card));
+  return button;
+}
+
+function renderClearSharedErrorButton(index, card) {
+  const button = document.createElement("button");
+  button.className = "ghost-button compact proofread-clear-shared-error-button";
+  button.type = "button";
+  button.innerHTML = '<i data-lucide="eraser"></i>清除同错';
+  button.title = "有选区时清除相交标记；无选区时清除当前 block 的全部同错标记";
+  button.addEventListener("mousedown", (event) => event.preventDefault());
+  button.addEventListener("click", () => clearSharedErrorMark(index, card));
+  return button;
 }
 
 function renderProofreadSourcePanel(sourceLine, index) {
@@ -3074,7 +3134,7 @@ function createSourceBlockPreviewCanvas(sourceLine) {
   return wrapper;
 }
 
-function renderProofreadEditorGroup({ index, side, label, line, peerLine }) {
+function renderProofreadEditorGroup({ index, side, label, line, peerLine, compare }) {
   const group = document.createElement("div");
   group.className = `proofread-editor-group ${side === "llm" ? "is-ai" : "is-bdrc"}`;
   const blockNumber = String(index + 1).padStart(2, "0");
@@ -3099,6 +3159,8 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine }) {
   editor.setAttribute("aria-multiline", "true");
   editor.setAttribute("aria-label", `第 ${index + 1} 个 block 的 ${label}`);
   editor.dataset.placeholder = `${sourceLabel} block ${blockNumber} 未返回`;
+  editor.dataset.proofreadSide = side;
+  editor.dataset.sourceRowIndex = String(index);
   const editorBody = document.createElement("div");
   editorBody.className = "proofread-editor-body";
   editorBody.appendChild(editor);
@@ -3124,6 +3186,7 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine }) {
       renderOcrLineMarkup(editor, text, {
         peerText,
         highlightDiff: Boolean(text.trim() && String(peerText || "").trim()),
+        sharedErrorRanges: getSharedErrorRanges(compare, side, index, text),
       });
     }
     if (!text.trim()) {
@@ -3234,6 +3297,98 @@ function updateProofreadCompareLine(side, index, value, line, peerLine) {
   updateAiOcrPanelMeta(compare);
 }
 
+function markSelectedSharedError(index, card) {
+  const selection = getSelectedProofreadRange(card);
+  if (!selection || selection.index !== index) {
+    setStatus("请先在当前 block 的 BDRC 或 AI Vision 文字中选中需要标记为“双源同错”的字母。", "warn");
+    return;
+  }
+
+  const { result, compare } = ensureProofreadCompareResult();
+  const sideKey = selection.side === "bdrc" ? "bdrc" : "llm";
+  const peerKey = sideKey === "bdrc" ? "llm" : "bdrc";
+  const selectedLine = ensureProofreadLine(compare[sideKey].lines, index, compare[peerKey].lines[index]);
+  const peerLine = ensureProofreadLine(compare[peerKey].lines, index, selectedLine);
+  const sourceText = String(selectedLine.text || "");
+  const start = clamp(selection.start, 0, sourceText.length);
+  const end = clamp(selection.end, start, sourceText.length);
+  const selectedText = sourceText.slice(start, end);
+
+  if (!selectedText.trim()) {
+    setStatus("选中的内容为空，无法标记同错。", "warn");
+    return;
+  }
+
+  const mark = {
+    id: makeSharedErrorId(index),
+    blockIndex: index,
+    text: selectedText,
+    bdrcRanges: [],
+    llmRanges: [],
+    createdAt: new Date().toISOString(),
+  };
+  mark[sideKey === "bdrc" ? "bdrcRanges" : "llmRanges"] = [{ start, end }];
+
+  const peerRange = findPeerSharedErrorRange({
+    selectedText,
+    selectedRange: { start, end },
+    peerText: String(peerLine.text || ""),
+  });
+  if (peerRange) {
+    mark[peerKey === "bdrc" ? "bdrcRanges" : "llmRanges"] = [peerRange];
+  }
+
+  compare.sharedErrors = normalizeSharedErrorMarks([...(compare.sharedErrors || []), mark]);
+  result.compare = compare;
+  result.updatedAt = new Date().toISOString();
+  state.ocrResults.set(state.pageNum, result);
+  saveCachedResults();
+  renderCurrentOcrView();
+  setStatus(
+    peerRange
+      ? `第 ${index + 1} 个 block 已标记“双源同错”，BDRC 与 AI Vision 两侧均已标出。`
+      : `第 ${index + 1} 个 block 已标记当前侧；另一侧未找到相同字母，请在另一侧另选后再标记。`,
+    peerRange ? "ok" : "warn"
+  );
+}
+
+function clearSharedErrorMark(index, card) {
+  const { result, compare } = ensureProofreadCompareResult();
+  const before = compare.sharedErrors?.length || 0;
+  if (!before) {
+    setStatus("当前页还没有“双源同错”标记。", "warn");
+    return;
+  }
+
+  const selection = getSelectedProofreadRange(card);
+  let nextMarks;
+  if (selection && selection.index === index) {
+    const sideKey = selection.side === "bdrc" ? "bdrc" : "llm";
+    const selectedRange = {
+      start: Math.min(selection.start, selection.end),
+      end: Math.max(selection.start, selection.end),
+    };
+    nextMarks = compare.sharedErrors.filter((mark) => (
+      mark.blockIndex !== index || !sharedErrorMarkOverlaps(mark, sideKey, selectedRange)
+    ));
+  } else {
+    nextMarks = compare.sharedErrors.filter((mark) => mark.blockIndex !== index);
+  }
+
+  compare.sharedErrors = normalizeSharedErrorMarks(nextMarks);
+  if (compare.sharedErrors.length === before) {
+    setStatus("当前选区没有命中“双源同错”标记。", "warn");
+    return;
+  }
+
+  result.compare = compare;
+  result.updatedAt = new Date().toISOString();
+  state.ocrResults.set(state.pageNum, result);
+  saveCachedResults();
+  renderCurrentOcrView();
+  setStatus(`已清除第 ${index + 1} 个 block 的“双源同错”标记。`, "ok");
+}
+
 function saveProofreadBlockChoice(index, side, card) {
   const { result, compare } = ensureProofreadCompareResult();
   const sideKey = side === "bdrc" ? "bdrc" : "llm";
@@ -3294,7 +3449,7 @@ function getCurrentOcrCompareOrEmpty() {
   return getOcrSourceCompare(result) || makeEmptyOcrCompare(result);
 }
 
-function renderOcrSourceSide(container, sideData, peerData, side) {
+function renderOcrSourceSide(container, sideData, peerData, side, compare = null) {
   container.innerHTML = "";
   const lines = getEffectiveOcrSideLines(sideData);
   const peerLines = getEffectiveOcrSideLines(peerData, lines);
@@ -3316,6 +3471,7 @@ function renderOcrSourceSide(container, sideData, peerData, side) {
     peerLines,
     rowCount: Math.max(lines.length, peerLines.length, 1),
     side,
+    compare,
   }));
 }
 
@@ -3442,6 +3598,7 @@ function renderOcrSourceComparison(compare) {
       peerLines: llmLines,
       rowCount,
       side: "bdrc",
+      compare,
     })
   );
   columns.appendChild(
@@ -3452,6 +3609,7 @@ function renderOcrSourceComparison(compare) {
       peerLines: bdrcLines,
       rowCount,
       side: "llm",
+      compare,
     })
   );
   wrapper.appendChild(columns);
@@ -3459,7 +3617,7 @@ function renderOcrSourceComparison(compare) {
   return wrapper;
 }
 
-function renderOcrSourceRows({ lines, peerLines, rowCount, side }) {
+function renderOcrSourceRows({ lines, peerLines, rowCount, side, compare = null }) {
   const body = document.createElement("div");
   body.className = `ocr-source-column-body ocr-source-single-body ${side === "bdrc" ? "is-bdrc" : "is-llm"}`;
   const count = Math.max(1, rowCount);
@@ -3489,6 +3647,7 @@ function renderOcrSourceRows({ lines, peerLines, rowCount, side }) {
       renderOcrLineMarkup(text, line.text || "", {
         peerText: comparePeerText,
         highlightDiff: Boolean(String(line.text || "").trim() && String(comparePeerText || "").trim()),
+        sharedErrorRanges: getSharedErrorRanges(compare, side, index, line.text || ""),
       });
     }
 
@@ -3503,7 +3662,7 @@ function renderOcrSourceRows({ lines, peerLines, rowCount, side }) {
   return body;
 }
 
-function renderOcrSourceColumn({ title, subtitle, lines, peerLines, rowCount, side }) {
+function renderOcrSourceColumn({ title, subtitle, lines, peerLines, rowCount, side, compare = null }) {
   const column = document.createElement("article");
   column.className = `ocr-source-column ${side === "bdrc" ? "is-bdrc" : "is-llm"}`;
 
@@ -3512,7 +3671,7 @@ function renderOcrSourceColumn({ title, subtitle, lines, peerLines, rowCount, si
   header.innerHTML = `<strong>${title}</strong><span>${subtitle}</span>`;
   column.appendChild(header);
 
-  column.appendChild(renderOcrSourceRows({ lines, peerLines, rowCount, side }));
+  column.appendChild(renderOcrSourceRows({ lines, peerLines, rowCount, side, compare }));
   return column;
 }
 
@@ -3540,6 +3699,7 @@ function makeEmptyOcrCompare(result) {
       provider: getOcrResponseProvider(result?.raw),
       returnedLineCount: countTextLines(llmText),
     }),
+    sharedErrors: [],
   };
 }
 
@@ -3581,11 +3741,13 @@ function renderOcrLineMarkup(container, text, options = {}) {
     .filter((cluster) => cluster.highRisk)
     .map(({ start, end }) => ({ start, end }));
   const diffRanges = options.highlightDiff ? getOcrDiffRanges(text, options.peerText || "") : [];
+  const sharedErrorRanges = normalizeTextRanges(options.sharedErrorRanges || []);
   const boundaries = Array.from(new Set([
     0,
     text.length,
     ...highRiskRanges.flatMap((range) => [range.start, range.end]),
     ...diffRanges.flatMap((range) => [range.start, range.end]),
+    ...sharedErrorRanges.flatMap((range) => [range.start, range.end]),
   ])).sort((a, b) => a - b);
 
   for (let index = 0; index < boundaries.length - 1; index += 1) {
@@ -3597,7 +3759,8 @@ function renderOcrLineMarkup(container, text, options = {}) {
 
     const highRisk = highRiskRanges.some((range) => rangesOverlap(start, end, range.start, range.end));
     const different = diffRanges.some((range) => rangesOverlap(start, end, range.start, range.end));
-    if (!highRisk && !different) {
+    const sharedError = sharedErrorRanges.some((range) => rangesOverlap(start, end, range.start, range.end));
+    if (!highRisk && !different && !sharedError) {
       container.appendChild(document.createTextNode(segment));
       continue;
     }
@@ -3606,10 +3769,12 @@ function renderOcrLineMarkup(container, text, options = {}) {
     mark.className = [
       highRisk ? "ocr-risk-inline" : "",
       different ? "ocr-diff-inline" : "",
+      sharedError ? "ocr-shared-error-inline" : "",
     ].filter(Boolean).join(" ");
     mark.title = [
       highRisk ? "高危：包含藏文上下加字或组合符，优先人工校对" : "",
       different ? "差异：BDRC 与 AI Vision 此处不一致" : "",
+      sharedError ? "同错：BDRC 与 AI Vision 都疑似识别错误，需人工改正" : "",
     ].filter(Boolean).join("；");
     mark.textContent = segment;
     container.appendChild(mark);
@@ -3704,6 +3869,83 @@ function mergeRanges(ranges) {
 
 function rangesOverlap(startA, endA, startB, endB) {
   return startA < endB && startB < endA;
+}
+
+function getSharedErrorRanges(compare, side, blockIndex, text = "") {
+  const sideKey = side === "bdrc" ? "bdrc" : "llm";
+  const rangesKey = sideKey === "bdrc" ? "bdrcRanges" : "llmRanges";
+  const textLength = String(text || "").length;
+  if (!compare?.sharedErrors?.length || !textLength) return [];
+  return mergeRanges(compare.sharedErrors
+    .filter((mark) => mark.blockIndex === blockIndex)
+    .flatMap((mark) => mark[rangesKey] || [])
+    .map((range) => ({
+      start: clamp(Number(range.start), 0, textLength),
+      end: clamp(Number(range.end), 0, textLength),
+    }))
+    .filter((range) => range.end > range.start));
+}
+
+function makeSharedErrorId(index) {
+  return `shared-error-${state.pageNum}-${index}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getSelectedProofreadRange(card) {
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const anchorNode = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+    ? range.commonAncestorContainer
+    : range.commonAncestorContainer.parentElement;
+  const editor = anchorNode?.closest?.(".proofread-editor");
+  if (!editor || !card?.contains(editor)) return null;
+
+  const side = editor.dataset.proofreadSide === "bdrc" ? "bdrc" : "llm";
+  const index = Number(editor.dataset.sourceRowIndex);
+  if (!Number.isInteger(index)) return null;
+
+  const startProbe = range.cloneRange();
+  startProbe.selectNodeContents(editor);
+  startProbe.setEnd(range.startContainer, range.startOffset);
+  const endProbe = range.cloneRange();
+  endProbe.selectNodeContents(editor);
+  endProbe.setEnd(range.endContainer, range.endOffset);
+  const editorText = editor.textContent || "";
+  const textLength = editorText.length;
+  const start = clamp(startProbe.toString().length, 0, textLength);
+  const end = clamp(endProbe.toString().length, start, textLength);
+  return {
+    side,
+    index,
+    start,
+    end,
+    text: editorText.slice(start, end),
+  };
+}
+
+function findPeerSharedErrorRange({ selectedText, selectedRange, peerText }) {
+  const source = String(selectedText || "");
+  const peer = String(peerText || "");
+  if (!source.trim() || !peer) return null;
+
+  const sameOffset = peer.slice(selectedRange.start, selectedRange.end);
+  if (sameOffset === source) {
+    return { start: selectedRange.start, end: selectedRange.end };
+  }
+
+  const exactIndex = peer.indexOf(source);
+  if (exactIndex >= 0) {
+    return { start: exactIndex, end: exactIndex + source.length };
+  }
+
+  return null;
+}
+
+function sharedErrorMarkOverlaps(mark, side, selectedRange) {
+  const ranges = side === "bdrc" ? mark.bdrcRanges : mark.llmRanges;
+  return (ranges || []).some((range) => (
+    rangesOverlap(selectedRange.start, selectedRange.end, range.start, range.end)
+  ));
 }
 
 function getHighRiskClusterScan(text) {
