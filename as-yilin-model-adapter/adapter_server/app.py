@@ -144,11 +144,13 @@ async def startup() -> None:
 @app.get("/health")
 async def health() -> dict[str, Any]:
     cfg = get_config()
+    enabled_models = sum(1 for model in cfg.adapter.models if model.enabled)
     return {
         "ok": True,
         "service": "adapter-server",
         "time": utc_now(),
-        "models": len(cfg.adapter.models),
+        "models": enabled_models,
+        "configuredModels": len(cfg.adapter.models),
         "providers": len(cfg.adapter.providers),
         "users": len(cfg.adapter.users),
     }
