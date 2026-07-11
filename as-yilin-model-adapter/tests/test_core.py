@@ -46,19 +46,16 @@ def test_find_model_matches_alias() -> None:
 def test_find_model_keeps_real_upstream_model_mappings_separate() -> None:
     cfg = load_config(ROOT / "config.yaml")
     assert find_model(cfg, "local:qwen2.5:14b").id == "agg-local-qwen25"
+    assert find_model(cfg, "local:qwen3.6-27b:latest").id == "agg-local-qwen36"
     assert find_model(cfg, "local:gemma2:27b").id == "agg-local-gemma2"
+    assert find_model(cfg, "local:batiai/qwen3.6-27b:q4").id == "agg-local-qwen36-q4"
     assert find_model(cfg, "gemini:gemini-2.5-flash").id == "agg-gemini-25-flash"
 
 
-def test_upstream_empty_models_are_explicitly_disabled() -> None:
+def test_repaired_qwen36_models_are_callable() -> None:
     cfg = load_config(ROOT / "config.yaml")
-    for model_id in ("local:qwen3.6-27b:latest", "local:batiai/qwen3.6-27b:q4"):
-        try:
-            find_model(cfg, model_id)
-        except ValueError as exc:
-            assert "Adapter model disabled" in str(exc)
-        else:
-            raise AssertionError("upstream-empty model must not be exposed as callable")
+    assert find_model(cfg, "local:qwen3.6-27b:latest").enabled
+    assert find_model(cfg, "local:batiai/qwen3.6-27b:q4").enabled
 
 
 def test_find_model_does_not_silently_fallback_unknown_model() -> None:

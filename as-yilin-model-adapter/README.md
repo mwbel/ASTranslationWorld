@@ -34,12 +34,14 @@ AS译林后端仍然只访问本目录的 adapter；adapter 再把请求转成 `
 | AS译林模型 ID | 实际上游模型 |
 | --- | --- |
 | `agg-local-qwen25` | `local:qwen2.5:14b` |
+| `agg-local-qwen36` | `local:qwen3.6-27b:latest` |
 | `agg-local-gemma2` | `local:gemma2:27b` |
+| `agg-local-qwen36-q4` | `local:batiai/qwen3.6-27b:q4` |
 | `agg-gemini-25-flash` | `gemini:gemini-2.5-flash` |
 
 旧的 `gemini-3-flash-preview`、`hf-qwen-zh-en` 等兼容名称只作为对应真实模型的 alias，不再把不同模型名称全部映射到 Qwen2.5。未知模型会明确返回错误，不会静默回退到第一个模型。
 
-`local:qwen3.6-27b:latest`、`local:batiai/qwen3.6-27b:q4` 和 `gemini:gemini-3-flash-preview` 暂不出现在 AS译林模型列表中：当前聚合器直连虽然可能返回 HTTP 200，但返回内容为空，或在较大输出预算下超时。它们在配置中保留为 `enabled: false`，待上游模型服务修复后再重新启用。
+`local:qwen3.6-27b:latest` 和 `local:batiai/qwen3.6-27b:q4` 已由聚合器改用 Ollama 原生聊天接口并完成非空响应验证，因此已重新启用。`gemini:gemini-3-flash-preview` 仍保留为 `enabled: false`，待上游模型服务稳定后再启用。
 
 ## 快速开始
 
