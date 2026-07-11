@@ -56,12 +56,14 @@ def model_response(models: list[dict[str, Any]]) -> dict[str, Any]:
 
 def find_model(config: AppConfig, model_id: str | None) -> ModelConfig:
     if model_id:
+        requested = str(model_id).strip()
         for model in config.adapter.models:
-            if not model.enabled:
-                continue
             aliases = set(model.aliases or [])
-            if model.id == model_id or model.upstream_model == model_id or model_id in aliases:
+            if model.id == requested or model.upstream_model == requested or requested in aliases:
+                if not model.enabled:
+                    raise ValueError(f"Adapter model disabled: {requested} -> {model.id}")
                 return model
+        raise ValueError(f"Unknown adapter model: {requested}")
     for model in config.adapter.models:
         if model.enabled:
             return model

@@ -25,11 +25,21 @@
 
 - `base_url = http://host.docker.internal:8890`
 - `chat_path = /api/aggregate/chat`
-- `upstream_model = local:qwen2.5:14b`
+- `upstream_model` 使用 provider-qualified model id，例如 `local:qwen3.6-27b:latest` 或 `gemini:gemini-2.5-flash`
 
 AS译林后端仍然只访问本目录的 adapter；adapter 再把请求转成 `ModelAggregatorService /api/aggregate/chat`。这样 AS译林不直接持有 Hugging Face、Gemini、云雾或本地模型服务的 API key。
 
-默认配置给这个模型加了别名 `agg-gemini-flash`、`gemini-3-flash-preview` 和 `hf-qwen-zh-en`，这样 AS译林里已经保存过的角色配置即使还在请求旧模型名，也会落到新的本地聚合器通路，不必先手工改角色。
+默认配置会把已验证可调用的真实模型分别暴露为独立的 AS译林模型：
+
+| AS译林模型 ID | 实际上游模型 |
+| --- | --- |
+| `agg-local-qwen25` | `local:qwen2.5:14b` |
+| `agg-local-gemma2` | `local:gemma2:27b` |
+| `agg-gemini-25-flash` | `gemini:gemini-2.5-flash` |
+
+旧的 `gemini-3-flash-preview`、`hf-qwen-zh-en` 等兼容名称只作为对应真实模型的 alias，不再把不同模型名称全部映射到 Qwen2.5。未知模型会明确返回错误，不会静默回退到第一个模型。
+
+`local:qwen3.6-27b:latest`、`local:batiai/qwen3.6-27b:q4` 和 `gemini:gemini-3-flash-preview` 暂不出现在 AS译林模型列表中：当前聚合器直连虽然可能返回 HTTP 200，但返回内容为空，或在较大输出预算下超时。它们在配置中保留为 `enabled: false`，待上游模型服务修复后再重新启用。
 
 ## 快速开始
 

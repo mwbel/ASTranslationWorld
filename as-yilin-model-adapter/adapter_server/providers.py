@@ -364,6 +364,12 @@ async def call_model_aggregator(
         raise ProviderError(str(data.get("error") or data.get("message") or "ModelAggregatorService returned ok=false"))
 
     content = extract_model_aggregator_content(data)
+    if not content.strip():
+        finish_reason = data.get("finishReason") or data.get("finish_reason") or "unknown"
+        raise ProviderError(
+            f"/api/aggregate/chat -> upstream model {model.upstream_model} returned empty content "
+            f"(finishReason={finish_reason})"
+        )
     if payload.get("_adapter_literal_request"):
         content = _coerce_literal_items(content, messages)
     usage = data.get("usage") or {}

@@ -34,8 +34,40 @@ def test_config() -> None:
 
 def test_find_model_alias() -> None:
     cfg = load_config(ROOT / "config.yaml")
-    resolved = find_model(cfg, "gemini-3-flash-preview")
-    assert resolved.id == "agg-local-qwen25"
+    try:
+        find_model(cfg, "gemini-3-flash-preview")
+    except ValueError as exc:
+        assert "Adapter model disabled" in str(exc)
+    else:
+        raise AssertionError("temporarily unavailable Gemini model must not be exposed as callable")
+
+
+def test_find_model_mappings() -> None:
+    cfg = load_config(ROOT / "config.yaml")
+    assert find_model(cfg, "local:qwen2.5:14b").id == "agg-local-qwen25"
+    assert find_model(cfg, "local:gemma2:27b").id == "agg-local-gemma2"
+    assert find_model(cfg, "gemini:gemini-2.5-flash").id == "agg-gemini-25-flash"
+
+
+def test_upstream_empty_models_are_disabled() -> None:
+    cfg = load_config(ROOT / "config.yaml")
+    for model_id in ("local:qwen3.6-27b:latest", "local:batiai/qwen3.6-27b:q4"):
+        try:
+            find_model(cfg, model_id)
+        except ValueError as exc:
+            assert "Adapter model disabled" in str(exc)
+        else:
+            raise AssertionError("upstream-empty model must not be exposed as callable")
+
+
+def test_unknown_model_is_not_silently_rerouted() -> None:
+    cfg = load_config(ROOT / "config.yaml")
+    try:
+        find_model(cfg, "gpt-5.4")
+    except ValueError as exc:
+        assert "Unknown adapter model" in str(exc)
+    else:
+        raise AssertionError("unknown model must not silently fall back to the first configured model")
 
 
 def test_literal_json_coercion() -> None:
@@ -124,6 +156,9 @@ def main() -> int:
         test_redaction,
         test_config,
         test_find_model_alias,
+        test_find_model_mappings,
+        test_upstream_empty_models_are_disabled,
+        test_unknown_model_is_not_silently_rerouted,
         test_literal_json_coercion,
         test_univmodel_style_config,
         test_probe,
