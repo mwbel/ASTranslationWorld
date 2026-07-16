@@ -1,5 +1,8 @@
 FROM sutra-web:20260611-2159-server-runtime-amd64
 
+RUN sed -i '/upstream sutra_backend {/i upstream cross_page_backend { server cross-page-service:5556; keepalive 8; }' /etc/nginx/conf.d/default.conf \
+ && sed -i '/location \^~ \/api\//i\    location ^~ /api/local-cross-page/ {\n        proxy_pass http://cross_page_backend/;\n        proxy_http_version 1.1;\n        proxy_set_header Authorization $http_authorization;\n        proxy_buffering off;\n        proxy_read_timeout 1h;\n    }\n' /etc/nginx/conf.d/default.conf
+
 COPY login-fractal.png /usr/share/nginx/html/login-fractal.png
 COPY pdfjs/ /usr/share/nginx/html/pdfjs/
 
@@ -297,7 +300,7 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v35-source-token-display-recovery/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v38-cross-page-links/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -465,6 +468,24 @@ const __sutraInstallLocalStyles = () => {
     .segment-card__header .literal-toggle-btn:hover,
     .segment-card__header .literal-toggle-btn.active {
       opacity: 1 !important;
+    }
+    .sutra-cross-page-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: -2px 0 10px;
+      padding: 8px 10px;
+      border: 1px solid rgba(184, 150, 62, .35);
+      border-radius: 6px;
+      color: #725b20;
+      background: rgba(184, 150, 62, .09);
+      font-size: 13px;
+    }
+    .sutra-cross-page-banner--confirmed {
+      border-color: rgba(54, 124, 92, .35);
+      color: #2f6c50;
+      background: rgba(54, 124, 92, .08);
     }
     body.sutra-same-source-target .proposal-empty--invitation,
     body.sutra-same-source-target .add-translation-btn {
@@ -1977,6 +1998,121 @@ const __sutraInstallMissingSourceRecovery = () => {
   window.setTimeout(schedule, 1500);
 };
 __sutraInstallMissingSourceRecovery();
+
+const __sutraInstallCrossPageLinks = () => {
+  if (window.__sutraCrossPageLinksInstalled) return;
+  window.__sutraCrossPageLinksInstalled = true;
+  const baseFetch = window.fetch.bind(window);
+  const state = { pages: [], pageSegments: new Map(), tokens: new Map(), currentPageId: "", timer: 0 };
+  const jsonClone = async (response) => { try { return await response.clone().json(); } catch { return null; } };
+  const segmentText = async (id) => {
+    if (state.tokens.has(id)) return state.tokens.get(id);
+    const response = await baseFetch(`/api/segments/${encodeURIComponent(id)}/tokens`);
+    const data = response.ok ? await response.json() : [];
+    const text = (Array.isArray(data) ? data : []).map(t => String(t.text || t.ocr_text || "")).join("").trim();
+    state.tokens.set(id, text);
+    return text;
+  };
+  const getLink = async (id) => {
+    const response = await baseFetch(`/api/local-cross-page/links/by-segment/${encodeURIComponent(id)}`);
+    return response.ok ? (await response.json()).link : null;
+  };
+  const schedule = () => {
+    window.clearTimeout(state.timer);
+    state.timer = window.setTimeout(render, 120);
+  };
+  window.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    const translate = String(url).match(/^\/api\/segments\/([0-9a-f-]+)\/(translate(?:-stream)?)$/i);
+    if (translate) {
+      const link = await getLink(translate[1]).catch(() => null);
+      if (link && String(link.anchor_segment_id) === translate[1]) {
+        return baseFetch(`/api/local-cross-page/segments/${translate[1]}/${translate[2]}`, init);
+      }
+    }
+    const response = await baseFetch(input, init);
+    const chapterPages = String(url).match(/^\/api\/chapters\/[^/]+\/pages/);
+    const pageSegments = String(url).match(/^\/api\/pages\/([0-9a-f-]+)\/segments/i);
+    if (chapterPages && response.ok) {
+      const data = await jsonClone(response);
+      if (Array.isArray(data)) state.pages = data.slice().sort((a,b) => Number(a.page_number)-Number(b.page_number));
+    }
+    if (pageSegments && response.ok) {
+      const data = await jsonClone(response);
+      if (Array.isArray(data)) {
+        state.currentPageId = pageSegments[1];
+        document.documentElement.dataset.sutraCrossPageCurrentPage = state.currentPageId;
+        state.pageSegments.set(pageSegments[1], data.slice().sort((a,b) => Number(a.sort_order)-Number(b.sort_order)));
+        schedule();
+      }
+    }
+    return response;
+  };
+
+  const banner = (kind, text) => {
+    const el = document.createElement("div");
+    el.className = `sutra-cross-page-banner sutra-cross-page-banner--${kind}`;
+    const label = document.createElement("span");
+    label.textContent = text;
+    el.appendChild(label);
+    return el;
+  };
+  const button = (text, action, primary=false) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = primary ? "btn btn--primary btn--xs" : "btn btn--ghost btn--xs";
+    el.textContent = text;
+    el.onclick = async (event) => { event.stopPropagation(); el.disabled = true; try { await action(); } finally { el.disabled = false; } };
+    return el;
+  };
+  const notify = (message) => window.dispatchEvent(new CustomEvent("sutra:local-direct-read-notice", {detail:{message,type:"success"}}));
+  const render = async () => {
+    document.documentElement.dataset.sutraCrossPageRender = String(Date.now());
+    document.querySelectorAll(".sutra-cross-page-banner").forEach(el => el.remove());
+    const segments = state.pageSegments.get(state.currentPageId) || [];
+    const cards = Array.from(document.querySelectorAll(".segments-list .segment-card"));
+    if (!segments.length || !cards.length) return;
+    const first = segments[0], firstCard = cards.find(c => c.dataset.segmentId === String(first.id)) || cards[0];
+    const candidateResponse = await baseFetch(`/api/local-cross-page/candidates/by-continuation/${encodeURIComponent(first.id)}`).catch(() => null);
+    const candidatePayload = candidateResponse && candidateResponse.ok ? await candidateResponse.json() : {};
+    document.documentElement.dataset.sutraCrossPageCandidate = candidatePayload.candidate ? "yes" : "no";
+    const firstLink = candidatePayload.link || null;
+    if (firstLink) {
+      const el = banner("confirmed", "已确认：本段接续上一页，翻译时将作为一个完整段落");
+      el.appendChild(button("撤销合并", async () => {
+        if (!window.confirm("撤销跨页关联？两页原文和已有译文不会删除。")) return;
+        const response = await baseFetch(`/api/local-cross-page/links/${firstLink.id}`, {method:"DELETE"});
+        if (!response.ok) throw new Error(await response.text());
+        notify("已撤销跨页合并"); schedule();
+      }));
+      firstCard.prepend(el); return;
+    }
+    const candidate = candidatePayload.candidate;
+    if (!candidate) return;
+    const anchor = {id:String(candidate.anchor_segment_id)};
+    const tail = String(candidate.anchor_text || "").trim(), head = String(candidate.continuation_text || "").trim();
+    const anchorLink = await getLink(anchor.id).catch(()=>null);
+    if (anchorLink || !tail || !head || /[。！？!?；;：:]\s*$/.test(tail)) return;
+    const el = banner("candidate", `跨页续段候选 · P${candidate.previous_page_number} 末段 → P${candidate.page_number} 首段`);
+    el.title = `${tail.slice(-80)} ｜ ${head.slice(0,80)}`;
+    el.appendChild(button("确认合并", async () => {
+      if (!window.confirm("确认将上一页末段与本页首段关联为一个逻辑段落？原文不会删除，可随时撤销。")) return;
+      const response = await baseFetch("/api/local-cross-page/links", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({anchor_segment_id:anchor.id,continuation_segment_id:first.id})});
+      if (!response.ok) throw new Error(await response.text());
+      notify("跨页段落已确认；翻译时会自动组合两页原文"); schedule();
+    }, true));
+    firstCard.prepend(el);
+  };
+  const observer = new MutationObserver((mutations) => {
+    const relevant = mutations.some(mutation => Array.from(mutation.addedNodes).concat(Array.from(mutation.removedNodes)).some(node => {
+      if (!(node instanceof HTMLElement)) return false;
+      return !node.classList.contains("sutra-cross-page-banner") && !node.closest(".sutra-cross-page-banner");
+    }));
+    if (relevant) schedule();
+  });
+  observer.observe(document.body, {childList:true,subtree:true});
+};
+__sutraInstallCrossPageLinks();
 JS
 cat "$js" >> "$tmp"
 sed -i 's/拆分 PDF 页面/检测 PDF 文本层/g' "$tmp"
@@ -2048,5 +2184,8 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v30.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v33.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v34.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v35.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v35.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v36.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v37.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v38.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v38.js#g' /usr/share/nginx/html/index.html
 SHELL

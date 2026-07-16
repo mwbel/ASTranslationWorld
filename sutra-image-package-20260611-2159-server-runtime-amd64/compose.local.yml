@@ -17,7 +17,22 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  cross-page-service:
+    build:
+      context: ./cross-page-service
+    container_name: sutra-local-cross-page
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-sutra}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sutra}
+      SUTRA_UPSTREAM: http://sutra-server:5555
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sutra-server:
+        condition: service_started
+    networks: [sutra-net]
+
   sutra-web:
+    depends_on: [sutra-server, cross-page-service]
     container_name: sutra-local-web
     platform: linux/amd64
 
