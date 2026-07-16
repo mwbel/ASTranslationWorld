@@ -23,8 +23,9 @@ CONFIG_PATH = Path(os.environ.get("ADAPTER_CONFIG", "config.yaml"))
 DATA_DIR = Path(os.environ.get("ADAPTER_DATA_DIR", "data/adapter"))
 UNKNOWN_DIR = DATA_DIR / "unknown-requests"
 CALL_LOG = DATA_DIR / "calls.jsonl"
+ADAPTER_VERSION = "0.2.0"
 
-app = FastAPI(title="AS Yilin Model Adapter", version="0.1.0")
+app = FastAPI(title="AS Yilin Model Adapter", version=ADAPTER_VERSION)
 config: AppConfig | None = None
 
 
@@ -148,6 +149,7 @@ async def health() -> dict[str, Any]:
     return {
         "ok": True,
         "service": "adapter-server",
+        "version": ADAPTER_VERSION,
         "time": utc_now(),
         "models": enabled_models,
         "configuredModels": len(cfg.adapter.models),
@@ -185,12 +187,12 @@ async def models(request: Request) -> JSONResponse:
 @app.post("/api/generate")
 async def completions(request: Request) -> JSONResponse:
     cfg = get_config()
-    await require_user_from_request(request, cfg)
+    user = await require_user_from_request(request, cfg)
     payload = await payload_from_request(request)
     request_id = str(uuid4())
     started_at = utc_now()
     try:
-        result = await generate_text(cfg, payload)
+        result = await generate_text(cfg, payload, user)
         write_call(
             {
                 "timestamp": started_at,

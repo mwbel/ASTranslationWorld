@@ -1,5 +1,7 @@
 # AS译林模型通路适配器
 
+当前适配器版本为 `0.2.0`。模型列表使用包含模型版本与规模的精确规范 ID，旧名称继续作为 alias 兼容；现有登录、模型列表和 `/v1/chat/completions` 路径保持不变。
+
 这个目录包含两个服务：
 
 - `probe_server`：协议探测服务器。把 AS译林 BYO key 的 `gateway_endpoint` 指向它，用来记录 AS译林后端到底请求了哪些路径和字段。
@@ -33,15 +35,18 @@ AS译林后端仍然只访问本目录的 adapter；adapter 再把请求转成 `
 
 | AS译林模型 ID | 实际上游模型 |
 | --- | --- |
-| `agg-local-qwen25` | `local:qwen2.5:14b` |
-| `agg-local-qwen36` | `local:qwen3.6-27b:latest` |
-| `agg-local-gemma2` | `local:gemma2:27b` |
-| `agg-local-qwen36-q4` | `local:batiai/qwen3.6-27b:q4` |
-| `agg-gemini-25-flash` | `gemini:gemini-2.5-flash` |
+| `agg-local-qwen2.5-14b` | `local:qwen2.5:14b` |
+| `agg-local-qwen3.6-27b` | `local:qwen3.6-27b:latest` |
+| `agg-local-gemma2-27b` | `local:gemma2:27b` |
+| `agg-local-qwen3.6-27b-q4` | `local:batiai/qwen3.6-27b:q4` |
+| `agg-gemini-2.5-flash` | `gemini:gemini-2.5-flash` |
+| `agg-gemini-3.1-flash-lite` | `gemini:gemini-3.1-flash-lite` |
 
-旧的 `gemini-3-flash-preview`、`hf-qwen-zh-en` 等兼容名称只作为对应真实模型的 alias，不再把不同模型名称全部映射到 Qwen2.5。未知模型会明确返回错误，不会静默回退到第一个模型。
+旧的 `agg-local-qwen25`、`agg-gemini-25-flash`、`gemini-3-flash-preview`、`hf-qwen-zh-en` 等兼容名称只作为对应真实模型的 alias，不再把不同模型名称全部映射到 Qwen2.5。未知模型会明确返回错误，不会静默回退到第一个模型。
 
 `local:qwen3.6-27b:latest` 和 `local:batiai/qwen3.6-27b:q4` 已由聚合器改用 Ollama 原生聊天接口并完成非空响应验证，因此已重新启用。`gemini:gemini-3-flash-preview` 仍保留为 `enabled: false`，待上游模型服务稳定后再启用。
+
+`gemini:gemini-3.1-flash-lite` 定位为低延迟、低成本的快速翻译模型，适合批量初译、短段落翻译和多模型对比；高难度终稿仍建议配合质量型模型复核。
 
 ## 快速开始
 

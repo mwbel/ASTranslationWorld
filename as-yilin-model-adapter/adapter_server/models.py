@@ -45,6 +45,10 @@ def list_models(config: AppConfig, user: UserConfig | None = None) -> list[dict[
     return [model_to_wire(model) for model in config.adapter.models if user_can_use_model(user, model)]
 
 
+def list_model_configs(config: AppConfig, user: UserConfig | None = None) -> list[ModelConfig]:
+    return [model for model in config.adapter.models if user_can_use_model(user, model)]
+
+
 def model_response(models: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "models": models,

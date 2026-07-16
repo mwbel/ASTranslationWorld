@@ -10,11 +10,13 @@ auth:
       password: demo-password
       reseller_code: demo
       allowed_models:
-        - agg-local-qwen25
-        - agg-local-qwen36
-        - agg-local-gemma2
-        - agg-local-qwen36-q4
-        - agg-gemini-25-flash
+        - agg-local-qwen2.5-14b
+        - agg-local-qwen3.6-27b
+        - agg-local-gemma2-27b
+        - agg-local-qwen3.6-27b-q4
+        - agg-gemini-2.5-flash
+        - agg-gemini-3.1-flash-lite
+        - agg-compare-all
 
 providers:
   - id: model-aggregator
@@ -25,11 +27,12 @@ providers:
     timeout_seconds: 120
 
 models:
-  - id: agg-local-qwen25
+  - id: agg-local-qwen2.5-14b
     display_name: ModelAggregator Local Qwen2.5 14B
     provider: model-aggregator
     upstream_model: local:qwen2.5:14b
     aliases:
+      - agg-local-qwen25
       - local:qwen2.5:14b
       - Qwen/Qwen2.5-7B-Instruct
     category: quality_translation
@@ -37,11 +40,12 @@ models:
     supports_vision: false
     context_window: 32768
 
-  - id: agg-local-qwen36
+  - id: agg-local-qwen3.6-27b
     display_name: ModelAggregator Local Qwen3.6 27B
     provider: model-aggregator
     upstream_model: local:qwen3.6-27b:latest
     aliases:
+      - agg-local-qwen36
       - local:qwen3.6-27b:latest
       - qwen3.6-27b:latest
       - local:qwen3.6-27b
@@ -51,11 +55,12 @@ models:
     supports_vision: true
     context_window: 32768
 
-  - id: agg-local-gemma2
+  - id: agg-local-gemma2-27b
     display_name: ModelAggregator Local Gemma2 27B
     provider: model-aggregator
     upstream_model: local:gemma2:27b
     aliases:
+      - agg-local-gemma2
       - local:gemma2:27b
       - gemma2:27b
       - local:gemma2
@@ -64,11 +69,12 @@ models:
     supports_vision: false
     context_window: 32768
 
-  - id: agg-local-qwen36-q4
+  - id: agg-local-qwen3.6-27b-q4
     display_name: ModelAggregator Local Qwen3.6 27B Q4
     provider: model-aggregator
     upstream_model: local:batiai/qwen3.6-27b:q4
     aliases:
+      - agg-local-qwen36-q4
       - local:batiai/qwen3.6-27b:q4
       - batiai/qwen3.6-27b:q4
     category: quality_translation
@@ -76,14 +82,41 @@ models:
     supports_vision: true
     context_window: 32768
 
-  - id: agg-gemini-25-flash
+  - id: agg-compare-all
+    display_name: ModelAggregator 全模型对比
+    provider: adapter_compare
+    upstream_model: adapter:compare-all
+    aliases:
+      - compare-all-models
+      - adapter:compare-all
+    category: comparison
+    supports_stream: true
+    supports_vision: false
+    context_window: 32768
+
+  - id: agg-gemini-2.5-flash
     display_name: ModelAggregator Gemini 2.5 Flash
     provider: model-aggregator
     upstream_model: gemini:gemini-2.5-flash
     aliases:
+      - agg-gemini-25-flash
       - gemini:gemini-2.5-flash
       - gemini-2.5-flash
       - agg-gemini-flash
+    category: fast_translation
+    supports_stream: true
+    supports_vision: true
+    context_window: 1048576
+
+  - id: agg-gemini-3.1-flash-lite
+    display_name: ModelAggregator Gemini 3.1 Flash-Lite
+    provider: model-aggregator
+    upstream_model: gemini:gemini-3.1-flash-lite
+    aliases:
+      - agg-gemini-31-flash-lite
+      - gemini:gemini-3.1-flash-lite
+      - gemini-3.1-flash-lite
+      - agg-gemini-flash-lite
     category: fast_translation
     supports_stream: true
     supports_vision: true

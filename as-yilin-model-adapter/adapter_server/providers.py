@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import copy
 from dataclasses import dataclass
 import json
+from time import perf_counter
 import re
 from typing import Any
 from urllib.parse import quote
@@ -9,7 +12,7 @@ from urllib.parse import quote
 import httpx
 
 from common.config import AppConfig, ModelConfig, env_list, env_value, normalize_provider
-from adapter_server.models import find_model
+from adapter_server.models import find_model, list_model_configs
 
 
 class ProviderError(RuntimeError):
@@ -235,6 +238,20 @@ def extract_model_id(payload: dict[str, Any]) -> str | None:
     )
 
 
+def _extract_result_text(result: dict[str, Any]) -> str:
+    for key in ("text", "content", "translation", "answer", "translated_text", "output"):
+        value = result.get(key)
+        if isinstance(value, str):
+            return value
+    try:
+        content = result["choices"][0]["message"]["content"]
+        if isinstance(content, str):
+            return content
+    except Exception:
+        pass
+    return ""
+
+
 async def call_openai_compatible(
     provider: RuntimeProvider,
     model: ModelConfig,
@@ -458,9 +475,98 @@ async def call_gemini(provider: RuntimeProvider, model: ModelConfig, payload: di
     raise ProviderError("；".join(errors) or "Gemini request failed")
 
 
-async def generate_text(config: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
-    model = find_model(config, extract_model_id(payload))
+async def call_compare_all(
+    config: AppConfig,
+    model: ModelConfig,
+    payload: dict[str, Any],
+    user: Any = None,
+) -> dict[str, Any]:
+    messages = normalize_messages(payload)
+    if _looks_like_literal_request(messages):
+        raise ProviderError("全模型对比暂不支持逐 token 直译，请改用普通模型。")
+
+    candidates = [
+        candidate
+        for candidate in list_model_configs(config, user)
+        if candidate.enabled
+        and candidate.id != model.id
+        and normalize_provider(candidate.provider) != "adapter_compare"
+    ]
+    if not candidates:
+        raise ProviderError("没有可用于对比的模型。")
+
+    async def run_candidate(candidate: ModelConfig) -> dict[str, Any]:
+        candidate_payload = copy.deepcopy(payload)
+        candidate_payload["model"] = candidate.id
+        candidate_payload["model_id"] = candidate.id
+        started = perf_counter()
+        try:
+            result = await generate_text_for_model(config, candidate, candidate_payload, user)
+            return {
+                "id": candidate.id,
+                "display_name": candidate.display_name or candidate.id,
+                "upstream_model": candidate.upstream_model,
+                "ok": True,
+                "latency_ms": int((perf_counter() - started) * 1000),
+                "text": _extract_result_text(result).strip(),
+                "usage": result.get("usage") or {},
+            }
+        except Exception as exc:
+            return {
+                "id": candidate.id,
+                "display_name": candidate.display_name or candidate.id,
+                "upstream_model": candidate.upstream_model,
+                "ok": False,
+                "latency_ms": int((perf_counter() - started) * 1000),
+                "error": str(exc),
+            }
+
+    results = await asyncio.gather(*(run_candidate(candidate) for candidate in candidates))
+    success_count = sum(1 for item in results if item.get("ok") and item.get("text"))
+    if success_count == 0:
+        errors = [f"{item['display_name']}: {item.get('error') or 'empty result'}" for item in results]
+        raise ProviderError("全模型对比失败：" + "；".join(errors))
+
+    sections = [f"全模型翻译对比（共 {len(results)} 个模型）"]
+    for item in results:
+        title = f"## {item['display_name']}"
+        meta = f"上游: {item.get('upstream_model') or item['id']} | 用时: {item.get('latency_ms', 0)}ms"
+        if item.get("ok") and item.get("text"):
+            body = item["text"]
+        else:
+            body = f"[调用失败] {item.get('error') or 'empty result'}"
+        sections.extend(["", title, meta, body])
+    combined = "\n".join(sections).strip()
+
+    usage = {
+        "prompt_tokens": sum(int(item.get("usage", {}).get("prompt_tokens") or 0) for item in results if item.get("ok")),
+        "completion_tokens": sum(int(item.get("usage", {}).get("completion_tokens") or 0) for item in results if item.get("ok")),
+        "total_tokens": sum(int(item.get("usage", {}).get("total_tokens") or 0) for item in results if item.get("ok")),
+    }
+    return {
+        "text": combined,
+        "content": combined,
+        "translation": combined,
+        "message": {"role": "assistant", "content": combined},
+        "choices": [{"message": {"role": "assistant", "content": combined}, "finish_reason": "stop"}],
+        "usage": usage,
+        "provider_response": {
+            "comparison": results,
+            "successful_models": success_count,
+            "total_models": len(results),
+        },
+    }
+
+
+async def generate_text_for_model(
+    config: AppConfig,
+    model: ModelConfig,
+    payload: dict[str, Any],
+    user: Any = None,
+) -> dict[str, Any]:
     provider = _provider_from_model(config, model)
+    if provider.type == "adapter_compare":
+        return await call_compare_all(config, model, payload, user)
     if provider.type == "model_aggregator":
         return await call_model_aggregator(provider, model, payload)
     if provider.type == "gemini":
@@ -468,3 +574,8 @@ async def generate_text(config: AppConfig, payload: dict[str, Any]) -> dict[str,
     if provider.type != "openai_compatible":
         raise ProviderError(f"Unsupported provider type: {provider.type}")
     return await call_openai_compatible(provider, model, payload)
+
+
+async def generate_text(config: AppConfig, payload: dict[str, Any], user: Any = None) -> dict[str, Any]:
+    model = find_model(config, extract_model_id(payload))
+    return await generate_text_for_model(config, model, payload, user)

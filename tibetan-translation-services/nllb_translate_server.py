@@ -37,6 +37,9 @@ HF_API_URL = os.environ.get("HF_API_URL", f"https://api-inference.huggingface.co
 MODEL_AGGREGATOR_BASE_URL = os.environ.get("MODEL_AGGREGATOR_BASE_URL", "http://127.0.0.1:8890").rstrip("/")
 MODEL_AGGREGATOR_MODEL = os.environ.get("MODEL_AGGREGATOR_MODEL", "local:qwen3.6-27b:latest")
 MODEL_AGGREGATOR_TIMEOUT_SECONDS = float(os.environ.get("MODEL_AGGREGATOR_TIMEOUT_SECONDS", "120"))
+OPENAI_TRANSLATE_BASE_URL = os.environ.get("OPENAI_TRANSLATE_BASE_URL", "").rstrip("/")
+OPENAI_TRANSLATE_API_KEY = os.environ.get("OPENAI_TRANSLATE_API_KEY", "")
+OPENAI_TRANSLATE_MODEL = os.environ.get("OPENAI_TRANSLATE_MODEL", "")
 DEFAULT_ROLE_NAME = "学术直译"
 DEFAULT_SYSTEM_PROMPT = (
     "你是严谨的学术翻译助手。请忠实翻译原文，保持术语稳定，"
@@ -147,6 +150,17 @@ def preload_model_async() -> None:
 def model_health_payload() -> dict[str, Any]:
     if TRANSLATE_PROVIDER == "model_aggregator":
         return model_aggregator_health_payload()
+
+    if TRANSLATE_PROVIDER == "openai_compatible":
+        configured = bool(OPENAI_TRANSLATE_BASE_URL and OPENAI_TRANSLATE_API_KEY and OPENAI_TRANSLATE_MODEL)
+        return {
+            "ok": configured,
+            "status": "ready" if configured else "error",
+            "provider": TRANSLATE_PROVIDER,
+            "model": OPENAI_TRANSLATE_MODEL,
+            "loaded": configured,
+            "error": "" if configured else "OPENAI_TRANSLATE_BASE_URL/API_KEY/MODEL are required",
+        }
 
     if TRANSLATE_PROVIDER == "huggingface_nllb":
         return {
@@ -265,6 +279,9 @@ def translate_text(text: str, payload: dict[str, Any] | None = None) -> dict[str
     if TRANSLATE_PROVIDER == "model_aggregator":
         return translate_text_model_aggregator(source_text, payload or {})
 
+    if TRANSLATE_PROVIDER == "openai_compatible":
+        return translate_text_openai_compatible(source_text, payload or {})
+
     if TRANSLATE_PROVIDER == "huggingface_nllb":
         return translate_text_huggingface(source_text)
 
@@ -372,6 +389,61 @@ def translate_text_model_aggregator(text: str, payload: dict[str, Any]) -> dict[
     }
 
 
+def translate_text_openai_compatible(text: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not OPENAI_TRANSLATE_BASE_URL or not OPENAI_TRANSLATE_API_KEY or not OPENAI_TRANSLATE_MODEL:
+        raise RuntimeError("OpenAI-compatible translation endpoint is not fully configured")
+    role_name = str(payload.get("role_name") or DEFAULT_ROLE_NAME)
+    system_prompt = str(payload.get("system_prompt") or DEFAULT_SYSTEM_PROMPT)
+    user_prompt = render_prompt_template(
+        str(payload.get("user_prompt_template") or DEFAULT_USER_PROMPT_TEMPLATE),
+        {
+            "source_text": text,
+            "source_lang": payload.get("source_lang") or payload.get("src_lang") or SRC_LANG,
+            "target_lang": payload.get("target_lang") or payload.get("tgt_lang") or TGT_LANG,
+            "page": payload.get("page") or "当前页",
+            "source_name": payload.get("source_name") or "未命名文件",
+        },
+    )
+    url = OPENAI_TRANSLATE_BASE_URL
+    if not url.endswith("/chat/completions"):
+        url = f"{url}/chat/completions"
+    body = json.dumps({
+        "model": OPENAI_TRANSLATE_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": coerce_float(payload.get("temperature"), 0.2),
+        "max_tokens": coerce_int(payload.get("max_tokens") or payload.get("maxTokens"), 2048),
+    }, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {OPENAI_TRANSLATE_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=MODEL_AGGREGATOR_TIMEOUT_SECONDS) as response:
+            raw = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenAI-compatible translation HTTP {exc.code}: {detail[:500]}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"OpenAI-compatible translation unavailable: {exc.reason}") from exc
+    translation = extract_model_aggregator_translation(raw)
+    return {
+        "translation": translation,
+        "translated_text": translation,
+        "text": translation,
+        "provider": TRANSLATE_PROVIDER,
+        "model": raw.get("model") or OPENAI_TRANSLATE_MODEL,
+        "role_name": role_name,
+    }
+
+
 def render_prompt_template(template: str, variables: dict[str, Any]) -> str:
     rendered = template or DEFAULT_USER_PROMPT_TEMPLATE
     for key, value in variables.items():
@@ -389,6 +461,14 @@ def extract_model_aggregator_translation(payload: Any) -> str:
         value = payload.get(key)
         if isinstance(value, str):
             return value
+
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        message = first.get("message") if isinstance(first.get("message"), dict) else {}
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
 
     raw = payload.get("raw")
     if isinstance(raw, dict):

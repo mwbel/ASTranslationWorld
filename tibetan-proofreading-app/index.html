@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>藏文典籍 OCR 对照工作台</title>
-    <link rel="stylesheet" href="./styles.css?v=20260710-shared-errors-28" />
+    <link rel="stylesheet" href="./styles.css?v=20260712-project-picker-38" />
     <script src="./vendor/pdf.min.js" defer></script>
     <script src="./vendor/lucide.min.js" defer></script>
-    <script src="./app.js?v=20260710-shared-errors-28" defer></script>
+    <script src="./app.js?v=20260712-project-picker-38" defer></script>
   </head>
   <body>
     <main class="app-shell ocr-only-mode">
@@ -22,11 +22,15 @@
           </div>
         </div>
         <div class="project-actions" aria-label="项目操作">
-          <button id="newProjectButton" class="ghost-button compact" type="button">
+          <button id="homeButton" class="ghost-button compact workbench-only-action" type="button">
+            <i data-lucide="layout-dashboard"></i>
+            <span>主页</span>
+          </button>
+          <button id="newProjectButton" class="ghost-button compact workbench-only-action" type="button">
             <i data-lucide="file-plus-2"></i>
             <span>新建项目</span>
           </button>
-          <button id="deleteProjectButton" class="ghost-button compact danger-action" type="button">
+          <button id="deleteProjectButton" class="ghost-button compact danger-action workbench-only-action" type="button">
             <i data-lucide="trash-2"></i>
             <span>删除项目</span>
           </button>
@@ -90,7 +94,85 @@
 
       <section id="statusBar" class="status-bar is-hidden" role="status" hidden></section>
 
-      <section class="workspace ocr-only-mode" aria-label="原文与 OCR 对照区">
+      <section id="homeView" class="home-view" aria-label="工作台主页">
+        <div class="home-hero">
+          <div>
+            <span class="eyebrow">Workspace</span>
+            <h2>选择今天要处理的任务</h2>
+          </div>
+          <p>从这里进入藏文 OCR 校对，或进入藏译中任务。项目记录保存在本机浏览器缓存中，重新加载源文件后可继续校对。</p>
+        </div>
+
+        <div class="home-entry-grid">
+          <article class="home-entry-card" data-workflow-card="ocr">
+            <div class="home-entry-icon">
+              <i data-lucide="scan-text"></i>
+            </div>
+            <div class="home-entry-body">
+              <span class="eyebrow">OCR Proofreading</span>
+              <h3>藏文 OCR 识别和校对</h3>
+              <p>分页面查看原文，对照 BDRC 与 AI Vision 识别结果，逐 block 标错、选择并保存最终 OCR 文本。</p>
+            </div>
+            <div class="home-entry-actions">
+              <button id="homeNewOcrProjectButton" class="primary-button compact" type="button">
+                <i data-lucide="file-plus-2"></i>
+                <span>新建 OCR 项目</span>
+              </button>
+              <button id="homeBrowseOcrProjectsButton" class="ghost-button compact" type="button">
+                <i data-lucide="folder-open"></i>
+                <span>浏览项目</span>
+              </button>
+              <button id="homeContinueOcrTaskButton" class="ghost-button compact" type="button">
+                <i data-lucide="play"></i>
+                <span>继续校对</span>
+              </button>
+            </div>
+            <div class="home-entry-stats" id="homeOcrStats">暂无项目</div>
+          </article>
+
+          <article class="home-entry-card" data-workflow-card="translation">
+            <div class="home-entry-icon is-translation">
+              <i data-lucide="languages"></i>
+            </div>
+            <div class="home-entry-body">
+              <span class="eyebrow">Translation</span>
+              <h3>藏译中</h3>
+              <p>加载藏文原文或 OCR 校对结果，按页生成中文译文，保留人工修改、复制和导出入口。</p>
+            </div>
+            <div class="home-entry-actions">
+              <button id="homeNewTranslationProjectButton" class="primary-button compact" type="button">
+                <i data-lucide="file-plus-2"></i>
+                <span>新建翻译项目</span>
+              </button>
+              <button id="homeBrowseTranslationProjectsButton" class="ghost-button compact" type="button">
+                <i data-lucide="folder-open"></i>
+                <span>浏览项目</span>
+              </button>
+              <button id="homeContinueTranslationTaskButton" class="ghost-button compact" type="button">
+                <i data-lucide="play"></i>
+                <span>继续翻译</span>
+              </button>
+            </div>
+            <div class="home-entry-stats" id="homeTranslationStats">暂无项目</div>
+          </article>
+        </div>
+
+        <section class="home-projects" aria-label="当前项目">
+          <div class="home-section-header">
+            <div>
+              <span class="eyebrow">Local Projects</span>
+              <h3>当前项目</h3>
+            </div>
+            <button id="homeRefreshProjectsButton" class="ghost-button compact" type="button">
+              <i data-lucide="refresh-cw"></i>
+              <span>刷新</span>
+            </button>
+          </div>
+          <div id="homeProjectList" class="home-project-list"></div>
+        </section>
+      </section>
+
+      <section id="workbenchView" class="workspace ocr-only-mode" aria-label="原文与 OCR 对照区" hidden>
         <section class="viewer-pane" aria-label="原文单页显示">
           <div class="pane-header viewer-pane-header">
             <div class="viewer-title-block">

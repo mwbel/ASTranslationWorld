@@ -4,6 +4,7 @@ import importlib
 import os
 import sys
 import tempfile
+import asyncio
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -14,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 from adapter_server.models import find_model
 from adapter_server.providers import _coerce_literal_items, _prepare_messages_for_provider
+import adapter_server.providers as provider_module
 from common.config import load_config
 from common.redaction import redact_obj
 
@@ -44,17 +46,21 @@ def test_find_model_alias() -> None:
 
 def test_find_model_mappings() -> None:
     cfg = load_config(ROOT / "config.yaml")
-    assert find_model(cfg, "local:qwen2.5:14b").id == "agg-local-qwen25"
-    assert find_model(cfg, "local:qwen3.6-27b:latest").id == "agg-local-qwen36"
-    assert find_model(cfg, "local:gemma2:27b").id == "agg-local-gemma2"
-    assert find_model(cfg, "local:batiai/qwen3.6-27b:q4").id == "agg-local-qwen36-q4"
-    assert find_model(cfg, "gemini:gemini-2.5-flash").id == "agg-gemini-25-flash"
+    assert find_model(cfg, "local:qwen2.5:14b").id == "agg-local-qwen2.5-14b"
+    assert find_model(cfg, "local:qwen3.6-27b:latest").id == "agg-local-qwen3.6-27b"
+    assert find_model(cfg, "local:gemma2:27b").id == "agg-local-gemma2-27b"
+    assert find_model(cfg, "local:batiai/qwen3.6-27b:q4").id == "agg-local-qwen3.6-27b-q4"
+    assert find_model(cfg, "gemini:gemini-2.5-flash").id == "agg-gemini-2.5-flash"
+    assert find_model(cfg, "gemini:gemini-3.1-flash-lite").id == "agg-gemini-3.1-flash-lite"
+    assert find_model(cfg, "agg-local-qwen25").id == "agg-local-qwen2.5-14b"
+    assert find_model(cfg, "agg-gemini-25-flash").id == "agg-gemini-2.5-flash"
 
 
 def test_repaired_qwen36_models_are_callable() -> None:
     cfg = load_config(ROOT / "config.yaml")
     assert find_model(cfg, "local:qwen3.6-27b:latest").enabled
     assert find_model(cfg, "local:batiai/qwen3.6-27b:q4").enabled
+    assert find_model(cfg, "agg-compare-all").enabled
 
 
 def test_unknown_model_is_not_silently_rerouted() -> None:
@@ -65,6 +71,45 @@ def test_unknown_model_is_not_silently_rerouted() -> None:
         assert "Unknown adapter model" in str(exc)
     else:
         raise AssertionError("unknown model must not silently fall back to the first configured model")
+
+
+def test_compare_all_model_combines_outputs() -> None:
+    cfg = load_config(ROOT / "config.yaml")
+    user = cfg.adapter.users[0]
+
+    async def fake_call_model_aggregator(_provider, model, _payload):
+        return {"content": f"translation::{model.id}", "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}}
+
+    async def fake_call_gemini(_provider, model, _payload):
+        return {"content": f"translation::{model.id}", "usage": {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9}}
+
+    original_call_model_aggregator = provider_module.call_model_aggregator
+    original_call_gemini = provider_module.call_gemini
+    provider_module.call_model_aggregator = fake_call_model_aggregator
+    provider_module.call_gemini = fake_call_gemini
+    try:
+        result = asyncio.run(
+            provider_module.generate_text(
+                cfg,
+                {"model": "agg-compare-all", "messages": [{"role": "user", "content": "Translate this."}]},
+                user,
+            )
+        )
+    finally:
+        provider_module.call_model_aggregator = original_call_model_aggregator
+        provider_module.call_gemini = original_call_gemini
+
+    content = result["content"]
+    assert "全模型翻译对比" in content
+    assert "ModelAggregator Local Qwen2.5 14B" in content
+    assert "ModelAggregator Local Qwen3.6 27B" in content
+    assert "ModelAggregator Local Gemma2 27B" in content
+    assert "ModelAggregator Gemini 2.5 Flash" in content
+    assert "ModelAggregator Gemini 3.1 Flash-Lite" in content
+    assert "translation::agg-local-qwen2.5-14b" in content
+    assert "translation::agg-gemini-2.5-flash" in content
+    assert "translation::agg-gemini-3.1-flash-lite" in content
+    assert result["provider_response"]["total_models"] == 6
 
 
 def test_literal_json_coercion() -> None:
@@ -114,6 +159,10 @@ def test_adapter_login_and_models() -> None:
 
     importlib.reload(adapter_app)
     client = TestClient(adapter_app.app)
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["version"] == "0.2.0"
+    assert adapter_app.app.version == "0.2.0"
     login = client.post("/auth/login", json={"username": "demo", "password": "demo-password", "reseller_code": "demo"})
     assert login.status_code == 200
     token = login.json()["token"]
@@ -128,7 +177,7 @@ def test_adapter_streaming_chunks() -> None:
 
     importlib.reload(adapter_app)
 
-    async def fake_generate_text(_cfg, _payload):
+    async def fake_generate_text(_cfg, _payload, _user=None):
         return {"content": "stream ok", "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}}
 
     adapter_app.generate_text = fake_generate_text
@@ -156,6 +205,7 @@ def main() -> int:
         test_find_model_mappings,
         test_repaired_qwen36_models_are_callable,
         test_unknown_model_is_not_silently_rerouted,
+        test_compare_all_model_combines_outputs,
         test_literal_json_coercion,
         test_univmodel_style_config,
         test_probe,

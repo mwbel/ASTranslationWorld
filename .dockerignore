@@ -1,0 +1,13 @@
+*
+!Dockerfile.zeabur
+!requirements-zeabur.txt
+!tibetan_ocr_bridge.py
+!tibetan_translation_bridge.py
+!zeabur_app/
+!zeabur_app/**
+!tibetan-proofreading-app/
+!tibetan-proofreading-app/**
+!tibetan-ocr-core/
+!tibetan-ocr-core/ai_vision_ocr_server.py
+!tibetan-translation-services/
+!tibetan-translation-services/nllb_translate_server.py

@@ -137,9 +137,167 @@ body.sidebar-resizing {
   white-space: pre-wrap !important;
   overflow-wrap: anywhere !important;
 }
+
+/* Local workspace patch: calm down dense workbench controls. */
+.breadcrumb-bar,
+.panel-header,
+.lang-tabs,
+.scan-viewer__toolbar {
+  gap: 6px !important;
+}
+
+.workbench .panel-header {
+  padding: 9px 16px !important;
+}
+
+.workbench .panel-title {
+  gap: 6px !important;
+  font-size: 1rem !important;
+}
+
+.workbench .btn,
+.workbench .reocr-btn,
+.breadcrumb-bar .btn,
+.chain-indicator .btn,
+.lang-tabs .btn,
+.lang-tabs .persona-chip {
+  min-height: 28px !important;
+  padding: 4px 9px !important;
+  font-size: 13px !important;
+  line-height: 1.2 !important;
+}
+
+.chain-indicator {
+  gap: 6px !important;
+}
+
+.chain-indicator button[title*="木鱼"],
+.chain-indicator button[title*="落笔音"] {
+  display: none !important;
+}
+
+.segments-list {
+  padding: 16px 18px !important;
+}
+
+.segment-card {
+  padding: 14px 18px 12px !important;
+}
+
+.segment-card__header {
+  justify-content: flex-end !important;
+  min-height: 26px !important;
+  margin-bottom: 8px !important;
+}
+
+.segment-card__id,
+.segment-card__token-count {
+  display: none !important;
+}
+
+.segment-card__header > div {
+  margin-left: auto !important;
+}
+
+.segment-card__header .literal-toggle-btn {
+  opacity: 0.75 !important;
+}
+
+.segment-card__header .literal-toggle-btn:hover,
+.segment-card__header .literal-toggle-btn.active {
+  opacity: 1 !important;
+}
+
+body.sutra-same-source-target .proposal-empty--invitation,
+body.sutra-same-source-target .add-translation-btn {
+  display: none !important;
+}
+
+body.sutra-same-source-target .segment-card__header {
+  margin-bottom: 4px !important;
+}
+
+.translation-editor .editor-header {
+  align-items: flex-start !important;
+  gap: 8px !important;
+}
+
+.translation-editor .persona-selector {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+
+.translation-editor__collapse,
+.translation-editor__collapse-bottom {
+  margin-left: auto !important;
+  min-width: 52px !important;
+  flex-shrink: 0 !important;
+  color: #7b7369 !important;
+}
+
+.translation-editor__collapse:hover,
+.translation-editor__collapse-bottom:hover {
+  color: var(--ink-deep) !important;
+  border-color: var(--paper-aged) !important;
+  background: var(--paper-warm) !important;
+}
+
+.segment-card.sutra-collapse-in-proofread-bar .translation-editor__collapse,
+.segment-card.sutra-collapse-in-proofread-bar .translation-editor__collapse-bottom {
+  display: none !important;
+}
+
+.proofread-bar__collapse-before-revert {
+  margin-left: auto !important;
+  color: #7b7369 !important;
+}
+
+.proofread-bar__collapse-before-revert + button {
+  margin-left: 4px !important;
+}
+
+.sutra-role-visibility-toggle {
+  margin-left: 10px !important;
+  min-height: 28px !important;
+  padding: 4px 10px !important;
+  border: 1px solid rgba(184, 150, 62, 0.35) !important;
+  border-radius: 999px !important;
+  background: rgba(184, 150, 62, 0.08) !important;
+  color: #8a6e25 !important;
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+  white-space: nowrap !important;
+}
+
+.sutra-role-visibility-toggle:hover {
+  background: rgba(184, 150, 62, 0.14) !important;
+  border-color: rgba(184, 150, 62, 0.52) !important;
+}
+
+/* Multi-model comparison returns one readable section per model. */
+.ai-preview__content {
+  white-space: pre-wrap !important;
+}
+
+.council-panel--models .council-grid {
+  display: grid !important;
+  grid-auto-flow: column !important;
+  grid-auto-columns: minmax(260px, 1fr) !important;
+  grid-template-columns: none !important;
+  overflow-x: auto !important;
+}
+
+.council-col__meta {
+  padding: 6px 10px !important;
+  border-bottom: 1px solid var(--paper-aged) !important;
+  color: var(--ink-wash) !important;
+  font-size: 12px !important;
+  line-height: 1.45 !important;
+  overflow-wrap: anywhere !important;
+}
 CSS
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v21-direct-read-token-refresh/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v35-source-token-display-recovery/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -252,10 +410,213 @@ const __sutraInstallLocalStyles = () => {
       white-space: pre-wrap !important;
       overflow-wrap: anywhere !important;
     }
+    .breadcrumb-bar,
+    .panel-header,
+    .lang-tabs,
+    .scan-viewer__toolbar {
+      gap: 6px !important;
+    }
+    .workbench .panel-header {
+      padding: 9px 16px !important;
+    }
+    .workbench .panel-title {
+      gap: 6px !important;
+      font-size: 1rem !important;
+    }
+    .workbench .btn,
+    .workbench .reocr-btn,
+    .breadcrumb-bar .btn,
+    .chain-indicator .btn,
+    .lang-tabs .btn,
+    .lang-tabs .persona-chip {
+      min-height: 28px !important;
+      padding: 4px 9px !important;
+      font-size: 13px !important;
+      line-height: 1.2 !important;
+    }
+    .chain-indicator {
+      gap: 6px !important;
+    }
+    .chain-indicator button[title*="木鱼"],
+    .chain-indicator button[title*="落笔音"] {
+      display: none !important;
+    }
+    .segments-list {
+      padding: 16px 18px !important;
+    }
+    .segment-card {
+      padding: 14px 18px 12px !important;
+    }
+    .segment-card__header {
+      justify-content: flex-end !important;
+      min-height: 26px !important;
+      margin-bottom: 8px !important;
+    }
+    .segment-card__id,
+    .segment-card__token-count {
+      display: none !important;
+    }
+    .segment-card__header > div {
+      margin-left: auto !important;
+    }
+    .segment-card__header .literal-toggle-btn {
+      opacity: 0.75 !important;
+    }
+    .segment-card__header .literal-toggle-btn:hover,
+    .segment-card__header .literal-toggle-btn.active {
+      opacity: 1 !important;
+    }
+    body.sutra-same-source-target .proposal-empty--invitation,
+    body.sutra-same-source-target .add-translation-btn {
+      display: none !important;
+    }
+    body.sutra-same-source-target .segment-card__header {
+      margin-bottom: 4px !important;
+    }
+    .translation-editor .editor-header {
+      align-items: flex-start !important;
+      gap: 8px !important;
+    }
+    .translation-editor .persona-selector {
+      flex: 1 1 auto !important;
+      min-width: 0 !important;
+    }
+    .translation-editor__collapse,
+    .translation-editor__collapse-bottom {
+      margin-left: auto !important;
+      min-width: 52px !important;
+      flex-shrink: 0 !important;
+      color: #7b7369 !important;
+    }
+    .translation-editor__collapse:hover,
+    .translation-editor__collapse-bottom:hover {
+      color: var(--ink-deep) !important;
+      border-color: var(--paper-aged) !important;
+      background: var(--paper-warm) !important;
+    }
+    .segment-card.sutra-collapse-in-proofread-bar .translation-editor__collapse,
+    .segment-card.sutra-collapse-in-proofread-bar .translation-editor__collapse-bottom {
+      display: none !important;
+    }
+    .proofread-bar__collapse-before-revert {
+      margin-left: auto !important;
+      color: #7b7369 !important;
+    }
+    .proofread-bar__collapse-before-revert + button {
+      margin-left: 4px !important;
+    }
   `;
   document.head.appendChild(style);
 };
 __sutraInstallLocalStyles();
+
+const __sutraInstallProofreadBarCollapse = () => {
+  if (window.__sutraProofreadBarCollapseInstalled) return;
+  window.__sutraProofreadBarCollapseInstalled = true;
+
+  let timer = 0;
+
+  const collapseEditor = (card) => {
+    const textarea = card.querySelector(".translation-editor textarea");
+    const hasDraft = textarea && String(textarea.value || "").trim();
+    if (hasDraft && !window.confirm("收起编辑框？未提交的译文不会保存。")) return;
+    const nativeButton = card.querySelector(".translation-editor__collapse, .translation-editor__collapse-bottom");
+    if (nativeButton) nativeButton.click();
+  };
+
+  const refresh = () => {
+    timer = 0;
+    document.querySelectorAll(".segment-card").forEach((card) => {
+      const editor = card.querySelector(".translation-editor");
+      const bar = card.querySelector(".proofread-bar--done");
+      const revertButton = bar
+        ? Array.from(bar.querySelectorAll("button")).find((button) => (button.textContent || "").includes("撤回"))
+        : null;
+
+      if (!editor || !bar || !revertButton) {
+        const existing = card.querySelector(".proofread-bar__collapse-before-revert");
+        if (existing) existing.remove();
+        card.classList.remove("sutra-collapse-in-proofread-bar");
+        return;
+      }
+
+      let collapseButton = bar.querySelector(".proofread-bar__collapse-before-revert");
+      if (!collapseButton) {
+        collapseButton = document.createElement("button");
+        collapseButton.type = "button";
+        collapseButton.className = "btn btn--ghost btn--xs proofread-bar__collapse-before-revert";
+        collapseButton.textContent = "收起";
+        collapseButton.title = "收起新译文编辑框；未提交内容不会保存";
+      }
+
+      collapseButton.onclick = (event) => {
+        event.stopPropagation();
+        collapseEditor(card);
+      };
+
+      if (collapseButton.nextSibling !== revertButton) {
+        bar.insertBefore(collapseButton, revertButton);
+      }
+      card.classList.add("sutra-collapse-in-proofread-bar");
+    });
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 80);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+  window.addEventListener("focus", schedule);
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraInstallProofreadBarCollapse();
+
+const __sutraInstallSameSourceTargetGuard = () => {
+  if (window.__sutraSameSourceTargetGuardInstalled) return;
+  window.__sutraSameSourceTargetGuardInstalled = true;
+
+  let timer = 0;
+
+  const sourceLang = () => {
+    const select = document.querySelector(".chain-indicator select.chain-tag");
+    if (select && select.value) return select.value;
+    const tag = document.querySelector(".chain-indicator .chain-tag");
+    const classText = tag ? String(tag.className || "") : "";
+    const match = classText.match(/chain-tag--([a-z]+)/);
+    return match ? match[1] : "";
+  };
+
+  const targetLang = () => {
+    const tab = document.querySelector(".translation-panel .lang-tab.active, .lang-tabs .lang-tab.active");
+    const text = tab ? (tab.textContent || "") : "";
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return "";
+  };
+
+  const refresh = () => {
+    timer = 0;
+    const source = sourceLang();
+    const target = targetLang();
+    document.body.classList.toggle("sutra-same-source-target", Boolean(source && target && source === target));
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 100);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+  window.addEventListener("sutra:file-router:direct-text", schedule);
+  window.addEventListener("focus", schedule);
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraInstallSameSourceTargetGuard();
 
 const __sutraInstallAutoEnglishTarget = () => {
   if (window.__sutraLocalAutoEnglishTargetInstalled) return;
@@ -556,15 +917,35 @@ const __sutraInstallFileRouter = () => {
       if (!rows.has(key)) rows.set(key, []);
       rows.get(key).push({ str, x });
     }
-    const pageLines = [...rows.entries()]
+    const pageRows = [...rows.entries()]
       .sort((a, b) => Number(b[0]) - Number(a[0]))
-      .map(([, row]) => row
-        .sort((a, b) => a.x - b.x)
-        .map((item) => item.str)
-        .join("")
-        .replace(/[ \t]+/g, " ")
-        .trim())
-      .filter(Boolean);
+      .map(([rowY, row]) => {
+        const sorted = row.sort((a, b) => a.x - b.x);
+        return {
+          y: Number(rowY),
+          x: Number(sorted[0] && sorted[0].x || 0),
+          text: sorted
+            .map((item) => item.str)
+            .join("")
+            .replace(/[ \t]+/g, " ")
+            .trim(),
+        };
+      })
+      .filter((row) => row.text);
+    const lineGaps = pageRows.slice(1)
+      .map((row, index) => Math.abs(pageRows[index].y - row.y))
+      .filter((gap) => gap > 0 && gap < 80)
+      .sort((a, b) => a - b);
+    const typicalGap = lineGaps.length ? lineGaps[Math.floor(lineGaps.length / 2)] : 12;
+    const pageLines = [];
+    pageRows.forEach((row, index) => {
+      const previous = index > 0 ? pageRows[index - 1] : null;
+      const next = index + 1 < pageRows.length ? pageRows[index + 1] : null;
+      const hasLargeVerticalGap = Boolean(previous && Math.abs(previous.y - row.y) > typicalGap * 1.55);
+      const startsIndentedParagraph = Boolean(next && row.x - next.x >= 8);
+      if (pageLines.length && (hasLargeVerticalGap || startsIndentedParagraph)) pageLines.push("");
+      pageLines.push(row.text);
+    });
     return pageLines.join("\n");
   };
 
@@ -631,13 +1012,19 @@ const __sutraInstallFileRouter = () => {
     return value.length <= 12 && !/[，,、。！？!?；;：:]/.test(value);
   };
 
+  const isLikelyHeadingLine = (line, sourceLang) => {
+    if (sourceLang === "bo") return false;
+    const value = compactText(line);
+    if (!value || value.length > 40) return false;
+    return /^(?:第[0-9一二三四五六七八九十百千万零〇两]+[章节篇部卷讲课]|序言|前言|引言|绪论|结语|后记|附录)(?:[：:、.]|$)/.test(value);
+  };
+
   const normalizeDirectTextForSegmentation = (text, sourceLang, extension) => {
     const normalized = String(text || "")
       .replace(/\r\n?/g, "\n")
       .replace(/\u00a0/g, " ");
     if (extension !== "pdf") return normalized;
 
-    const endPunctuation = terminalPunctuationFor(sourceLang);
     const blocks = [];
     let buffer = [];
 
@@ -657,12 +1044,16 @@ const __sutraInstallFileRouter = () => {
         flush();
         continue;
       }
+      if (isLikelyHeadingLine(line, sourceLang)) {
+        flush();
+        blocks.push(line);
+        continue;
+      }
       if (!buffer.length && isLikelyStandaloneLine(line, sourceLang)) {
         blocks.push(line);
         continue;
       }
       buffer.push(line);
-      if (endPunctuation.test(line)) flush();
     }
     flush();
 
@@ -947,11 +1338,19 @@ const __sutraInstallFileRouter = () => {
     showDirectReadNotice(`开始批量直读 ${targetPages.length} 个待处理页面...`, "info", 4200);
     let done = 0;
     let errors = 0;
+    const noTextPages = [];
     let totalTokens = 0;
     for (const page of targetPages) {
       try {
         const response = await routePdfPageOcrAsText(page.id, init);
         if (!response || !response.ok) {
+          const failure = response
+            ? await response.clone().json().catch(() => ({}))
+            : {};
+          if (response && response.status === 422 && Number(failure.extracted_chars || 0) === 0) {
+            noTextPages.push(Number(page.page_number || 0));
+            continue;
+          }
           errors += 1;
           continue;
         }
@@ -966,18 +1365,24 @@ const __sutraInstallFileRouter = () => {
         errors += 1;
       }
     }
+    const noText = noTextPages.length;
+    const noTextLabel = noTextPages.filter(Boolean).map((pageNumber) => `P${pageNumber}`).join("、");
     const message = errors
-      ? `批量直读完成：${done} 页生成结构，${errors} 页无有效文本层或请求失败。`
-      : `批量直读完成：${done} 页已生成右栏结构。`;
+      ? `批量直读完成：${done} 页生成结构，${noText} 页没有文本层，${errors} 页请求失败。`
+      : noText
+        ? `批量直读完成：${done} 页生成结构；${noTextLabel || `${noText} 页`} 没有文本层，未生成分段。空白页可忽略，扫描页请手动 OCR。`
+        : `批量直读完成：${done} 页已生成右栏结构。`;
     if (done > 0) {
       revealWorkbenchForDirectRead(message);
     } else {
-      showDirectReadNotice(message, errors ? "warning" : "success", 7200);
+      showDirectReadNotice(message, errors ? "warning" : noText ? "info" : "success", 7200);
     }
     return responseFromJson({
       total: targetPages.length,
       done,
       errors,
+      no_text: noText,
+      no_text_pages: noTextPages,
       skipped: pages.length - targetPages.length,
       message,
       token_count: totalTokens,
@@ -1165,6 +1570,245 @@ const __sutraInstallSidebarResizer = () => {
 };
 __sutraInstallSidebarResizer();
 
+const __sutraInstallBuiltinRoleVisibility = () => {
+  if (window.__sutraLocalBuiltinRoleVisibilityInstalled) return;
+  window.__sutraLocalBuiltinRoleVisibilityInstalled = true;
+  const storageKey = "sutra_hide_builtin_roles";
+  const builtinNamesKey = "sutra_builtin_role_names";
+  const customNamesKey = "sutra_custom_role_names";
+  let timer = 0;
+
+  const normalizedText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const shouldHideBuiltinRoles = () => localStorage.getItem(storageKey) === "1";
+  const firstToken = (text) => normalizedText(text).split(" ")[0] || "";
+
+  const builtinRoleElements = () => {
+    const selectors = [
+      "button",
+      "[role='button']",
+      "[class*='chip']",
+      "[class*='pill']",
+      "[class*='badge']",
+    ].join(",");
+    return Array.from(document.querySelectorAll(selectors)).filter((element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      if (element.dataset.sutraBuiltinToggle === "control") return false;
+      const text = normalizedText(element.textContent);
+      if (!text.includes("内置")) return false;
+      if (text.includes("隐藏内置角色") || text.includes("显示内置角色")) return false;
+      if (!(text.includes("→") || text.includes("任意语言") || text.includes("English") || text.includes("藏文") || text.includes("中文"))) {
+        return false;
+      }
+      return true;
+    });
+  };
+
+  const customRoleElements = () => {
+    const selectors = [
+      "button",
+      "[role='button']",
+      "[class*='chip']",
+      "[class*='pill']",
+      "[class*='badge']",
+    ].join(",");
+    return Array.from(document.querySelectorAll(selectors)).filter((element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const text = normalizedText(element.textContent);
+      if (!text.includes("我的")) return false;
+      if (!(text.includes("→") || text.includes("任意语言") || text.includes("English") || text.includes("藏文") || text.includes("中文"))) {
+        return false;
+      }
+      return true;
+    });
+  };
+
+  const roleNameFromManagedElement = (element) => {
+    const text = normalizedText(element.textContent)
+      .replace(/内置/g, "")
+      .replace(/我的/g, "")
+      .replace(/[×✕xX]\s*$/, "")
+      .trim();
+    return firstToken(text);
+  };
+
+  const countNames = (elements) => {
+    const counts = new Map();
+    elements.forEach((element) => {
+      const name = roleNameFromManagedElement(element);
+      if (!name) return;
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return counts;
+  };
+
+  const readCachedCounts = (key) => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) || "{}");
+      return new Map(Object.entries(raw).filter(([name, count]) => name && Number(count) > 0).map(([name, count]) => [name, Number(count)]));
+    } catch (_) {
+      return new Map();
+    }
+  };
+
+  const writeCachedCounts = (key, counts) => {
+    if (!counts.size) return;
+    localStorage.setItem(key, JSON.stringify(Object.fromEntries(counts.entries())));
+  };
+
+  const getRoleNameCounts = () => {
+    const builtinCounts = countNames(builtinRoleElements());
+    const customCounts = countNames(customRoleElements());
+    if (builtinCounts.size) writeCachedCounts(builtinNamesKey, builtinCounts);
+    if (customCounts.size) writeCachedCounts(customNamesKey, customCounts);
+    return {
+      builtinCounts: builtinCounts.size ? builtinCounts : readCachedCounts(builtinNamesKey),
+      customCounts: customCounts.size ? customCounts : readCachedCounts(customNamesKey),
+    };
+  };
+
+  const ensureToggle = (hiddenCount) => {
+    const headers = Array.from(document.querySelectorAll("div,span,h2,h3,h4,strong"))
+      .filter((element) => normalizedText(element.textContent) === "已有角色");
+    headers.forEach((header) => {
+      const container = header.parentElement;
+      if (!container || container.querySelector(".sutra-role-visibility-toggle")) return;
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "sutra-role-visibility-toggle";
+      toggle.dataset.sutraBuiltinToggle = "control";
+      toggle.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (shouldHideBuiltinRoles()) {
+          localStorage.removeItem(storageKey);
+        } else {
+          localStorage.setItem(storageKey, "1");
+        }
+        scheduleApply();
+      });
+      container.appendChild(toggle);
+    });
+
+    document.querySelectorAll(".sutra-role-visibility-toggle").forEach((toggleNode) => {
+      if (!(toggleNode instanceof HTMLElement)) return;
+      const hidden = shouldHideBuiltinRoles();
+      toggleNode.textContent = hidden ? `显示内置角色${hiddenCount ? ` (${hiddenCount})` : ""}` : "隐藏内置角色";
+      toggleNode.setAttribute("aria-pressed", hidden ? "true" : "false");
+      toggleNode.title = hidden ? "显示当前被隐藏的内置角色" : "隐藏当前内置角色，仅保留“我的”角色";
+    });
+  };
+
+  const setElementHidden = (element, hidden) => {
+    if (!(element instanceof HTMLElement)) return;
+    if (hidden) {
+      if (!Object.prototype.hasOwnProperty.call(element.dataset, "sutraBuiltinOriginalDisplay")) {
+        element.dataset.sutraBuiltinOriginalDisplay = element.style.display || "";
+      }
+      element.style.display = "none";
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(element.dataset, "sutraBuiltinOriginalDisplay")) {
+      element.style.display = element.dataset.sutraBuiltinOriginalDisplay || "";
+      delete element.dataset.sutraBuiltinOriginalDisplay;
+    } else {
+      element.style.display = "";
+    }
+  };
+
+  const preferredVisibleItems = (items) => {
+    const active = items.find((item) => item.classList.contains("active"));
+    const ordered = [];
+    if (active) ordered.push(active);
+    items.slice().reverse().forEach((item) => {
+      if (item !== active) ordered.push(item);
+    });
+    return ordered;
+  };
+
+  const applyPersonaContainerVisibility = (containerSelector, hide, builtinCounts, customCounts) => {
+    const containers = Array.from(document.querySelectorAll(containerSelector));
+    containers.forEach((container) => {
+      const buttons = Array.from(container.querySelectorAll(".persona-chip")).filter((element) => element instanceof HTMLElement);
+      if (!buttons.length) return;
+
+      const groups = new Map();
+      buttons.forEach((button) => {
+        const name = firstToken(button.textContent);
+        if (!name || name === "全部") return;
+        if (!groups.has(name)) groups.set(name, []);
+        groups.get(name).push(button);
+      });
+
+      groups.forEach((items, name) => {
+        const builtinCount = Number(builtinCounts.get(name) || 0);
+        const customCount = Number(customCounts.get(name) || 0);
+        const hasCountHints = builtinCount > 0 || customCount > 0;
+        const hasDuplicates = items.length > 1;
+        if (!hide) {
+          items.forEach((item) => setElementHidden(item, false));
+          return;
+        }
+        if (!hasCountHints && !hasDuplicates) {
+          items.forEach((item) => setElementHidden(item, false));
+          return;
+        }
+        if (hasCountHints && builtinCount <= 0) {
+          items.forEach((item) => setElementHidden(item, false));
+          return;
+        }
+        const preferred = preferredVisibleItems(items);
+        const keepCount = hasCountHints
+          ? (customCount > 0 ? Math.min(items.length, customCount) : 0)
+          : 1;
+        const keepSet = new Set(preferred.slice(0, keepCount));
+        items.forEach((item) => setElementHidden(item, !keepSet.has(item)));
+      });
+
+      const visibleButtons = buttons.filter((button) => button.style.display !== "none");
+      if (!visibleButtons.length) {
+        const fallback = buttons.find((button) => button.classList.contains("active")) || buttons[0];
+        if (fallback) setElementHidden(fallback, false);
+      }
+    });
+  };
+
+  const applyEditorPersonaVisibility = (hide, builtinCounts, customCounts) => {
+    applyPersonaContainerVisibility(".translation-editor .persona-selector", hide, builtinCounts, customCounts);
+    applyPersonaContainerVisibility(".lang-tabs > div", hide, builtinCounts, customCounts);
+  };
+
+  const applyBuiltinVisibility = () => {
+    timer = 0;
+    const hide = shouldHideBuiltinRoles();
+    const { builtinCounts, customCounts } = getRoleNameCounts();
+    let hiddenCount = 0;
+    builtinRoleElements().forEach((element) => {
+      if (!(element instanceof HTMLElement)) return;
+      if (hide) {
+        setElementHidden(element, true);
+        hiddenCount += 1;
+      } else {
+        setElementHidden(element, false);
+      }
+    });
+    applyEditorPersonaVisibility(hide, builtinCounts, customCounts);
+    ensureToggle(hiddenCount);
+  };
+
+  const scheduleApply = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(applyBuiltinVisibility, 80);
+  };
+
+  const observer = new MutationObserver(scheduleApply);
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  window.addEventListener("focus", scheduleApply);
+  scheduleApply();
+  window.setTimeout(scheduleApply, 600);
+  window.setTimeout(scheduleApply, 1800);
+};
+__sutraInstallBuiltinRoleVisibility();
+
 const __sutraInstallSourceBlockSync = () => {
   if (window.__sutraLocalSourceBlockSyncInstalled) return;
   window.__sutraLocalSourceBlockSyncInstalled = true;
@@ -1263,6 +1907,76 @@ const __sutraInstallSourceBlockSync = () => {
   }, 1500);
 };
 __sutraInstallSourceBlockSync();
+
+const __sutraInstallMissingSourceRecovery = () => {
+  if (window.__sutraLocalMissingSourceRecoveryInstalled) return;
+  window.__sutraLocalMissingSourceRecoveryInstalled = true;
+  const loading = new Set();
+  let timer = 0;
+
+  const tokenText = (token) => String(token && (token.text || token.ocr_text) || "").trim();
+
+  const restoreCard = async (card) => {
+    if (!(card instanceof HTMLElement)) return;
+    if (card.querySelector(".segment-source-preview")) return;
+    const segmentId = String(card.dataset.segmentId || "").trim();
+    if (!segmentId || loading.has(segmentId)) return;
+    loading.add(segmentId);
+    try {
+      const response = await window.fetch(`/api/segments/${encodeURIComponent(segmentId)}/tokens`);
+      if (!response.ok) return;
+      const payload = await response.json().catch(() => []);
+      const tokens = Array.isArray(payload) ? payload : [];
+      const visibleTokens = tokens.filter((token) => tokenText(token));
+      if (!visibleTokens.length || !card.isConnected || card.querySelector(".segment-source-preview")) return;
+
+      const preview = document.createElement("div");
+      preview.className = "segment-source-preview sutra-source-preview-recovered";
+      visibleTokens.forEach((token) => {
+        const inline = document.createElement("span");
+        inline.className = "source-token-inline sutra-source-token-recovered";
+        if (token.id) inline.dataset.tokenId = String(token.id);
+        const text = document.createElement("span");
+        text.className = "source-token-text";
+        text.textContent = tokenText(token);
+        inline.appendChild(text);
+        preview.appendChild(inline);
+      });
+
+      const header = card.querySelector(".segment-card__header");
+      if (header) header.insertAdjacentElement("afterend", preview);
+      else card.prepend(preview);
+      const count = card.querySelector(".segment-card__token-count");
+      if (count) count.textContent = `${visibleTokens.length} tokens`;
+      card.classList.remove("segment-card--empty-source");
+      card.dataset.sutraSourceRecovered = "true";
+    } catch (error) {
+      console.warn("AS译林本地前端：恢复段落原文显示失败", segmentId, error);
+    } finally {
+      loading.delete(segmentId);
+    }
+  };
+
+  const recover = () => {
+    timer = 0;
+    document.querySelectorAll(".segments-list .segment-card").forEach((card) => {
+      if (!card.querySelector(".segment-source-preview")) restoreCard(card);
+    });
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(recover, 100);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.body, { childList: true, subtree: true });
+  window.addEventListener("focus", schedule);
+  schedule();
+  window.setTimeout(schedule, 500);
+  window.setTimeout(schedule, 1500);
+};
+__sutraInstallMissingSourceRecovery();
 JS
 cat "$js" >> "$tmp"
 sed -i 's/拆分 PDF 页面/检测 PDF 文本层/g' "$tmp"
@@ -1276,6 +1990,38 @@ sed -i 's/对章节"${_e.title}"里所有 pending 页跑 OCR？/对章节"${_e.t
 sed -i 's/每页一次 LLM Vision 调用，耗时取决于页数（每页 5–20 秒）。/优先读取 PDF 文本层；无法读出有效文本时会停止并提示，不再自动识别。/g' "$tmp"
 sed -i 's/批量 OCR 失败：/批量直读失败：/g' "$tmp"
 sed -i 's/正在将 PDF 拆为图片（不会立即识别）\.\.\./正在检测 PDF 文本层；可直读则跳过 OCR，否则拆分页面.../g' "$tmp"
+sed -i 's/原文已校对 · 等待译笔/原文已确认/g' "$tmp"
+sed -i 's/原文已校对/原文已确认/g' "$tmp"
+sed -i 's/撤回校对状态/撤回确认状态/g' "$tmp"
+sed -i 's/原文已签字校对完毕/原文已确认完毕/g' "$tmp"
+sed -i 's/撤回"已校对"/撤回"已确认"/g' "$tmp"
+sed -i 's/已撤回校对/已撤回确认/g' "$tmp"
+sed -i 's/请先校对原文/请先确认原文/g' "$tmp"
+sed -i 's/⌛ 待校对/⌛ 待确认/g' "$tmp"
+sed -i 's~return a.proposals}return Array.isArray(a)?a:\[\]~return Object.assign(a.proposals,{errors:Array.isArray(a.errors)?a.errors:[]})}return Array.isArray(a)?a:[]~' "$tmp"
+sed -i 's~H=async()=>{var se;const U=s.slice(0,4).map(ce=>ce.id).filter(Boolean);~H=async()=>{var se;const eligibleCouncil=s.filter(ce=>!ce.is_builtin\&\&ce.model_preference!=="agg-compare-all"\&\&(ce.source_lang==="*"||ce.source_lang===e)\&\&(ce.target_lang==="*"||ce.target_lang===t)),U=(eligibleCouncil.length?eligibleCouncil:s.filter(ce=>ce.model_preference!=="agg-compare-all"\&\&(ce.source_lang==="*"||ce.source_lang===e)\&\&(ce.target_lang==="*"||ce.target_lang===t))).slice(0,8).map(ce=>ce.id).filter(Boolean);~' "$tmp"
+sed -i 's~Ae.length>=1?E(Ae):j({content:((se=ce==null?void 0:ce.errors)==null?void 0:se\[0\])||"会审失败，请检查 LLM 网关配置",persona:"Error"})~Ae.length>=1?(E(Ae),Array.isArray(ce.errors)\&\&ce.errors.length\&\&j({content:"部分角色未返回："+ce.errors.join("；"),persona:"Error"})):j({content:((se=ce==null?void 0:ce.errors)==null?void 0:se[0])||"会审失败，请检查 LLM 网关配置",persona:"Error"})~' "$tmp"
+sed -i 's~finally{$(!1)}}},Z=()=>~finally{$(!1)}}},multiCompare=async()=>{$(!0),j(null),E(null);try{const U=await Wi(n),se=(Array.isArray(U)?U:[]).map(ce=>ce.text||ce.content||ce.value||"").join("").trim();if(!se)throw new Error("当前段落没有可翻译原文");let ce="",ye="";const Ae=qb([{role:"system",content:`Translate from ${On[e]||e} to ${On[t]||t}. Preserve terminology and return only the translation.`},{role:"user",content:se}],"agg-compare-all",{onChunk:Be=>{ce+=Be},onError:Be=>{ye=String(Be||"")}},{temperature:.2,max_tokens:4096});await Ae.promise;const lineBreak=String.fromCharCode(10),modelResults=ce.trim().split("## ").slice(1).map((Be,re)=>{const Je=Be.split(lineBreak),nt=(Je.shift()||"").trim(),dt=Je[0]\&\&Je[0].startsWith("上游:")?Je.shift():"",_e=Je.join(lineBreak).trim();return{content:_e,persona:nt||`模型${re+1}`,persona_id:`model-${re}`,lang:t,proposal_id:null,comparison_kind:"model",comparison_meta:dt,comparison_error:_e.startsWith("[调用失败]")}}).filter(Be=>Be.content);modelResults.length?E(modelResults):j({content:ye||ce||"多模型对照没有返回结果",persona:"Error"})}catch(U){j({content:"多模型对照失败: "+U.message,persona:"Error"})}finally{$(!1)}},Z=()=>~' "$tmp"
+sed -i 's~T?"AI 翻译中...":"AI 翻译"\]}),c.jsxs("button",{className:"btn btn--ghost btn--sm",onClick:H~T?"AI 翻译中...":"AI 翻译"]}),c.jsx("button",{className:"btn btn--ghost btn--sm",onClick:multiCompare,disabled:T,title:"调用聚合器内全部可用模型并排对照",style:{color:"var(--azure)"},children:T?"对照中...":"多模型对照"}),c.jsxs("button",{className:"btn btn--ghost btn--sm",onClick:H~' "$tmp"
+sed -i 's~children:\[c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:Z~children:[_.persona==="多模型对照"?null:c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:Z~' "$tmp"
+sed -i 's~title:"不采纳，丢弃此建议",children:"丢弃"~title:_.persona==="多模型对照"?"关闭对照结果":"不采纳，丢弃此建议",children:_.persona==="多模型对照"?"关闭":"丢弃"~' "$tmp"
+sed -i 's~className:"council-panel",children:~className:`council-panel ${B[0]\&\&B[0].comparison_kind==="model"?"council-panel--models":""}`,children:~' "$tmp"
+sed -i 's~children:\["🪞 译师会审 · 分歧已高亮 · 按 1–",B.length," 或点「采纳」选定"\]~children:[B[0]\&\&B[0].comparison_kind==="model"?"多模型对照":"🪞 译师会审"," · 分歧已高亮 · 按 1–",B.length," 或点「采纳」选定"]~' "$tmp"
+sed -i 's~c.jsx("button",{className:"btn btn--primary btn--sm",onClick:()=>ie(U),style:{fontSize:"0.8125rem",padding:"1px 8px"},children:"采纳"})~U.comparison_error?null:c.jsx("button",{className:"btn btn--primary btn--sm",onClick:()=>ie(U),style:{fontSize:"0.8125rem",padding:"1px 8px"},children:"采纳"})~' "$tmp"
+sed -i 's~})]}),c.jsx("div",{className:`council-col__text~})]}),U.comparison_meta\&\&c.jsx("div",{className:"council-col__meta",children:U.comparison_meta}),c.jsx("div",{className:`council-col__text~' "$tmp"
+sed -i 's/function Zz({segmentId:n,sourceLang:e,targetLang:t,personas:s,onSubmit:a,onRefreshSegment:l,relaySource:u})/function Zz({segmentId:n,sourceLang:e,targetLang:t,personas:s,onSubmit:a,onRefreshSegment:l,relaySource:u,onCancel:closeEditor})/' "$tmp"
+sed -i 's/className:"persona-selector",children:s.map(U=>c.jsx("button",{className:`persona-chip ${p===U.id?"active":""}`,onClick:()=>g(U.id),children:U.display_name},U.id))})]})/className:"persona-selector",children:s.map(U=>c.jsx("button",{className:`persona-chip ${p===U.id?"active":""}`,onClick:()=>g(U.id),children:U.display_name},U.id))}),closeEditor?c.jsx("button",{type:"button",className:"btn btn--ghost btn--sm translation-editor__collapse",onClick:U=>{U.stopPropagation(),f.trim()?(window.confirm("收起编辑框？未提交的译文不会保存。")?closeEditor():null):closeEditor()},title:"收起编辑框；未提交内容不会保存",children:"收起"}):null]})/' "$tmp"
+sed -i 's/c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:ge,disabled:!f.trim()||v,children:\[c.jsx("span",{className:"icon icon--sm",children:c.jsx(nn,{width:14,height:14})}),v?"提交中...":"提交译文"\]})\]})/closeEditor?c.jsx("button",{type:"button",className:"btn btn--ghost btn--sm translation-editor__collapse-bottom",onClick:U=>{U.stopPropagation(),f.trim()?(window.confirm("收起编辑框？未提交的译文不会保存。")?closeEditor():null):closeEditor()},title:"收起编辑框；未提交内容不会保存",children:"收起"}):null,c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:ge,disabled:!f.trim()||v,children:[c.jsx("span",{className:"icon icon--sm",children:c.jsx(nn,{width:14,height:14})}),v?"提交中...":"提交译文"]})]})/' "$tmp"
+sed -i 's/onSubmit:on,onRefreshSegment:Rn,relaySource:We}/onSubmit:on,onRefreshSegment:Rn,relaySource:We,onCancel:Ut}/' "$tmp"
+grep -q 'translation-editor__collapse' "$tmp"
+grep -q 'translation-editor__collapse-bottom' "$tmp"
+grep -q 'onCancel:Ut' "$tmp"
+grep -q 'multiCompare=async' "$tmp"
+grep -q 'eligibleCouncil' "$tmp"
+grep -q 'return Object.assign(a.proposals' "$tmp"
+grep -q 'council-panel--models' "$tmp"
+grep -q 'comparison_meta' "$tmp"
+! grep -q 'closeEditorclassName' "$tmp"
 mv "$tmp" "$js"
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-localdev.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v3.js
@@ -1292,5 +2038,15 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v15.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v16.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v17.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v21.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v21.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v22.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v23.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v24.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v25.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v26.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v29.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v30.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v33.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v34.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v35.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v35.js#g' /usr/share/nginx/html/index.html
 SHELL

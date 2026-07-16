@@ -1,9 +1,11 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260710-shared-errors-28";
+const APP_BUILD_ID = "20260713-zeabur-oss-39";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
+const HOME_PROJECT_FILTERS = new Set(["all", "ocr", "translation"]);
 const OCR_FONT_SIZE_KEY = "tibetan-proofreading-app:ocr-font-size";
+const SOURCE_PREVIEW_SCALE_KEY = "tibetan-proofreading-app:source-preview-scale";
 const LEGACY_WORKSPACE_LAYOUT_KEYS = [
   "tibetan-proofreading-app:workspace-layout",
   "tibetan-proofreading-app:workspace-layout:v2",
@@ -15,6 +17,9 @@ const ACTIVE_TRANSLATION_ROLE_KEY = "tibetan-proofreading-app:active-translation
 const OCR_FONT_SIZE_MIN = 16;
 const OCR_FONT_SIZE_MAX = 36;
 const OCR_FONT_SIZE_STEP = 2;
+const SOURCE_PREVIEW_SCALE_MIN = 0.7;
+const SOURCE_PREVIEW_SCALE_MAX = 1.75;
+const SOURCE_PREVIEW_SCALE_STEP = 0.15;
 const TIBETAN_HIGH_RISK_MARK_RE = /[\u0F71-\u0F84\u0F90-\u0FBC]/;
 const TIBETAN_CLUSTER_RE = /[\u0F40-\u0F6C][\u0F71-\u0F84\u0F90-\u0FBC]*/g;
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -114,6 +119,7 @@ const state = {
   translationResults: new Map(),
   ocrView: "lines",
   ocrFontSize: 22,
+  sourcePreviewScale: 1,
   activeOcrLine: -1,
   renderToken: 0,
   thumbnailToken: 0,
@@ -121,8 +127,12 @@ const state = {
   translationRoles: [...BUILT_IN_TRANSLATION_ROLES],
   activeTranslationRoleId: "academic-literal",
   editingRoleId: "academic-literal",
+  activeWorkflow: "home",
+  homeProjectFilter: "all",
   isOcrBusy: false,
   isTranslateBusy: false,
+  remoteBookId: "",
+  remoteSaveTimer: null,
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -130,7 +140,9 @@ window.addEventListener("DOMContentLoaded", () => {
   cacheElements();
   restoreTranslationRoles();
   restoreOcrFontSize();
+  restoreSourcePreviewScale();
   restoreWorkspaceLayout();
+  configureDeploymentEndpoints();
   wireEvents();
   renderTranslationRoleOptions();
   renderActiveTranslationRoleMeta();
@@ -138,6 +150,8 @@ window.addEventListener("DOMContentLoaded", () => {
   refreshControls();
   updateSummary();
   updateTranslationSummary();
+  restoreRouteFromLocation();
+  window.addEventListener("popstate", restoreRouteFromLocation);
   warnIfFileProtocol();
   if (window.lucide) {
     window.lucide.createIcons();
@@ -146,6 +160,17 @@ window.addEventListener("DOMContentLoaded", () => {
 
 function cacheElements() {
   [
+    "homeButton",
+    "homeNewOcrProjectButton",
+    "homeBrowseOcrProjectsButton",
+    "homeContinueOcrTaskButton",
+    "homeNewTranslationProjectButton",
+    "homeBrowseTranslationProjectsButton",
+    "homeContinueTranslationTaskButton",
+    "homeRefreshProjectsButton",
+    "homeOcrStats",
+    "homeTranslationStats",
+    "homeProjectList",
     "fileLoadButton",
     "newProjectButton",
     "deleteProjectButton",
@@ -235,12 +260,40 @@ function cacheElements() {
     els[id] = document.getElementById(id);
   });
   els.appShell = document.querySelector(".app-shell");
+  els.homeView = document.getElementById("homeView");
+  els.workbenchView = document.getElementById("workbenchView");
   els.workspace = document.querySelector(".workspace");
   els.resizers = Array.from(document.querySelectorAll(".pane-resizer[data-resizer]"));
   els.paneCollapseButtons = Array.from(document.querySelectorAll("[data-collapse-pane]"));
 }
 
+function isCloudDeployment() {
+  return window.location.protocol === "https:" || !["127.0.0.1", "localhost", ""].includes(window.location.hostname);
+}
+
+function configureDeploymentEndpoints() {
+  if (!isCloudDeployment()) return;
+  els.endpointInput.value = `${window.location.origin}/api/ocr`;
+  els.aiOcrEndpointInput.value = `${window.location.origin}/api/ai-ocr`;
+  els.translateEndpointInput.value = `${window.location.origin}/api/translate`;
+}
+
 function wireEvents() {
+  bindOptionalClick("homeButton", () => showHomeView());
+  bindOptionalClick("homeNewOcrProjectButton", () => startNewWorkflowProject("ocr"));
+  bindOptionalClick("homeBrowseOcrProjectsButton", () => browseHomeProjects("ocr"));
+  bindOptionalClick("homeContinueOcrTaskButton", () => continueHomeTask("ocr"));
+  bindOptionalClick("homeNewTranslationProjectButton", () => startNewWorkflowProject("translation"));
+  bindOptionalClick("homeBrowseTranslationProjectsButton", () => browseHomeProjects("translation"));
+  bindOptionalClick("homeContinueTranslationTaskButton", () => continueHomeTask("translation"));
+  bindOptionalClick("homeRefreshProjectsButton", () => renderHomeDashboard());
+  document.querySelectorAll("[data-workflow-card]").forEach((card) => {
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("button, a, input, select, textarea")) return;
+      showWorkbenchView(card.dataset.workflowCard === "translation" ? "translation" : "ocr");
+    });
+  });
+
   els.fileLoadButton.addEventListener("click", () => {
     if (!els.fileInput) {
       setStatus("文件选择控件未初始化，请刷新页面后重试。", "error");
@@ -411,6 +464,362 @@ function bindOptionalClick(id, handler) {
   }
 }
 
+function getWorkflowFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  const workflow = params.get("workflow");
+  return workflow === "ocr" || workflow === "translation" ? workflow : "home";
+}
+
+function restoreRouteFromLocation() {
+  const workflow = getWorkflowFromLocation();
+  if (workflow === "ocr" || workflow === "translation") {
+    showWorkbenchView(workflow, { updateRoute: false });
+    return;
+  }
+  showHomeView({ silent: true, updateRoute: false });
+}
+
+function updateRouteForWorkflow(workflow, options = {}) {
+  if (!window.history?.pushState || window.location.protocol === "file:") return;
+  const normalized = workflow === "ocr" || workflow === "translation" ? workflow : "home";
+  const url = new URL(window.location.href);
+  if (normalized === "home") {
+    url.searchParams.delete("workflow");
+  } else {
+    url.searchParams.set("workflow", normalized);
+  }
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextUrl === currentUrl) return;
+  const method = options.replace ? "replaceState" : "pushState";
+  window.history[method]({ workflow: normalized }, "", nextUrl);
+}
+
+function showHomeView(options = {}) {
+  state.activeWorkflow = "home";
+  els.homeView.hidden = false;
+  els.workbenchView.hidden = true;
+  els.appShell.classList.add("home-mode", "ocr-only-mode");
+  els.appShell.classList.remove("workbench-mode", "translation-workflow");
+  els.workspace.classList.add("ocr-only-mode");
+  els.workspace.classList.remove("translation-enabled", "translation-workflow");
+  setAppTitle("藏文典籍 OCR 对照工作台");
+  renderHomeDashboard();
+  if (!options.silent) {
+    setStatus("", "");
+  }
+  if (options.updateRoute !== false) {
+    updateRouteForWorkflow("home", { replace: options.replaceRoute });
+  }
+  if (window.lucide) {
+    window.lucide.createIcons();
+  }
+}
+
+function showWorkbenchView(workflow = "ocr", options = {}) {
+  const isTranslation = workflow === "translation";
+  state.activeWorkflow = isTranslation ? "translation" : "ocr";
+  els.homeView.hidden = true;
+  els.workbenchView.hidden = false;
+  els.appShell.classList.remove("home-mode");
+  els.appShell.classList.add("workbench-mode");
+  els.appShell.classList.toggle("ocr-only-mode", !isTranslation);
+  els.appShell.classList.toggle("translation-workflow", isTranslation);
+  els.workspace.classList.toggle("ocr-only-mode", !isTranslation);
+  els.workspace.classList.toggle("translation-enabled", isTranslation);
+  els.workspace.classList.toggle("translation-workflow", isTranslation);
+  setAppTitle(isTranslation ? "藏译中工作台" : "藏文典籍 OCR 对照工作台");
+  if (isTranslation) {
+    state.layout.translationCollapsed = false;
+    els.workspace.classList.remove("proofread-merged-view");
+    els.ocrLineCompare.classList.remove("proofread-block-list");
+    state.ocrView = "lines";
+    clearSourceLineHighlight();
+  } else {
+    state.layout.translationCollapsed = true;
+    setOcrView("proofread");
+  }
+  applyWorkspaceLayout();
+  refreshControls();
+  if (isTranslation) {
+    updateTranslationPanelForPage();
+  }
+  if (options.updateRoute !== false) {
+    updateRouteForWorkflow(state.activeWorkflow, { replace: options.replaceRoute });
+  }
+  if (window.lucide) {
+    window.lucide.createIcons();
+  }
+}
+
+function startNewWorkflowProject(workflow) {
+  if (newProject()) {
+    showWorkbenchView(workflow);
+  }
+}
+
+function setAppTitle(title) {
+  const heading = document.querySelector(".brand h1");
+  if (heading) {
+    heading.textContent = title;
+  }
+  document.title = title;
+}
+
+function browseHomeProjects(filter = "all", options = {}) {
+  if (state.activeWorkflow !== "home") {
+    showHomeView({ silent: true });
+  }
+  state.homeProjectFilter = HOME_PROJECT_FILTERS.has(filter) ? filter : "all";
+  renderHomeDashboard();
+  els.homeProjectList?.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (!options.silent) {
+    const label = filter === "translation" ? "藏译中项目" : filter === "ocr" ? "OCR 项目" : "本机项目";
+    setStatus(`已显示${label}列表，请在下方选择要继续的项目。`, "ok");
+  }
+}
+
+function continueHomeTask(workflow) {
+  const projects = getHomeProjects();
+  const predicate = workflow === "translation" ? isTranslationProjectInProgress : isOcrProjectInProgress;
+  const candidates = projects.filter(predicate);
+  const label = workflow === "translation" ? "正在翻译的项目" : "正在校对的项目";
+
+  if (candidates.length > 1) {
+    browseHomeProjects(workflow, { silent: true });
+    setStatus(`找到 ${candidates.length} 个${label}，请在下方项目列表中选择一个继续。`, "warn");
+    return;
+  }
+
+  if (candidates.length === 1) {
+    openHomeProject(candidates[0], workflow);
+    return;
+  }
+
+  browseHomeProjects(workflow, { silent: true });
+  setStatus(workflow === "translation" ? "没有正在翻译的任务。可以新建翻译项目，或先加载已有源文件。" : "没有正在校对的任务。可以新建 OCR 项目，或先加载已有源文件。", "warn");
+}
+
+function requestCachedProjectSource(project, workflow = "ocr") {
+  showWorkbenchView(workflow);
+  setStatus(`请选择源文件“${project.sourceName}”以恢复本机缓存中的项目进度。`, "warn");
+  window.setTimeout(() => {
+    if (!els.fileInput) return;
+    els.fileInput.value = "";
+    els.fileInput.click();
+  }, 0);
+}
+
+function renderHomeDashboard() {
+  const projects = getHomeProjects();
+  const ocrInProgress = projects.filter(isOcrProjectInProgress).length;
+  const translationInProgress = projects.filter(isTranslationProjectInProgress).length;
+  const ocrReady = projects.filter((project) => project.ocrCount > 0).length;
+  const translationReady = projects.filter((project) => project.translationCount > 0).length;
+
+  if (els.homeOcrStats) {
+    els.homeOcrStats.textContent = projects.length
+      ? `${projects.length} 个本机项目，${ocrInProgress} 个正在校对，${ocrReady} 个已有 OCR 结果`
+      : "暂无本机项目";
+  }
+  if (els.homeTranslationStats) {
+    els.homeTranslationStats.textContent = projects.length
+      ? `${projects.length} 个本机项目，${translationInProgress} 个正在翻译，${translationReady} 个已有译文`
+      : "暂无本机项目";
+  }
+  setOptionalDisabled("homeContinueOcrTaskButton", ocrInProgress === 0);
+  setOptionalDisabled("homeContinueTranslationTaskButton", translationInProgress === 0);
+  renderHomeProjectList(projects);
+}
+
+function renderHomeProjectList(projects) {
+  if (!els.homeProjectList) return;
+  const filter = HOME_PROJECT_FILTERS.has(state.homeProjectFilter) ? state.homeProjectFilter : "all";
+  const filtered = projects.filter((project) => {
+    if (filter === "ocr") return project.ocrCount > 0 || project.pageCount > 0;
+    if (filter === "translation") return project.translationCount > 0 || project.pageCount > 0;
+    return true;
+  });
+  els.homeProjectList.innerHTML = "";
+
+  const summary = document.createElement("div");
+  summary.className = "home-project-filter-summary";
+  summary.textContent = makeHomeProjectFilterSummary(filter, filtered.length, projects.length);
+  els.homeProjectList.appendChild(summary);
+
+  if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "home-project-empty";
+    empty.textContent = filter === "translation"
+      ? "还没有可浏览的藏译中项目。"
+      : filter === "ocr"
+        ? "还没有可浏览的 OCR 项目。"
+        : "还没有本机项目。";
+    els.homeProjectList.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  filtered.forEach((project) => {
+    const card = document.createElement("article");
+    card.className = "home-project-card";
+
+    const title = document.createElement("h4");
+    title.textContent = project.sourceName || "未命名项目";
+
+    const meta = document.createElement("div");
+    meta.className = "home-project-meta";
+    meta.append(
+      makeHomePill(`${project.pageCount || 0} 页`),
+      makeHomePill(project.sourceMime || project.sourceType || "本机缓存"),
+      makeHomePill(formatHomeDate(project.updatedAt)),
+    );
+
+    const progress = document.createElement("div");
+    progress.className = "home-project-progress";
+    progress.append(
+      makeHomePill(`OCR ${project.ocrCount}/${project.pageCount || 0}`),
+      makeHomePill(`译文 ${project.translationCount}/${project.pageCount || 0}`),
+    );
+
+    const actions = document.createElement("div");
+    actions.className = "home-project-actions";
+    actions.append(
+      makeHomeProjectButton("继续校对", "scan-text", () => openHomeProject(project, "ocr")),
+      makeHomeProjectButton("继续翻译", "languages", () => openHomeProject(project, "translation")),
+    );
+
+    card.append(title, meta, progress, actions);
+    fragment.appendChild(card);
+  });
+  els.homeProjectList.appendChild(fragment);
+  if (window.lucide) {
+    window.lucide.createIcons();
+  }
+}
+
+function makeHomeProjectFilterSummary(filter, filteredCount, totalCount) {
+  if (filter === "ocr") {
+    return `正在显示 OCR 项目：${filteredCount} / ${totalCount}。点击项目卡片中的“继续校对”进入指定项目。`;
+  }
+  if (filter === "translation") {
+    return `正在显示藏译中项目：${filteredCount} / ${totalCount}。点击项目卡片中的“继续翻译”进入指定项目。`;
+  }
+  return `正在显示全部本机项目：${filteredCount} / ${totalCount}。`;
+}
+
+function openHomeProject(project, workflow) {
+  if (project.isActive) {
+    showWorkbenchView(workflow);
+    if (workflow === "ocr") {
+      setOcrView("proofread");
+    }
+    return;
+  }
+  requestCachedProjectSource(project, workflow);
+}
+
+function makeHomePill(text) {
+  const item = document.createElement("span");
+  item.textContent = text;
+  return item;
+}
+
+function makeHomeProjectButton(label, icon, handler) {
+  const button = document.createElement("button");
+  button.className = "ghost-button compact";
+  button.type = "button";
+  button.innerHTML = `<i data-lucide="${icon}"></i><span>${label}</span>`;
+  button.addEventListener("click", handler);
+  return button;
+}
+
+function getHomeProjects() {
+  const projects = [];
+  const activeProject = getActiveHomeProject();
+  if (activeProject) {
+    projects.push(activeProject);
+  }
+
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (!key?.startsWith(CACHE_PREFIX)) continue;
+    const project = parseCachedProject(key);
+    if (!project) continue;
+    if (activeProject?.cacheKey === project.cacheKey) continue;
+    projects.push(project);
+  }
+
+  return projects.sort((left, right) => {
+    if (left.isActive !== right.isActive) return left.isActive ? -1 : 1;
+    return (Date.parse(right.updatedAt || "") || 0) - (Date.parse(left.updatedAt || "") || 0);
+  });
+}
+
+function getActiveHomeProject() {
+  if (!hasActiveDocument()) return null;
+  return {
+    cacheKey: state.cacheKey || "active",
+    sourceName: state.sourceName || "当前项目",
+    sourceSize: state.sourceSize,
+    sourceMime: state.sourceMime,
+    pageCount: state.pageCount || 0,
+    updatedAt: new Date().toISOString(),
+    ocrCount: [...state.ocrResults.values()].filter((result) => (result.text || "").trim()).length,
+    translationCount: [...state.translationResults.values()].filter((result) => (result.text || "").trim()).length,
+    isActive: true,
+  };
+}
+
+function parseCachedProject(cacheKey) {
+  try {
+    const raw = window.localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    const pageCount = Number(payload.pageCount) || 0;
+    const ocrCount = Object.values(payload.ocrResults || {}).filter((result) => (result?.text || "").trim()).length;
+    const translationCount = Object.values(payload.translationResults || {}).filter((result) => (result?.text || "").trim()).length;
+    return {
+      cacheKey,
+      sourceName: payload.sourceName || decodeCacheProjectName(cacheKey),
+      sourceSize: Number(payload.sourceSize) || 0,
+      sourceMime: payload.sourceMime || "",
+      pageCount,
+      updatedAt: payload.updatedAt || "",
+      ocrCount,
+      translationCount,
+      isActive: false,
+    };
+  } catch (error) {
+    console.warn("Failed to parse cached project", cacheKey, error);
+    return null;
+  }
+}
+
+function decodeCacheProjectName(cacheKey) {
+  const rest = cacheKey.slice(CACHE_PREFIX.length);
+  const [encodedName] = rest.split(":");
+  try {
+    return decodeURIComponent(encodedName || "") || "未命名项目";
+  } catch (_error) {
+    return "未命名项目";
+  }
+}
+
+function isOcrProjectInProgress(project) {
+  return Boolean(project.pageCount && project.ocrCount > 0 && project.ocrCount < project.pageCount);
+}
+
+function isTranslationProjectInProgress(project) {
+  return Boolean(project.pageCount && project.translationCount > 0 && project.translationCount < project.pageCount);
+}
+
+function formatHomeDate(value) {
+  const date = new Date(value || "");
+  if (!Number.isFinite(date.getTime())) return "未记录时间";
+  return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 function configurePdfJs() {
   if (!window.pdfjsLib) {
     setStatus("PDF.js 未加载，检查网络或换用本地依赖。", "error");
@@ -430,6 +839,11 @@ function warnIfFileProtocol() {
 function restoreOcrFontSize() {
   const storedSize = Number(window.localStorage.getItem(OCR_FONT_SIZE_KEY));
   setOcrFontSize(Number.isFinite(storedSize) ? storedSize : state.ocrFontSize, false);
+}
+
+function restoreSourcePreviewScale() {
+  const storedScale = Number(window.localStorage.getItem(SOURCE_PREVIEW_SCALE_KEY));
+  setSourcePreviewScale(Number.isFinite(storedScale) ? storedScale : state.sourcePreviewScale, false);
 }
 
 function restoreWorkspaceLayout() {
@@ -470,15 +884,7 @@ function normalizeWorkspaceLayout(layout = {}) {
 }
 
 function isOcrOnlyWorkspace() {
-  const translationFeatureHidden = Boolean(
-    els.translationText?.closest(".translation-feature") ||
-    els.translateButton?.closest(".translation-feature")
-  );
-  return Boolean(
-    translationFeatureHidden ||
-    els.workspace?.classList.contains("ocr-only-mode") ||
-    els.appShell?.classList.contains("ocr-only-mode")
-  );
+  return !els.appShell?.classList.contains("translation-workflow");
 }
 
 function applyWorkspaceLayout() {
@@ -489,6 +895,9 @@ function applyWorkspaceLayout() {
     state.layout.translationCollapsed = true;
     els.workspace.classList.add("ocr-only-mode");
     els.appShell?.classList.add("ocr-only-mode");
+  } else {
+    els.workspace.classList.remove("ocr-only-mode");
+    els.appShell?.classList.remove("ocr-only-mode");
   }
 
   els.workspace.style.setProperty("--viewer-min", collapsed.viewer ? "52px" : "300px");
@@ -502,6 +911,8 @@ function applyWorkspaceLayout() {
     state.layout.translationCollapsed || ocrOnly ? "0px" : `${state.layout.translation}fr`,
   );
   els.workspace.classList.toggle("translation-collapsed", state.layout.translationCollapsed || ocrOnly);
+  els.workspace.classList.toggle("translation-enabled", !ocrOnly);
+  els.workspace.classList.toggle("translation-workflow", !ocrOnly && state.activeWorkflow === "translation");
   els.workspace.classList.toggle("viewer-collapsed", collapsed.viewer);
   els.workspace.classList.toggle("ocr-collapsed", collapsed.ocr);
   els.workspace.classList.toggle("ai-collapsed", collapsed.ai);
@@ -679,6 +1090,47 @@ function setOcrFontSize(size, persist = true) {
   }
 }
 
+function setSourcePreviewScale(scale, persist = true, rerender = false) {
+  const nextScale = clamp(
+    Math.round((Number(scale) || 1) * 100) / 100,
+    SOURCE_PREVIEW_SCALE_MIN,
+    SOURCE_PREVIEW_SCALE_MAX,
+  );
+  state.sourcePreviewScale = nextScale;
+  document.documentElement.style.setProperty("--source-preview-scale", String(nextScale));
+  document.documentElement.style.setProperty(
+    "--source-preview-min-height",
+    `${Math.round(88 * nextScale)}px`,
+  );
+  document.documentElement.style.setProperty(
+    "--source-preview-max-height",
+    `${Math.round(116 * nextScale)}px`,
+  );
+  if (persist) {
+    window.localStorage.setItem(SOURCE_PREVIEW_SCALE_KEY, String(nextScale));
+  }
+  if (rerender && state.ocrView === "proofread") {
+    const scrollTop = els.ocrLineCompare.scrollTop;
+    renderCurrentOcrView();
+    els.ocrLineCompare.scrollTop = scrollTop;
+    return;
+  }
+  updateSourcePreviewScaleButtons();
+}
+
+function updateSourcePreviewScaleButtons() {
+  const currentPercent = Math.round(state.sourcePreviewScale * 100);
+  document.querySelectorAll(".source-preview-scale-button").forEach((button) => {
+    const action = button.dataset.scaleAction;
+    const isDecrease = action === "decrease";
+    const isIncrease = action === "increase";
+    button.disabled =
+      (isDecrease && state.sourcePreviewScale <= SOURCE_PREVIEW_SCALE_MIN) ||
+      (isIncrease && state.sourcePreviewScale >= SOURCE_PREVIEW_SCALE_MAX);
+    button.title = `${isDecrease ? "缩小" : "放大"}原文 block 预览（当前 ${currentPercent}%）`;
+  });
+}
+
 async function loadSamplePdf() {
   try {
     setStatus("正在载入本地样本 PDF...", "warn");
@@ -702,6 +1154,15 @@ async function loadFile(file) {
   state.sourceSize = file.size || 0;
   state.sourceMime = file.type || "";
   state.cacheKey = makeCacheKey(file);
+
+  if (isCloudDeployment()) {
+    try {
+      await createRemoteBook(file);
+    } catch (error) {
+      setStatus(`书籍写入阿里云 OSS 失败：${error.message || error}`, "error");
+      return;
+    }
+  }
 
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
     await loadPdf(file);
@@ -733,7 +1194,7 @@ function hasActiveDocument() {
 function newProject() {
   if (state.isOcrBusy || state.isTranslateBusy) {
     setStatus("OCR 或翻译正在运行，请等当前任务结束后再新建项目。", "warn");
-    return;
+    return false;
   }
 
   if (hasActiveDocument()) {
@@ -742,12 +1203,14 @@ function newProject() {
     );
     if (!ok) {
       setStatus("已取消新建项目。当前工作台保持不变。", "warn");
-      return;
+      return false;
     }
   }
 
   resetDocumentState();
   setStatus("已新建空白项目。请点击“加载文件”开始。", "ok");
+  renderHomeDashboard();
+  return true;
 }
 
 function deleteCurrentProject() {
@@ -776,6 +1239,7 @@ function deleteCurrentProject() {
   }
   resetDocumentState();
   setStatus(`已删除“${projectName}”的本地项目缓存。源文件未删除。`, "ok");
+  renderHomeDashboard();
 }
 
 function isMarkdownFile(file) {
@@ -954,6 +1418,11 @@ function resetDocumentState() {
   state.pageCount = 0;
   state.ocrResults.clear();
   state.translationResults.clear();
+  state.remoteBookId = "";
+  if (state.remoteSaveTimer) {
+    window.clearTimeout(state.remoteSaveTimer);
+    state.remoteSaveTimer = null;
+  }
   state.renderToken += 1;
 
   els.thumbnailList.innerHTML = "";
@@ -1045,9 +1514,53 @@ function saveCachedResults() {
       translationResults: serializeResultMap(state.translationResults),
     };
     window.localStorage.setItem(state.cacheKey, JSON.stringify(payload));
+    scheduleRemoteStateSave(payload);
+    renderHomeDashboard();
   } catch (error) {
     console.warn("Failed to save cached OCR state", error);
   }
+}
+
+async function createRemoteBook(file) {
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+  const response = await fetch(`${window.location.origin}/api/books`, { method: "POST", body: formData });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.book_id) {
+    throw new Error(payload.detail || payload.error || `HTTP ${response.status}`);
+  }
+  state.remoteBookId = payload.book_id;
+  const url = new URL(window.location.href);
+  url.searchParams.set("book_id", state.remoteBookId);
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function scheduleRemoteStateSave(payload) {
+  if (!isCloudDeployment() || !state.remoteBookId) return;
+  if (state.remoteSaveTimer) window.clearTimeout(state.remoteSaveTimer);
+  const bookId = state.remoteBookId;
+  state.remoteSaveTimer = window.setTimeout(async () => {
+    state.remoteSaveTimer = null;
+    try {
+      const response = await fetch(`${window.location.origin}/api/books/${encodeURIComponent(bookId)}/state`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...payload,
+          book_id: bookId,
+          ocr_results: payload.ocrResults,
+          translation_results: payload.translationResults,
+        }),
+      });
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}));
+        throw new Error(errorPayload.detail || `HTTP ${response.status}`);
+      }
+    } catch (error) {
+      console.warn("Failed to save remote OCR state", error);
+      setStatus(`本地已保存，但云端校对状态同步失败：${error.message || error}`, "warn");
+    }
+  }, 500);
 }
 
 function serializeResultMap(map) {
@@ -2948,6 +3461,7 @@ function renderProofreadMergedView() {
   if (window.lucide) {
     window.lucide.createIcons();
   }
+  updateSourcePreviewScaleButtons();
 }
 
 function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLine, compare }) {
@@ -2964,19 +3478,20 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
   const saveButton = document.createElement("button");
   saveButton.className = "secondary-button proofread-save-button";
   saveButton.type = "button";
-  saveButton.innerHTML = '<i data-lucide="save"></i>保存修改';
+  saveButton.innerHTML = '<i data-lucide="save"></i>保存';
   saveButton.addEventListener("click", () => {
-    const selected = card.querySelector("input[type='radio']:checked")?.value || getProofreadDefaultChoice(finalLine, bdrcLine, aiLine);
+    const selected =
+      card.querySelector(".proofread-choice-select")?.value ||
+      card.querySelector("input[type='radio']:checked")?.value ||
+      getProofreadDefaultChoice(finalLine, bdrcLine, aiLine);
     saveProofreadBlockChoice(index, selected, card);
   });
 
   const options = document.createElement("div");
   options.className = "proofread-options proofread-block-actions";
   options.append(
-    renderProofreadChoice(index, "bdrc", "采用 BDRC", savedSide === "bdrc"),
-    renderProofreadChoice(index, "llm", "采用 AI Vision", savedSide === "llm"),
-    renderSharedErrorButton(index, card),
-    renderClearSharedErrorButton(index, card),
+    renderProofreadChoiceSelect(index, savedSide),
+    renderSharedErrorActionGroup(index, card),
     saveButton,
   );
 
@@ -3012,7 +3527,7 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
     }
   };
   card.addEventListener("click", (event) => {
-    if (event.target.closest("button, textarea, input, label")) return;
+    if (event.target.closest("button, textarea, input, label, select")) return;
     activate();
   });
 
@@ -3036,24 +3551,47 @@ function makeProofreadAiLine(compare, rawAiLine, index, fallbackBbox = null) {
   return line;
 }
 
-function renderProofreadChoice(index, value, label, checked) {
-  const choice = document.createElement("label");
-  choice.className = "proofread-choice";
-  const input = document.createElement("input");
-  input.type = "radio";
-  input.name = `proofread-choice-${state.pageNum}-${index}`;
-  input.value = value;
-  input.checked = checked;
-  choice.append(input, document.createTextNode(label));
-  return choice;
+function renderProofreadChoiceSelect(index, savedSide) {
+  const control = document.createElement("label");
+  control.className = "proofread-choice-select-control";
+  const label = document.createElement("span");
+  label.textContent = "采用";
+  const select = document.createElement("select");
+  select.className = "proofread-choice-select";
+  select.name = `proofread-choice-${state.pageNum}-${index}`;
+  select.setAttribute("aria-label", `第 ${index + 1} 个 block 采用版本`);
+  [
+    ["bdrc", "BDRC"],
+    ["llm", "AI Vision"],
+  ].forEach(([value, text]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    select.appendChild(option);
+  });
+  select.value = savedSide === "llm" ? "llm" : "bdrc";
+  control.append(label, select);
+  return control;
+}
+
+function renderSharedErrorActionGroup(index, card) {
+  const group = document.createElement("div");
+  group.className = "proofread-inline-action-group";
+  group.setAttribute("aria-label", "标错操作");
+  group.append(
+    renderSharedErrorButton(index, card),
+    renderClearSharedErrorButton(index, card),
+  );
+  return group;
 }
 
 function renderSharedErrorButton(index, card) {
   const button = document.createElement("button");
   button.className = "ghost-button compact proofread-shared-error-button";
   button.type = "button";
-  button.innerHTML = '<i data-lucide="circle-alert"></i>标记同错';
-  button.title = "选中 BDRC 或 AI Vision 中两边都识别错的字母后点击";
+  button.innerHTML = '<i data-lucide="circle-alert"></i><span>标错</span>';
+  button.title = "标错：将选中字母标记为 BDRC 与 AI Vision 都识别错误";
+  button.setAttribute("aria-label", "标错");
   button.addEventListener("mousedown", (event) => event.preventDefault());
   button.addEventListener("click", () => markSelectedSharedError(index, card));
   return button;
@@ -3063,8 +3601,9 @@ function renderClearSharedErrorButton(index, card) {
   const button = document.createElement("button");
   button.className = "ghost-button compact proofread-clear-shared-error-button";
   button.type = "button";
-  button.innerHTML = '<i data-lucide="eraser"></i>清除同错';
-  button.title = "有选区时清除相交标记；无选区时清除当前 block 的全部同错标记";
+  button.innerHTML = '<i data-lucide="eraser"></i>';
+  button.title = "有选区时清除相交标记；无选区时清除当前 block 的全部错误标记";
+  button.setAttribute("aria-label", "清除错误标记");
   button.addEventListener("mousedown", (event) => event.preventDefault());
   button.addEventListener("click", () => clearSharedErrorMark(index, card));
   return button;
@@ -3075,9 +3614,12 @@ function renderProofreadSourcePanel(sourceLine, index) {
   panel.className = "proofread-source-panel";
   panel.dataset.sourceRowIndex = String(index);
 
+  const header = document.createElement("div");
+  header.className = "proofread-source-header";
   const title = document.createElement("strong");
   title.textContent = `原文 block ${String(index + 1).padStart(2, "0")} 预览`;
-  panel.appendChild(title);
+  header.append(title, renderSourcePreviewScaleControls());
+  panel.appendChild(header);
 
   const preview = createSourceBlockPreviewCanvas(sourceLine);
   if (preview) {
@@ -3094,6 +3636,34 @@ function renderProofreadSourcePanel(sourceLine, index) {
     panel.addEventListener("click", () => activateOcrSourceBlock(sourceLine, index));
   }
   return panel;
+}
+
+function renderSourcePreviewScaleControls() {
+  const controls = document.createElement("div");
+  controls.className = "source-preview-scale-controls";
+  controls.setAttribute("aria-label", "原文 block 预览缩放");
+  controls.append(
+    renderSourcePreviewScaleButton("decrease", "zoom-out", "缩小原文 block 预览"),
+    renderSourcePreviewScaleButton("increase", "zoom-in", "放大原文 block 预览"),
+  );
+  return controls;
+}
+
+function renderSourcePreviewScaleButton(action, icon, label) {
+  const button = document.createElement("button");
+  button.className = "icon-button compact source-preview-scale-button";
+  button.type = "button";
+  button.dataset.scaleAction = action;
+  button.setAttribute("aria-label", label);
+  button.innerHTML = `<i data-lucide="${icon}"></i>`;
+  button.addEventListener("mousedown", (event) => event.preventDefault());
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const delta = action === "increase" ? SOURCE_PREVIEW_SCALE_STEP : -SOURCE_PREVIEW_SCALE_STEP;
+    setSourcePreviewScale(state.sourcePreviewScale + delta, true, true);
+  });
+  return button;
 }
 
 function createSourceBlockPreviewCanvas(sourceLine) {
@@ -3121,9 +3691,15 @@ function createSourceBlockPreviewCanvas(sourceLine) {
   const wrapper = document.createElement("div");
   wrapper.className = "proofread-source-preview";
   const canvas = document.createElement("canvas");
-  const maxWidth = 1800;
+  const previewScale = clamp(
+    Number(state.sourcePreviewScale) || 1,
+    SOURCE_PREVIEW_SCALE_MIN,
+    SOURCE_PREVIEW_SCALE_MAX,
+  );
+  const maxWidth = 1800 * Math.max(1, previewScale);
   const maxScale = Math.max(1, Math.min(2.25, maxWidth / sw));
-  const scale = Math.min(maxScale, Math.max(1.15, 84 / sh));
+  const minimumScale = previewScale < 1 ? 0.75 : 1.15;
+  const scale = Math.min(maxScale, Math.max(minimumScale, (84 * previewScale) / sh));
   canvas.width = Math.max(1, Math.round(sw * scale));
   canvas.height = Math.max(1, Math.round(sh * scale));
   const ctx = canvas.getContext("2d");
@@ -3300,7 +3876,7 @@ function updateProofreadCompareLine(side, index, value, line, peerLine) {
 function markSelectedSharedError(index, card) {
   const selection = getSelectedProofreadRange(card);
   if (!selection || selection.index !== index) {
-    setStatus("请先在当前 block 的 BDRC 或 AI Vision 文字中选中需要标记为“双源同错”的字母。", "warn");
+    setStatus("请先在当前 block 的 BDRC 或 AI Vision 文字中选中需要标记为“错误”的字母。", "warn");
     return;
   }
 
@@ -3315,7 +3891,7 @@ function markSelectedSharedError(index, card) {
   const selectedText = sourceText.slice(start, end);
 
   if (!selectedText.trim()) {
-    setStatus("选中的内容为空，无法标记同错。", "warn");
+    setStatus("选中的内容为空，无法标错。", "warn");
     return;
   }
 
@@ -3346,7 +3922,7 @@ function markSelectedSharedError(index, card) {
   renderCurrentOcrView();
   setStatus(
     peerRange
-      ? `第 ${index + 1} 个 block 已标记“双源同错”，BDRC 与 AI Vision 两侧均已标出。`
+      ? `第 ${index + 1} 个 block 已标记“错误”，BDRC 与 AI Vision 两侧均已标出。`
       : `第 ${index + 1} 个 block 已标记当前侧；另一侧未找到相同字母，请在另一侧另选后再标记。`,
     peerRange ? "ok" : "warn"
   );
@@ -3356,7 +3932,7 @@ function clearSharedErrorMark(index, card) {
   const { result, compare } = ensureProofreadCompareResult();
   const before = compare.sharedErrors?.length || 0;
   if (!before) {
-    setStatus("当前页还没有“双源同错”标记。", "warn");
+    setStatus("当前页还没有“错误”标记。", "warn");
     return;
   }
 
@@ -3377,7 +3953,7 @@ function clearSharedErrorMark(index, card) {
 
   compare.sharedErrors = normalizeSharedErrorMarks(nextMarks);
   if (compare.sharedErrors.length === before) {
-    setStatus("当前选区没有命中“双源同错”标记。", "warn");
+    setStatus("当前选区没有命中“错误”标记。", "warn");
     return;
   }
 
@@ -3386,7 +3962,7 @@ function clearSharedErrorMark(index, card) {
   state.ocrResults.set(state.pageNum, result);
   saveCachedResults();
   renderCurrentOcrView();
-  setStatus(`已清除第 ${index + 1} 个 block 的“双源同错”标记。`, "ok");
+  setStatus(`已清除第 ${index + 1} 个 block 的“错误”标记。`, "ok");
 }
 
 function saveProofreadBlockChoice(index, side, card) {
@@ -3427,6 +4003,10 @@ function saveProofreadBlockChoice(index, side, card) {
     card.querySelectorAll(".proofread-choice input").forEach((input) => {
       input.checked = input.value === sideKey;
     });
+    const choiceSelect = card.querySelector(".proofread-choice-select");
+    if (choiceSelect) {
+      choiceSelect.value = sideKey;
+    }
     const saveButton = card.querySelector(".proofread-save-button");
     if (saveButton) {
       saveButton.classList.add("is-saved");
@@ -3774,7 +4354,7 @@ function renderOcrLineMarkup(container, text, options = {}) {
     mark.title = [
       highRisk ? "高危：包含藏文上下加字或组合符，优先人工校对" : "",
       different ? "差异：BDRC 与 AI Vision 此处不一致" : "",
-      sharedError ? "同错：BDRC 与 AI Vision 都疑似识别错误，需人工改正" : "",
+      sharedError ? "错误：BDRC 与 AI Vision 都疑似识别错误，需人工改正" : "",
     ].filter(Boolean).join("；");
     mark.textContent = segment;
     container.appendChild(mark);
