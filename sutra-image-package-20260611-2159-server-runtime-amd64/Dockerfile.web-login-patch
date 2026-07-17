@@ -321,6 +321,22 @@ body.sidebar-resizing {
   cursor: pointer;
 }
 
+/* One clear entry opens the translation editor; the invitation already owns the click action. */
+.segment-card:has(.proposal-empty--invitation) > .add-translation-btn {
+  display: none !important;
+}
+
+.proposal-empty--invitation {
+  min-height: 54px !important;
+  margin-bottom: 0 !important;
+  cursor: pointer !important;
+}
+
+.proposal-empty--invitation:hover {
+  border-color: rgba(184, 150, 62, 0.72) !important;
+  background: rgba(225, 186, 88, 0.08) !important;
+}
+
 .sutra-page-thumb span {
   display: block;
   padding-top: 5px;
@@ -636,10 +652,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v50.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v50.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v52.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v52.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v50-resizable-browser-source-sync/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v52-unified-translation-entry/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -2348,6 +2364,27 @@ const __sutraInstallBidirectionalSourceSync = () => {
 };
 __sutraInstallBidirectionalSourceSync();
 
+const __sutraInstallUnifiedTranslationEntry = () => {
+  if (window.__sutraUnifiedTranslationEntryInstalled) return;
+  window.__sutraUnifiedTranslationEntryInstalled = true;
+  let timer = 0;
+  const apply = () => {
+    document.querySelectorAll(".proposal-empty--invitation .proposal-empty__hint").forEach((hint) => {
+      const current = String(hint.textContent || "").trim();
+      const language = current.match(/(?:等待|添加)\s+(.+?)\s+(?:译笔|译文)/)?.[1] || "目标语言";
+      const next = `添加 ${language} 译文 — 点击开始翻译`;
+      if (current !== next) hint.textContent = next;
+    });
+  };
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(apply, 80);
+  };
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
+  schedule();
+};
+__sutraInstallUnifiedTranslationEntry();
+
 const __sutraInstallMissingSourceRecovery = () => {
   if (window.__sutraLocalMissingSourceRecoveryInstalled) return;
   window.__sutraLocalMissingSourceRecoveryInstalled = true;
@@ -2890,5 +2927,7 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v47.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v48.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v49.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v50.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v50.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v51.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v52.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v52.js#g' /usr/share/nginx/html/index.html
 SHELL

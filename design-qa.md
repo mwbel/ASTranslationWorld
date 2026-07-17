@@ -1,4 +1,4 @@
-# AS译林本地副本 v50 设计验收
+# AS译林本地副本 v52 设计验收
 
 - source visual truth paths:
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_P4qw0O/截屏2026-07-17 11.10.36.png`
@@ -13,6 +13,8 @@
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_tJhFF2/截屏2026-07-17 15.40.37.png`
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_miVArF/截屏2026-07-17 15.41.41.png`
 - v50 implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v50.png`
+- v52 source visual truth path: `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_ByL1js/截屏2026-07-17 16.21.02.png`
+- v52 implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v52.png`
 - viewport: 1280 × 720
 - state: 工作台，P5，缩略图视图，页码导航并入顶部项目行
 
@@ -24,6 +26,7 @@
 - 最左侧“未分章”行隐藏，缩略图/目录入口仍正常显示。
 - v50 将左栏拖宽至约 363px 后，缩略图随栏宽完整放大，页面比例和左右留白保持稳定；主工作区仍可正常使用。
 - 右栏点击原文后，左侧页面出现对应的金色同步范围；左侧点击后，右栏对应 block 定位并高亮。
+- v52 删除未翻译段落中视觉和功能重复的第二个“添加译文”按钮，只保留一个整块可点击入口。
 
 ## Focused region comparison evidence
 
@@ -37,6 +40,7 @@
 - 颜色：拖拽边界和同步状态复用既有金色变量，没有引入额外主题色。
 - 图片质量：缩略图使用原始页面图片，宽高比始终为 0.7118，与源图片 2186×3071 一致。
 - 文案：仅新增拖拽和同步定位的辅助标题，不增加常驻说明文字。
+- v52 字体、颜色、边框和间距继续复用原邀请区域；文案简化为“添加 中文 译文 — 点击开始翻译”。
 
 ## Findings
 
@@ -44,6 +48,7 @@
 - P3：目录目前按 20 页分组；待后端提供真实 PDF 目录或章节锚点后可升级为语义目录。
 - 本次 v48 修复未修改角色数据、角色顺序或翻译逻辑，只稳定译文编辑器头部排版。
 - v50 无 P0、P1、P2 问题。图片型 PDF 尚无逐字坐标时采用段落范围映射，属于预期约束。
+- v52 无 P0、P1、P2 问题；重复入口已消除，没有改变翻译编辑器和译文数据。
 
 ## Comparison history
 
@@ -55,6 +60,8 @@
 6. v50 初检：发现原有拖动边界不明显，缩略图被 156px 最大高度限制；修复为可见拖动边界和等比例自适应缩略图。
 7. v50 交互补充：新增左右原文段落范围双向定位，并在页面或 block 上保留当前同步高亮。
 8. v50 复测：左栏拖宽后缩略图宽高比不变；左右点击均产生对应高亮；控制台无错误或警告。
+9. v52 初检：同一未翻译段落存在两个功能相同的入口，构成重复操作和额外纵向空间。
+10. v52 修复及复测：隐藏第二个按钮并统一首个入口文案；点击只展开一个编辑器，收起后入口恢复；控制台无错误或警告。
 
 ## Primary interactions tested
 
@@ -66,5 +73,7 @@
 - 拖动左栏右边界：宽度从 240px 调整至约 363px，并保存宽度。
 - 点击右栏原文：左侧对应页面范围高亮并滚动到可见位置。
 - 点击左侧原文范围：右侧对应 block 高亮并滚动到可见位置。
+- 点击统一译文入口：编辑器数量由 0 变为 1，不再显示第二个入口。
+- 点击编辑器“收起”：编辑器数量恢复为 0，统一译文入口重新显示。
 
 final result: passed
