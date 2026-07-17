@@ -38,7 +38,7 @@ MODEL = os.environ.get("AI_VISION_MODEL", DEFAULT_MODEL)
 TIMEOUT = float(os.environ.get("AI_VISION_TIMEOUT", "120"))
 MAX_TOKENS = int(os.environ.get("AI_VISION_MAX_TOKENS", "8192"))
 TEMPERATURE = float(os.environ.get("AI_VISION_TEMPERATURE", "0.0"))
-AGGREGATOR_ALLOW_FALLBACK = os.environ.get("AI_VISION_ALLOW_FALLBACK", "1").strip().lower() not in {
+AGGREGATOR_ALLOW_FALLBACK = os.environ.get("AI_VISION_ALLOW_FALLBACK", "0").strip().lower() not in {
     "0",
     "false",
     "no",
@@ -220,12 +220,21 @@ def call_model_aggregator(image_bytes: bytes, filename: str, prompt: str) -> dic
             detail = f"{detail}；{attempts}"
         raise RuntimeError(f"ModelAggregator image OCR failed: {redact_sensitive(detail)}")
 
+    resolved_model = str(raw.get("modelRef") or raw.get("model") or MODEL).strip()
+    resolved_provider = str(raw.get("provider") or "").strip().lower()
+    if resolved_provider == "mathpix" or "mathpix" in resolved_model.lower():
+        attempts = summarize_attempts(raw.get("attempts"))
+        detail = "AI Vision 已拒绝 Mathpix 回退：Mathpix 面向数学公式，不用于藏文 OCR。"
+        if attempts:
+            detail = f"{detail}；上游尝试：{attempts}"
+        raise RuntimeError(detail)
+
     text = str(raw.get("markdown") or raw.get("answer") or raw.get("text") or "").strip()
     return {
         "text": text,
         "lines": [{"text": line} for line in text.splitlines() if line.strip()],
         "raw": raw,
-        "model": raw.get("modelRef") or raw.get("model") or MODEL,
+        "model": resolved_model,
         "provider": "model_aggregator",
         "upstream": aggregator_url("/api/aggregate/image-to-markdown"),
     }

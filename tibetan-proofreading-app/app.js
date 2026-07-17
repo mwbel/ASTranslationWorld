@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260713-zeabur-oss-39";
+const APP_BUILD_ID = "20260717-proofread-markdown-export-43";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
 const HOME_PROJECT_FILTERS = new Set(["all", "ocr", "translation"]);
@@ -32,6 +32,7 @@ const EMPTY_STATE_HTML = `
 `;
 const DEFAULT_LAYOUT = {
   viewer: 1.18,
+  proofreadViewer: 1.18,
   ocr: 0.92,
   ai: 0.92,
   translation: 0.86,
@@ -872,6 +873,7 @@ function normalizeWorkspaceLayout(layout = {}) {
   const safeNumber = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
 
   next.viewer = clamp(safeNumber(next.viewer, DEFAULT_LAYOUT.viewer), 0.55, 2.4);
+  next.proofreadViewer = clamp(safeNumber(next.proofreadViewer, next.viewer), 0.55, 2.4);
   next.ocr = clamp(safeNumber(next.ocr, DEFAULT_LAYOUT.ocr), 0.45, 1.9);
   next.ai = clamp(safeNumber(next.ai, DEFAULT_LAYOUT.ai), 0.45, 1.9);
   next.translation = clamp(safeNumber(next.translation, DEFAULT_LAYOUT.translation), 0.4, 1.6);
@@ -904,6 +906,10 @@ function applyWorkspaceLayout() {
   els.workspace.style.setProperty("--ocr-min", collapsed.ocr ? "52px" : "240px");
   els.workspace.style.setProperty("--ai-ocr-min", collapsed.ai ? "52px" : "240px");
   els.workspace.style.setProperty("--viewer-width", collapsed.viewer ? "52px" : `${state.layout.viewer}fr`);
+  els.workspace.style.setProperty(
+    "--proofread-viewer-width",
+    collapsed.viewer ? "52px" : `${state.layout.proofreadViewer}fr`,
+  );
   els.workspace.style.setProperty("--ocr-width", collapsed.ocr ? "52px" : `${state.layout.ocr}fr`);
   els.workspace.style.setProperty("--ai-ocr-width", collapsed.ai ? "52px" : `${state.layout.ai}fr`);
   els.workspace.style.setProperty(
@@ -977,6 +983,7 @@ function wireWorkspaceResizers() {
     viewer: 300,
     ocr: 260,
     ai: 260,
+    mergedResult: 420,
     translation: 280,
   };
 
@@ -991,6 +998,16 @@ function wireWorkspaceResizers() {
 
       const workspaceRect = els.workspace.getBoundingClientRect();
       const translationVisible = !state.layout.translationCollapsed && !isOcrOnlyWorkspace();
+      const mergedViewerResize =
+        resizer.dataset.resizer === "viewer-ocr" &&
+        els.workspace.classList.contains("proofread-merged-view");
+      const viewerRect = mergedViewerResize
+        ? els.workspace.querySelector(".viewer-pane")?.getBoundingClientRect()
+        : null;
+      const mergedResultRect = mergedViewerResize
+        ? els.workspace.querySelector(".ocr-pane")?.getBoundingClientRect()
+        : null;
+      const mergedPairWidth = (viewerRect?.width || 0) + (mergedResultRect?.width || 0);
       const visibleResizerCount = translationVisible ? 3 : 2;
       const visibleGridColumnCount = translationVisible ? 7 : 5;
       const gapCount = Math.max(0, visibleGridColumnCount - 1);
@@ -1014,8 +1031,24 @@ function wireWorkspaceResizers() {
         ? (flexWidth * state.layout.translation) / totalFlex
         : 0;
 
+      event.preventDefault();
+      document.body.classList.add("is-resizing-panes");
+
       const onMove = (moveEvent) => {
         const delta = moveEvent.clientX - startX;
+
+        if (mergedViewerResize) {
+          if (collapsed.viewer || collapsed.ocr || !viewerRect || mergedPairWidth <= 0) return;
+          const nextViewer = clamp(
+            viewerRect.width + delta,
+            minimums.viewer,
+            mergedPairWidth - minimums.mergedResult,
+          );
+          const nextMergedResult = mergedPairWidth - nextViewer;
+          state.layout.proofreadViewer = nextViewer / nextMergedResult;
+          applyWorkspaceLayout();
+          return;
+        }
 
         if (resizer.dataset.resizer === "viewer-ocr") {
           if (collapsed.viewer || collapsed.ocr) return;
@@ -1062,6 +1095,7 @@ function wireWorkspaceResizers() {
       const onUp = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        document.body.classList.remove("is-resizing-panes");
         persistWorkspaceLayout();
         renderSourceBlockOverlay();
       };
@@ -2250,7 +2284,20 @@ async function callOcrEndpoint(endpoint, blob, fields = {}) {
   if (!response.ok) {
     throw new Error(parsed.error || `HTTP ${response.status}`);
   }
+  if (fields.engine === "ai_vision") {
+    assertSupportedAiVisionResponse(parsed);
+  }
   return parsed;
+}
+
+function assertSupportedAiVisionResponse(parsed) {
+  const model = getOcrResponseModel(parsed?.raw).toLowerCase();
+  const provider = getOcrResponseProvider(parsed?.raw).toLowerCase();
+  if (provider === "mathpix" || model.includes("mathpix")) {
+    throw new Error(
+      "AI Vision 已拒绝 Mathpix 结果：Mathpix 主要用于数学公式，不适合作为藏文 OCR 模型。请使用 Gemini 重新识别。"
+    );
+  }
 }
 
 function saveOcrResultFromParsed(parsed, source, statusMessage, fallbackLines = [], preferredView = "lines") {
@@ -4884,26 +4931,38 @@ function clearCurrentTranslation() {
 }
 
 function downloadAllOcrText() {
-  if (!state.ocrResults.size) {
-    setStatus("还没有可导出的 OCR 文本。", "warn");
+  const pages = [...state.ocrResults.entries()]
+    .map(([pageNum, result]) => [pageNum, String(result?.text || "").trim()])
+    .filter(([, text]) => text)
+    .sort((a, b) => a[0] - b[0]);
+
+  if (!pages.length) {
+    setStatus("还没有可下载的 OCR 校对结果。", "warn");
     return;
   }
 
-  const pages = [...state.ocrResults.entries()].sort((a, b) => a[0] - b[0]);
-  const body = [
-    `# ${state.sourceName || "BDRC OCR"} OCR 对照结果`,
+  const body = buildProofreadMarkdown(pages, state.sourceName);
+  const blob = new Blob(["\uFEFF", body], { type: "text/markdown;charset=utf-8" });
+  const safeName = (state.sourceName || "bdrc-ocr").replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]+/g, "_");
+  downloadBlob(blob, `${safeName}_藏文OCR校对结果.md`);
+  setStatus(`已下载 Markdown 校对结果，共 ${pages.length} 页。`, "ok");
+}
+
+function buildProofreadMarkdown(pages, sourceName) {
+  return [
+    `# ${stripFileExtension(sourceName || "藏文典籍")} 藏文 OCR 校对结果`,
     "",
-    ...pages.flatMap(([pageNum, result]) => [
+    ...pages.flatMap(([pageNum, text]) => [
       `## 第 ${pageNum} 页`,
       "",
-      result.text || "",
+      text,
       "",
     ]),
   ].join("\n");
-  const blob = new Blob([body], { type: "text/markdown;charset=utf-8" });
-  const safeName = (state.sourceName || "bdrc-ocr").replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]+/g, "_");
-  downloadBlob(blob, `${safeName}_ocr.md`);
-  setStatus("已导出全部 OCR 文本。", "ok");
+}
+
+function stripFileExtension(fileName) {
+  return String(fileName || "").replace(/\.[^.]+$/, "");
 }
 
 function downloadAllAiOcrText() {

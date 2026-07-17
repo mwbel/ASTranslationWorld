@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>藏文典籍 OCR 对照工作台</title>
-    <link rel="stylesheet" href="./styles.css?v=20260712-project-picker-38" />
+    <link rel="stylesheet" href="./styles.css?v=20260717-proofread-markdown-export-43" />
     <script src="./vendor/pdf.min.js" defer></script>
     <script src="./vendor/lucide.min.js" defer></script>
-    <script src="./app.js?v=20260712-project-picker-38" defer></script>
+    <script src="./app.js?v=20260717-proofread-markdown-export-43" defer></script>
   </head>
   <body>
     <main class="app-shell ocr-only-mode">
@@ -246,9 +246,9 @@
               <i data-lucide="copy"></i>
               <span>复制</span>
             </button>
-            <button id="downloadTextButton" class="ghost-button compact quiet-action" type="button" aria-label="导出全部 OCR 文本" title="导出全部 OCR 文本">
-              <i data-lucide="download"></i>
-              <span>导出全部</span>
+            <button id="downloadTextButton" class="ghost-button compact" type="button" aria-label="下载 Markdown 校对结果" title="下载 Markdown 校对结果">
+              <i data-lucide="file-down"></i>
+              <span>Markdown</span>
             </button>
             <div class="font-size-controls" role="group" aria-label="OCR 与校对字体大小">
               <button

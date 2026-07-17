@@ -28,6 +28,7 @@ By default the AI Vision adapter calls the local ModelAggregatorService:
 AI_VISION_PROVIDER=model_aggregator \
 MODEL_AGGREGATOR_BASE_URL=http://127.0.0.1:8890 \
 AI_VISION_MODEL=gemini:gemini-2.5-flash \
+AI_VISION_ALLOW_FALLBACK=0 \
 python3 tibetan-ocr-core/ai_vision_ocr_server.py
 ```
 
@@ -62,5 +63,6 @@ curl http://127.0.0.1:18092/health
 - Default line mode: `line`
 - AI Vision OCR endpoint: `POST http://127.0.0.1:18092/ocr`
 - AI Vision OCR defaults to ModelAggregatorService `/api/aggregate/image-to-markdown`.
+- Tibetan AI Vision OCR defaults to Gemini with cross-model fallback disabled. Mathpix responses are rejected because its formula-oriented OCR is not a valid Tibetan OCR fallback.
 - OpenAI-compatible `/chat/completions` mode remains available through `AI_VISION_PROVIDER=openai-compatible`.
 - This repo is intended to be publishable without translation or frontend code.
