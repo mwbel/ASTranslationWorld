@@ -127,6 +127,47 @@ body.sidebar-resizing {
   white-space: nowrap;
 }
 
+.breadcrumb-bar .sutra-page-pager-row {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
+  margin: 0 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.breadcrumb-bar .sutra-page-pager-row__title {
+  display: none;
+}
+
+.breadcrumb-bar .sutra-page-browser__pager--source {
+  padding: 0;
+  border: 0;
+}
+
+.breadcrumb-bar .sutra-page-browser__pager--source button {
+  color: #5d5a52;
+  border-color: #d8dde3;
+  background: #f2f5f7;
+}
+
+.breadcrumb-bar .sutra-page-browser__pager--source input {
+  color: #403d37;
+  border-color: #d8dde3;
+  background: #fff;
+}
+
+.breadcrumb-bar .sutra-page-browser__pager--source .sutra-page-browser__total {
+  color: #77736a;
+}
+
+.sidebar__nav [data-sutra-unchaptered="true"] {
+  display: none !important;
+}
+
 .source-panel.sutra-source-one-line > .panel-header {
   display: none !important;
 }
@@ -545,10 +586,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v46.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v46.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v47.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v47.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v46-source-one-line/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v47-top-page-navigation/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -2290,7 +2331,7 @@ const __sutraInstallCompactPageNavigation = () => {
     const sourcePanel = document.querySelector(".source-panel");
     const scanViewer = sourcePanel?.querySelector(".scan-viewer");
     if (!pager || !sourcePanel || !scanViewer) return;
-    let pagerRow = sourcePanel.querySelector(".sutra-page-pager-row");
+    let pagerRow = document.querySelector(".sutra-page-pager-row");
     if (!pagerRow) {
       pagerRow = document.createElement("div");
       pagerRow.className = "sutra-page-pager-row";
@@ -2305,6 +2346,22 @@ const __sutraInstallCompactPageNavigation = () => {
       title.textContent = "原典";
       pagerRow.prepend(title);
     }
+    const breadcrumbBar = document.querySelector(".breadcrumb-bar");
+    const chainIndicator = breadcrumbBar?.querySelector(".chain-indicator");
+    if (breadcrumbBar && pagerRow.parentElement !== breadcrumbBar) breadcrumbBar.insertBefore(pagerRow, chainIndicator || null);
+    const breadcrumb = breadcrumbBar?.querySelector(".breadcrumb");
+    if (breadcrumb) {
+      const parts = Array.from(breadcrumb.children);
+      const unchaptered = parts.find((element) => (element.textContent || "").trim() === "未分章");
+      if (unchaptered) {
+        const before = unchaptered.previousElementSibling;
+        if (before?.classList.contains("breadcrumb__sep")) before.remove();
+        unchaptered.remove();
+      }
+    }
+    const sidebarChapter = Array.from(document.querySelectorAll(".sidebar__nav .nav-item__label"))
+      .find((element) => (element.textContent || "").trim() === "未分章")?.parentElement;
+    if (sidebarChapter) sidebarChapter.dataset.sutraUnchaptered = "true";
     if (!pagerRow.querySelector(".sutra-source-more")) {
       const labels = ["编辑原文", "导入文本", "全部直读"];
       const candidates = Array.from(sourcePanel.querySelectorAll(".panel-header button"));
@@ -2459,7 +2516,7 @@ const __sutraInstallSourceMoreMenu = () => {
   let timer = 0;
   const bind = () => {
     const header = document.querySelector(".source-panel .panel-header");
-    const host = document.querySelector(".source-panel .sutra-page-pager-row");
+    const host = document.querySelector(".sutra-page-pager-row");
     if (!header || !host || host.querySelector(".sutra-source-more")) return;
     const labels = ["编辑原文", "导入文本", "全部直读"];
     const candidates = Array.from(header.querySelectorAll("button"));
@@ -2698,5 +2755,6 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v43.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v44.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v45.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v46.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v46.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v47.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v47.js#g' /usr/share/nginx/html/index.html
 SHELL

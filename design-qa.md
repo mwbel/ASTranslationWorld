@@ -1,20 +1,20 @@
-# AS译林本地副本 v46 设计验收
+# AS译林本地副本 v47 设计验收
 
 - source visual truth paths:
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_P4qw0O/截屏2026-07-17 11.10.36.png`
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_ysQdrt/截屏2026-07-17 11.12.02.png`
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_HPk7K6/截屏2026-07-17 11.14.30.png`
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_HcT9Wz/截屏2026-07-17 11.14.52.png`
-- implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v46.png`
+- implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v47.png`
 - viewport: 1280 × 720
-- state: 工作台，P4，缩略图视图，原典单行工具栏
+- state: 工作台，P5，缩略图视图，页码导航并入顶部项目行
 
 ## Full-view comparison evidence
 
-- 原典标题、紧凑翻页和 PDF 工具由三行压缩为一行，页码输入显示 `4 / 564`。
+- “未分章”和“原典”均不再显示，顶部面包屑精简为“洞见中译英 / P5”。
 - 左侧栏提供“缩略图 / 目录”双视图；缩略图使用真实 PDF 页图，目录以页段呈现。当前 PDF 没有可用目录标题，因此未虚构章节名称。
-- 左侧重复的正文字号控制不再显示；低频原典与 PDF 工具全部收入三点菜单。
-- PDF 图像上方只保留“原典、翻页、页码、三点菜单”，高度约 43px。
+- 页码导航直接位于顶部项目/当前页同一行，PDF 图像上方不再存在独立工具行。
+- 最左侧“未分章”行隐藏，缩略图/目录入口仍正常显示。
 
 ## Focused region comparison evidence
 
@@ -31,13 +31,13 @@
 
 ## Comparison history
 
-1. v45 中原典标题、翻页和 PDF 工具仍占三行，且左侧字号控制与右侧控制视觉重复。
-2. 修复：v46 将原典区重组为单行，将全部低频原典/PDF 操作收入三点菜单。
-3. 复测：单行高度约 43px；P4→P5 翻页同步；菜单内仍可访问原始 PDF、区域识别、PDF 缩放和识别引擎；控制台无错误。
+1. v46 已将 PDF 工具压成一行，但“未分章”和“原典”仍占据文字空间，导航仍位于独立行。
+2. 修复：v47 隐藏两个文字节点，并将页码导航移动到顶部面包屑行。
+3. 复测：P5→P6 翻页时页码、面包屑与 PDF 图像同步；可见区域不存在“未分章”；控制台无错误。
 
 ## Primary interactions tested
 
-- 点击下一页：P4 正确切换为 P5，页码输入和 PDF 图像同步更新。
+- 点击下一页：P5 正确切换为 P6，页码输入、顶部当前页和 PDF 图像同步更新。
 - 点击目录：缩略图切换为页段目录，当前页段正确高亮。
 - 点击更多：编辑原文、导入文本、全部直读正确展开。
 - console errors checked: 0。
