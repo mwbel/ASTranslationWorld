@@ -1,4 +1,4 @@
-# AS译林本地副本 v54 设计验收
+# AS译林本地副本 v55 设计验收
 
 - source visual truth paths:
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_P4qw0O/截屏2026-07-17 11.10.36.png`
@@ -21,6 +21,10 @@
 - v53 implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v53.png`
 - v54 source visual truth path: `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_02pmPd/截屏2026-07-17 17.24.45.png`
 - v54 implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v54.png`
+- v55 source visual truth paths:
+  - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_ngfGLW/截屏2026-07-17 17.51.15.png`
+  - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_zlMgMV/截屏2026-07-17 17.51.25.png`
+- v55 implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v55.png`
 - viewport: 1280 × 720
 - state: 工作台，P5，缩略图视图，页码导航并入顶部项目行
 
@@ -35,6 +39,7 @@
 - v52 删除未翻译段落中视觉和功能重复的第二个“添加译文”按钮，只保留一个整块可点击入口。
 - v53 将工作台整理为两个边界明确的独立面板；原始页面和译文 block 分别位于白色内容卡片中。
 - v54 移除覆盖大段原文的蓝色同步焦点框，只显示浅金色同步底色和左侧细标记。
+- v55 使用 PDF 文本层真实坐标替代文字长度估算，P13 的 7 个 block 分别映射到 7 个实际文字区域。
 
 ## Focused region comparison evidence
 
@@ -53,6 +58,7 @@
 - v53 延续米白、纸张白和金色状态色；参考图2的结构层级而非复制其蓝色主题。
 - 页面图片继续使用原始 PDF 渲染资源，未引入重绘或占位素材。
 - v54 不改变字体、正文排版、页面图片或文案内容，仅降低同步状态的边框和颜色强度。
+- v55 不改变字体、颜色、图片质量和文案；仅将高亮框的几何位置收敛到匹配到的 PDF 文字行。
 
 ## Findings
 
@@ -63,6 +69,7 @@
 - v52 无 P0、P1、P2 问题；重复入口已消除，没有改变翻译编辑器和译文数据。
 - v53 无 P0、P1、P2 问题；左右栏内容密度和边界层级已统一。
 - v54 无 P0、P1、P2 问题；大尺寸蓝色焦点框已经消除。
+- v55 无 P0、P1、P2 问题；第二段和第五段均落在正确文字范围。无文本层页面不会显示估算框。
 
 ## Comparison history
 
@@ -80,6 +87,8 @@
 12. v53 修复及复测：入口降为 13px；双面板、内容卡片和分隔线样式统一；拖动分隔线后左栏约 348px、右栏约 538px；入口仍正常展开编辑器。
 13. v54 初检：同步按钮获得焦点时，浏览器默认蓝色 outline 覆盖整个段落范围，视觉过强。
 14. v54 修复及复测：outline 和整段边框均为 none；同步状态使用 5.5% 透明度金色底色及 3px 内侧标记；左右点击仍正常。
+15. v55 初检：旧算法按段落文字长度分配页面高度，无法识别真实段落起止位置，导致高亮落到相邻段落。
+16. v55 修复及复测：PDF.js 返回文本项真实坐标；P13 生成 7 个独立区域；第二段位于页面约 38% 高度，第五段位于约 67% 高度且仅覆盖对应两行；反向点击返回右栏第 5 个 block。
 
 ## Primary interactions tested
 
@@ -97,5 +106,8 @@
 - 点击 13px 的统一译文入口：编辑器正常展开。
 - 点击右侧原文：左侧不再出现蓝色大框，只出现浅金色同步提示。
 - 点击左侧同步区域：右侧对应 block 正常定位并显示细标记。
+- P13 点击右栏第二段：左侧激活索引 1 的真实文字区域。
+- P13 点击右栏第五段：左侧激活索引 4，区域高度约占页面 6%。
+- 点击左侧第五段区域：右侧激活第 5 个 block。
 
 final result: passed

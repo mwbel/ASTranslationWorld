@@ -662,10 +662,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v54.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v54.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v55.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v55.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v54-subtle-source-sync/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v55-pdf-text-coordinate-sync/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -2298,8 +2298,86 @@ const __sutraInstallBidirectionalSourceSync = () => {
   if (window.__sutraBidirectionalSourceSyncInstalled) return;
   window.__sutraBidirectionalSourceSyncInstalled = true;
   let timer = 0;
+  let pdfJsPromise = null;
 
   const previewText = (card) => String(card.querySelector(".segment-source-preview")?.textContent || "").trim();
+  const compactText = (value) => String(value || "").replace(/\s+/g, "").trim();
+  const loadPdfJs = () => {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (pdfJsPromise) return pdfJsPromise;
+    pdfJsPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "/pdfjs/pdf.min.js";
+      script.onload = () => {
+        if (!window.pdfjsLib) return reject(new Error("PDF.js 未加载"));
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.js";
+        resolve(window.pdfjsLib);
+      };
+      script.onerror = () => reject(new Error("PDF.js 资源加载失败"));
+      document.head.appendChild(script);
+    });
+    return pdfJsPromise;
+  };
+
+  const locatePdfTextRects = async (image, cards) => {
+    const pdfLink = document.querySelector('a[href*=".pdf"], a[href*=".PDF"]');
+    const pageNumber = Number(String(image.alt || "").match(/Page\s+(\d+)/i)?.[1] || 0);
+    if (!pdfLink || !pageNumber) return [];
+    const pdfjs = await loadPdfJs();
+    const pdfUrl = new URL(pdfLink.href, window.location.href);
+    pdfUrl.hash = "";
+    const pdf = await pdfjs.getDocument({ url: pdfUrl.href, withCredentials: true }).promise;
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const items = content.items.filter((item) => compactText(item.str));
+    const pageWidth = Number(page.view?.[2] - page.view?.[0]) || 1;
+    const pageHeight = Number(page.view?.[3] - page.view?.[1]) || 1;
+    let cursor = 0;
+    const spans = items.map((item) => {
+      const text = compactText(item.str);
+      const span = { item, text, start: cursor, end: cursor + text.length };
+      cursor = span.end;
+      return span;
+    });
+    const pageText = spans.map((span) => span.text).join("");
+
+    return cards.map((card) => {
+      const target = compactText(previewText(card));
+      if (!target) return null;
+      let start = pageText.indexOf(target);
+      let end = start >= 0 ? start + target.length : -1;
+      if (start < 0) {
+        const head = target.slice(0, Math.min(24, target.length));
+        const tail = target.slice(-Math.min(24, target.length));
+        start = pageText.indexOf(head);
+        const tailStart = start >= 0 ? pageText.indexOf(tail, start + head.length) : -1;
+        end = tailStart >= 0 ? tailStart + tail.length : -1;
+      }
+      if (start < 0 || end <= start) return null;
+      const matched = spans.filter((span) => span.end > start && span.start < end);
+      if (!matched.length) return null;
+      const rects = matched.map(({ item }) => {
+        const transform = item.transform || [];
+        const height = Math.abs(Number(transform[3])) || Math.abs(Number(item.height)) || 10;
+        return {
+          left: Number(transform[4]) || 0,
+          top: pageHeight - (Number(transform[5]) || 0) - height,
+          right: (Number(transform[4]) || 0) + (Number(item.width) || 0),
+          bottom: pageHeight - (Number(transform[5]) || 0) + height * 0.2,
+        };
+      });
+      const left = Math.max(0, Math.min(...rects.map((rect) => rect.left)) - 5);
+      const top = Math.max(0, Math.min(...rects.map((rect) => rect.top)) - 3);
+      const right = Math.min(pageWidth, Math.max(...rects.map((rect) => rect.right)) + 5);
+      const bottom = Math.min(pageHeight, Math.max(...rects.map((rect) => rect.bottom)) + 3);
+      return {
+        left: left / pageWidth * 100,
+        top: top / pageHeight * 100,
+        width: Math.max(1, (right - left) / pageWidth * 100),
+        height: Math.max(1, (bottom - top) / pageHeight * 100),
+      };
+    });
+  };
   const clearActive = () => {
     document.querySelectorAll(".sutra-source-sync-overlay.active").forEach((item) => item.classList.remove("active"));
     document.querySelectorAll(".segment-card.sutra-source-sync-active").forEach((item) => item.classList.remove("sutra-source-sync-active"));
@@ -2307,9 +2385,8 @@ const __sutraInstallBidirectionalSourceSync = () => {
 
   const activate = (index, scrollTarget) => {
     const cards = Array.from(document.querySelectorAll(".segments-list .segment-card"));
-    const overlays = Array.from(document.querySelectorAll(".scan-image-container .sutra-source-sync-overlay"));
     const card = cards[index];
-    const overlay = overlays[index];
+    const overlay = document.querySelector(`.scan-image-container .sutra-source-sync-overlay[data-sutra-sync-index="${index}"]`);
     if (!card || !overlay) return;
     clearActive();
     card.classList.add("sutra-source-sync-active");
@@ -2317,7 +2394,7 @@ const __sutraInstallBidirectionalSourceSync = () => {
     (scrollTarget === "source" ? overlay : card).scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
-  const bind = () => {
+  const bind = async () => {
     const container = document.querySelector(".scan-image-container");
     const image = container?.querySelector('img[alt^="Page "]');
     const cards = Array.from(document.querySelectorAll(".segments-list .segment-card"));
@@ -2328,29 +2405,37 @@ const __sutraInstallBidirectionalSourceSync = () => {
     container.classList.add("sutra-source-sync-ready");
     container.querySelectorAll(".sutra-source-sync-overlay").forEach((item) => item.remove());
 
-    const weights = cards.map((card) => Math.max(1, Math.ceil(previewText(card).length / 32)));
-    const totalWeight = weights.reduce((sum, value) => sum + value, 0) || cards.length;
-    const topInset = 5;
-    const usableHeight = 90;
-    let offset = 0;
+    let rects = [];
+    try {
+      rects = await locatePdfTextRects(image, cards);
+    } catch (error) {
+      console.warn("AS译林 PDF 精确同步坐标加载失败", error);
+    }
     cards.forEach((card, index) => {
+      const rect = rects[index];
+      const sourcePreview = card.querySelector(".segment-source-preview");
+      if (!rect) {
+        if (sourcePreview) sourcePreview.title = "当前页没有可用的精确文字坐标";
+        return;
+      }
       const overlay = document.createElement("button");
       overlay.type = "button";
       overlay.className = "sutra-source-sync-overlay";
+      overlay.dataset.sutraSyncIndex = String(index);
       overlay.title = `定位右栏第 ${index + 1} 段`;
       overlay.setAttribute("aria-label", `定位右栏第 ${index + 1} 段`);
-      const height = usableHeight * weights[index] / totalWeight;
-      overlay.style.top = `${topInset + offset}%`;
-      overlay.style.height = `${height}%`;
+      overlay.style.left = `${rect.left}%`;
+      overlay.style.right = "auto";
+      overlay.style.top = `${rect.top}%`;
+      overlay.style.width = `${rect.width}%`;
+      overlay.style.height = `${rect.height}%`;
       overlay.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         activate(index, "target");
       });
       container.appendChild(overlay);
-      offset += height;
 
-      const sourcePreview = card.querySelector(".segment-source-preview");
       if (sourcePreview && !sourcePreview.dataset.sutraSourceSyncBound) {
         sourcePreview.dataset.sutraSourceSyncBound = "true";
         sourcePreview.title = "点击同步定位左侧原文";
@@ -2362,7 +2447,7 @@ const __sutraInstallBidirectionalSourceSync = () => {
 
   const schedule = () => {
     window.clearTimeout(timer);
-    timer = window.setTimeout(bind, 120);
+    timer = window.setTimeout(() => { void bind(); }, 120);
   };
   window.__sutraBindBidirectionalSourceSync = bind;
   new MutationObserver((mutations) => {
@@ -3034,5 +3119,6 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v51.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v52.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v53.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v54.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v54.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v55.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v55.js#g' /usr/share/nginx/html/index.html
 SHELL
