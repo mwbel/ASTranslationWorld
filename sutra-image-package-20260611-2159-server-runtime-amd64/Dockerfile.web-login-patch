@@ -116,6 +116,43 @@ body.sidebar-resizing {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.source-panel .sutra-page-pager-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-light, #ebe6da);
+  background: rgba(250, 248, 242, 0.72);
+}
+
+.source-panel .sutra-page-browser__pager--source {
+  padding: 0;
+  border: 0;
+}
+
+.source-panel .sutra-page-browser__pager--source button {
+  color: #5d5a52;
+  border-color: #d8dde3;
+  background: #f2f5f7;
+}
+
+.source-panel .sutra-page-browser__pager--source button:hover:not(:disabled) {
+  color: #8b6a18;
+  border-color: #c9a84f;
+  background: #fffaf0;
+}
+
+.source-panel .sutra-page-browser__pager--source input {
+  color: #403d37;
+  border-color: #d8dde3;
+  background: #fff;
+}
+
+.source-panel .sutra-page-browser__pager--source .sutra-page-browser__total {
+  color: #77736a;
+}
+
 .sutra-page-browser__tabs button,
 .sutra-page-browser__pager button {
   min-width: 30px;
@@ -130,7 +167,9 @@ body.sidebar-resizing {
 
 .sutra-page-browser__tabs button {
   flex: 1;
-  font-size: 12px;
+  min-height: 38px;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .sutra-page-browser__tabs button.active,
@@ -229,6 +268,12 @@ body.sidebar-resizing {
   margin-left: 2px;
 }
 
+.sutra-source-more > button {
+  min-width: 30px;
+  font-size: 20px !important;
+  line-height: 1 !important;
+}
+
 .sutra-source-more__menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -252,6 +297,15 @@ body.sidebar-resizing {
   width: 100% !important;
   justify-content: flex-start !important;
   margin: 0 !important;
+}
+
+.source-panel .panel-header [data-sutra-toolbar-secondary="true"] {
+  display: none !important;
+}
+
+/* The detailed bilingual pipeline is already visible in the workbench. */
+.status-bar__progress {
+  display: none !important;
 }
 
 /* Local workspace patch: keep fallback text source compact; PDF uses original page images. */
@@ -465,10 +519,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v39.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v39.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v45.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v45.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v39-page-navigation/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v45-calm-navigation/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -2190,8 +2244,8 @@ const __sutraInstallCompactPageNavigation = () => {
       browser.className = "sutra-page-browser";
       browser.innerHTML = `
         <div class="sutra-page-browser__tabs">
-          <button type="button" data-view="thumbs" class="active" title="页面缩略图">▦ 缩略图</button>
-          <button type="button" data-view="outline" title="章节目录">☷ 目录</button>
+          <button type="button" data-view="thumbs" class="active" title="页面缩略图" aria-label="页面缩略图">▦</button>
+          <button type="button" data-view="outline" title="章节目录" aria-label="章节目录">☷</button>
         </div>
         <div class="sutra-page-browser__pager">
           <button type="button" data-go="first" title="第一页">|‹</button>
@@ -2206,10 +2260,57 @@ const __sutraInstallCompactPageNavigation = () => {
       nav.insertBefore(browser, firstPage);
     }
 
-    const input = browser.querySelector("input");
+    const pager = browser.querySelector(".sutra-page-browser__pager") || document.querySelector(".sutra-page-browser__pager");
+    const sourcePanel = document.querySelector(".source-panel");
+    const scanViewer = sourcePanel?.querySelector(".scan-viewer");
+    if (!pager || !sourcePanel || !scanViewer) return;
+    let pagerRow = sourcePanel.querySelector(".sutra-page-pager-row");
+    if (!pagerRow) {
+      pagerRow = document.createElement("div");
+      pagerRow.className = "sutra-page-pager-row";
+      sourcePanel.insertBefore(pagerRow, scanViewer);
+    }
+    pager.classList.add("sutra-page-browser__pager--source");
+    if (pager.parentElement !== pagerRow) pagerRow.appendChild(pager);
+    if (!pagerRow.querySelector(".sutra-source-more")) {
+      const labels = ["编辑原文", "导入文本", "全部直读"];
+      const candidates = Array.from(sourcePanel.querySelectorAll(".panel-header button"));
+      const secondary = labels.map((label) => candidates.find((element) => (element.textContent || "").includes(label))).filter(Boolean);
+      if (secondary.length) {
+        const wrap = document.createElement("div");
+        wrap.className = "sutra-source-more";
+        const trigger = document.createElement("button");
+        trigger.type = "button";
+        trigger.className = "btn btn--ghost btn--sm";
+        trigger.textContent = "⋯";
+        trigger.title = "更多操作";
+        trigger.setAttribute("aria-label", "更多操作");
+        trigger.setAttribute("aria-expanded", "false");
+        const menu = document.createElement("div");
+        menu.className = "sutra-source-more__menu";
+        secondary.forEach((element) => {
+          element.dataset.sutraToolbarSecondary = "true";
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "btn btn--ghost btn--sm";
+          item.textContent = (element.textContent || "").trim();
+          item.onclick = () => element.click();
+          menu.appendChild(item);
+        });
+        wrap.append(trigger, menu);
+        pagerRow.appendChild(wrap);
+        trigger.onclick = (event) => {
+          event.stopPropagation();
+          const open = wrap.classList.toggle("open");
+          trigger.setAttribute("aria-expanded", String(open));
+        };
+        menu.onclick = () => wrap.classList.remove("open");
+      }
+    }
+    const input = pager.querySelector("input");
     const total = buttons.length;
     input.max = String(total);
-    browser.querySelector(".sutra-page-browser__total").textContent = `/ ${total}`;
+    pager.querySelector(".sutra-page-browser__total").textContent = `/ ${total}`;
     const current = () => pageNumber(buttons.find((button) => button.classList.contains("active"))) || Math.max(1, Number(input.value) || 1);
     const go = (number) => {
       const safe = Math.max(1, Math.min(total, Number(number) || 1));
@@ -2218,7 +2319,7 @@ const __sutraInstallCompactPageNavigation = () => {
     };
     if (!browser.dataset.bound) {
       browser.dataset.bound = "true";
-      browser.querySelectorAll("[data-go]").forEach((control) => control.addEventListener("click", () => {
+      pager.querySelectorAll("[data-go]").forEach((control) => control.addEventListener("click", () => {
         const action = control.dataset.go;
         go(action === "first" ? 1 : action === "last" ? total : current() + (action === "prev" ? -1 : 1));
       }));
@@ -2234,10 +2335,10 @@ const __sutraInstallCompactPageNavigation = () => {
     const render = () => {
       const active = current();
       input.value = String(active);
-      browser.querySelector('[data-go="first"]').disabled = active <= 1;
-      browser.querySelector('[data-go="prev"]').disabled = active <= 1;
-      browser.querySelector('[data-go="next"]').disabled = active >= total;
-      browser.querySelector('[data-go="last"]').disabled = active >= total;
+      pager.querySelector('[data-go="first"]').disabled = active <= 1;
+      pager.querySelector('[data-go="prev"]').disabled = active <= 1;
+      pager.querySelector('[data-go="next"]').disabled = active >= total;
+      pager.querySelector('[data-go="last"]').disabled = active >= total;
       const body = browser.querySelector(".sutra-page-browser__body");
       const view = browser.dataset.view || "thumbs";
       body.replaceChildren();
@@ -2301,9 +2402,10 @@ const __sutraInstallSourceMoreMenu = () => {
   let timer = 0;
   const bind = () => {
     const header = document.querySelector(".source-panel .panel-header");
-    if (!header || header.querySelector(".sutra-source-more")) return;
+    const host = document.querySelector(".source-panel .sutra-page-pager-row");
+    if (!header || !host || host.querySelector(".sutra-source-more")) return;
     const labels = ["编辑原文", "导入文本", "全部直读"];
-    const candidates = Array.from(header.querySelectorAll("button, label"));
+    const candidates = Array.from(header.querySelectorAll("button"));
     const secondary = labels.map((label) => candidates.find((element) => (element.textContent || "").includes(label))).filter(Boolean);
     if (!secondary.length) return;
     const wrap = document.createElement("div");
@@ -2311,13 +2413,23 @@ const __sutraInstallSourceMoreMenu = () => {
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.className = "btn btn--ghost btn--sm";
-    trigger.textContent = "更多 ▾";
+    trigger.textContent = "⋯";
+    trigger.title = "更多操作";
+    trigger.setAttribute("aria-label", "更多操作");
     trigger.setAttribute("aria-expanded", "false");
     const menu = document.createElement("div");
     menu.className = "sutra-source-more__menu";
-    secondary.forEach((element) => menu.appendChild(element));
+    secondary.forEach((element) => {
+      element.dataset.sutraToolbarSecondary = "true";
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "btn btn--ghost btn--sm";
+      item.textContent = (element.textContent || "").trim();
+      item.onclick = () => element.click();
+      menu.appendChild(item);
+    });
     wrap.append(trigger, menu);
-    header.appendChild(wrap);
+    host.appendChild(wrap);
     trigger.onclick = (event) => {
       event.stopPropagation();
       const open = wrap.classList.toggle("open");
@@ -2329,6 +2441,7 @@ const __sutraInstallSourceMoreMenu = () => {
   const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(bind, 100); };
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
   schedule();
+  [350, 1000, 2200].forEach((delay) => window.setTimeout(schedule, delay));
 };
 __sutraInstallSourceMoreMenu();
 
@@ -2521,5 +2634,11 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v36.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v37.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v38.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v39.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v39.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v40.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v41.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v42.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v43.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v44.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v45.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v45.js#g' /usr/share/nginx/html/index.html
 SHELL
