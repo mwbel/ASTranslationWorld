@@ -507,13 +507,31 @@ body.sutra-same-source-target .segment-card__header {
 }
 
 .translation-editor .editor-header {
+  display: grid !important;
+  grid-template-columns: 64px minmax(0, 1fr) auto !important;
   align-items: flex-start !important;
   gap: 8px !important;
 }
 
+.translation-editor .editor-header__label {
+  width: 64px !important;
+  min-width: 64px !important;
+}
+
 .translation-editor .persona-selector {
-  flex: 1 1 auto !important;
+  width: 100% !important;
   min-width: 0 !important;
+  align-content: flex-start !important;
+}
+
+.segments-list {
+  scrollbar-gutter: stable !important;
+}
+
+.translation-editor,
+.translation-editor .editor-header,
+.translation-editor .persona-selector {
+  box-sizing: border-box !important;
 }
 
 .translation-editor__collapse,
@@ -586,10 +604,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v47.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v47.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v48.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v48.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v47-top-page-navigation/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v48-stable-persona-header/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -2756,5 +2774,6 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v44.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v45.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v46.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v47.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v47.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v48.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v48.js#g' /usr/share/nginx/html/index.html
 SHELL

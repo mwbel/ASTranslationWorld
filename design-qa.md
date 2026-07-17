@@ -1,4 +1,4 @@
-# AS译林本地副本 v47 设计验收
+# AS译林本地副本 v48 设计验收
 
 - source visual truth paths:
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_P4qw0O/截屏2026-07-17 11.10.36.png`
@@ -6,6 +6,9 @@
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_HPk7K6/截屏2026-07-17 11.14.30.png`
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_HcT9Wz/截屏2026-07-17 11.14.52.png`
 - implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v47.png`
+- persona pointer-state screenshots:
+  - `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/qa-persona-source-v48.png`
+  - `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/qa-persona-editor-v48.png`
 - viewport: 1280 × 720
 - state: 工作台，P5，缩略图视图，页码导航并入顶部项目行
 
@@ -28,12 +31,15 @@
 
 - 无 P0、P1、P2 问题。
 - P3：目录目前按 20 页分组；待后端提供真实 PDF 目录或章节锚点后可升级为语义目录。
+- 本次 v48 修复未修改角色数据、角色顺序或翻译逻辑，只稳定译文编辑器头部排版。
 
 ## Comparison history
 
 1. v46 已将 PDF 工具压成一行，但“未分章”和“原典”仍占据文字空间，导航仍位于独立行。
 2. 修复：v47 隐藏两个文字节点，并将页码导航移动到顶部面包屑行。
 3. 复测：P5→P6 翻页时页码、面包屑与 PDF 图像同步；可见区域不存在“未分章”；控制台无错误。
+4. v48 修复：译文编辑器头部使用固定标签列、弹性角色列和操作列，并为段落列表预留稳定滚动条空间。
+5. v48 复测：鼠标位于段落原文和译文编辑框时，角色选择区均为 `x=833.75, y=368.90625, width=382.5, height=116.75`，未发生位移；控制台无错误或警告。
 
 ## Primary interactions tested
 
@@ -41,5 +47,6 @@
 - 点击目录：缩略图切换为页段目录，当前页段正确高亮。
 - 点击更多：编辑原文、导入文本、全部直读正确展开。
 - console errors checked: 0。
+- 鼠标从段落原文移动到译文编辑框：译者标签位置与尺寸保持不变。
 
 final result: passed
