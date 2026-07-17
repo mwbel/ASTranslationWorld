@@ -652,10 +652,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v52.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v52.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v53.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v53.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v52-unified-translation-entry/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v53-balanced-workbench-panes/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -2385,6 +2385,99 @@ const __sutraInstallUnifiedTranslationEntry = () => {
 };
 __sutraInstallUnifiedTranslationEntry();
 
+const __sutraInstallBalancedPaneStyles = () => {
+  if (document.getElementById("sutra-balanced-pane-styles")) return;
+  const style = document.createElement("style");
+  style.id = "sutra-balanced-pane-styles";
+  style.textContent = `
+    .workbench {
+      gap: 0 !important;
+      padding: 10px !important;
+      background: #f2f0eb !important;
+    }
+    .workbench .source-panel,
+    .workbench .translation-panel {
+      min-width: 0 !important;
+      border: 1px solid #d9d5cc !important;
+      border-radius: 8px !important;
+      background: #f8f7f3 !important;
+      box-shadow: 0 1px 3px rgba(72, 64, 51, 0.06) !important;
+      overflow: hidden !important;
+    }
+    .workbench .panel-divider {
+      width: 10px !important;
+      min-width: 10px !important;
+      border: 0 !important;
+      background: transparent !important;
+    }
+    .workbench .panel-divider::after {
+      width: 2px !important;
+      border-radius: 2px !important;
+      background: #c9c3b8 !important;
+    }
+    .workbench .scan-viewer {
+      margin: 10px !important;
+      border: 1px solid #ddd8ce !important;
+      border-radius: 7px !important;
+      background: #fff !important;
+      overflow: auto !important;
+    }
+    .workbench .scan-image-container {
+      margin: auto !important;
+      background: #fff !important;
+    }
+    .workbench .translation-panel .lang-tabs {
+      min-height: 52px !important;
+      padding: 7px 10px !important;
+      border-bottom: 1px solid #d9d5cc !important;
+      background: #f5f3ee !important;
+      box-sizing: border-box !important;
+    }
+    .workbench .segments-list {
+      padding: 10px !important;
+      background: #f8f7f3 !important;
+    }
+    .workbench .segment-card {
+      margin: 0 0 12px !important;
+      padding: 12px 14px !important;
+      border: 1px solid #ded9cf !important;
+      border-radius: 7px !important;
+      background: #fff !important;
+      box-shadow: 0 1px 2px rgba(72, 64, 51, 0.04) !important;
+    }
+    .workbench .segment-card__header {
+      min-height: 24px !important;
+      margin-bottom: 6px !important;
+    }
+    .workbench .proofread-bar {
+      margin: 10px -2px 8px !important;
+      border-radius: 5px !important;
+    }
+    .workbench .proposal-empty--invitation {
+      min-height: 42px !important;
+      margin: 8px 0 0 !important;
+      padding: 10px 12px !important;
+      box-sizing: border-box !important;
+      border-radius: 5px !important;
+      background: #fbfaf7 !important;
+    }
+    .workbench .proposal-empty--invitation .proposal-empty__hint {
+      font-size: 13px !important;
+      line-height: 1.45 !important;
+      font-weight: 400 !important;
+      letter-spacing: 0 !important;
+    }
+    .workbench .translation-editor {
+      margin-top: 8px !important;
+      border: 1px solid #ded9cf !important;
+      border-radius: 6px !important;
+      background: #fbfaf7 !important;
+    }
+  `;
+  document.head.appendChild(style);
+};
+__sutraInstallBalancedPaneStyles();
+
 const __sutraInstallMissingSourceRecovery = () => {
   if (window.__sutraLocalMissingSourceRecoveryInstalled) return;
   window.__sutraLocalMissingSourceRecoveryInstalled = true;
@@ -2929,5 +3022,6 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v49.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v50.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v51.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v52.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v52.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v53.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v53.js#g' /usr/share/nginx/html/index.html
 SHELL

@@ -1,4 +1,4 @@
-# AS译林本地副本 v52 设计验收
+# AS译林本地副本 v53 设计验收
 
 - source visual truth paths:
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_P4qw0O/截屏2026-07-17 11.10.36.png`
@@ -15,6 +15,10 @@
 - v50 implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v50.png`
 - v52 source visual truth path: `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_ByL1js/截屏2026-07-17 16.21.02.png`
 - v52 implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v52.png`
+- v53 source visual truth paths:
+  - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_B66oyN/截屏2026-07-17 17.07.59.png`
+  - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_X0ZfRw/截屏2026-07-17 17.10.17.png`
+- v53 implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v53.png`
 - viewport: 1280 × 720
 - state: 工作台，P5，缩略图视图，页码导航并入顶部项目行
 
@@ -27,6 +31,7 @@
 - v50 将左栏拖宽至约 363px 后，缩略图随栏宽完整放大，页面比例和左右留白保持稳定；主工作区仍可正常使用。
 - 右栏点击原文后，左侧页面出现对应的金色同步范围；左侧点击后，右栏对应 block 定位并高亮。
 - v52 删除未翻译段落中视觉和功能重复的第二个“添加译文”按钮，只保留一个整块可点击入口。
+- v53 将工作台整理为两个边界明确的独立面板；原始页面和译文 block 分别位于白色内容卡片中。
 
 ## Focused region comparison evidence
 
@@ -41,6 +46,9 @@
 - 图片质量：缩略图使用原始页面图片，宽高比始终为 0.7118，与源图片 2186×3071 一致。
 - 文案：仅新增拖拽和同步定位的辅助标题，不增加常驻说明文字。
 - v52 字体、颜色、边框和间距继续复用原邀请区域；文案简化为“添加 中文 译文 — 点击开始翻译”。
+- v53 入口提示字号为 13px、行高 18.85px；入口高度约 47px，低于修改前约 61px。
+- v53 延续米白、纸张白和金色状态色；参考图2的结构层级而非复制其蓝色主题。
+- 页面图片继续使用原始 PDF 渲染资源，未引入重绘或占位素材。
 
 ## Findings
 
@@ -49,6 +57,7 @@
 - 本次 v48 修复未修改角色数据、角色顺序或翻译逻辑，只稳定译文编辑器头部排版。
 - v50 无 P0、P1、P2 问题。图片型 PDF 尚无逐字坐标时采用段落范围映射，属于预期约束。
 - v52 无 P0、P1、P2 问题；重复入口已消除，没有改变翻译编辑器和译文数据。
+- v53 无 P0、P1、P2 问题；左右栏内容密度和边界层级已统一。
 
 ## Comparison history
 
@@ -62,6 +71,8 @@
 8. v50 复测：左栏拖宽后缩略图宽高比不变；左右点击均产生对应高亮；控制台无错误或警告。
 9. v52 初检：同一未翻译段落存在两个功能相同的入口，构成重复操作和额外纵向空间。
 10. v52 修复及复测：隐藏第二个按钮并统一首个入口文案；点击只展开一个编辑器，收起后入口恢复；控制台无错误或警告。
+11. v53 初检：统一入口继承较大提示字号，左右栏背景、边界和内容容器层级不一致。
+12. v53 修复及复测：入口降为 13px；双面板、内容卡片和分隔线样式统一；拖动分隔线后左栏约 348px、右栏约 538px；入口仍正常展开编辑器。
 
 ## Primary interactions tested
 
@@ -75,5 +86,7 @@
 - 点击左侧原文范围：右侧对应 block 高亮并滚动到可见位置。
 - 点击统一译文入口：编辑器数量由 0 变为 1，不再显示第二个入口。
 - 点击编辑器“收起”：编辑器数量恢复为 0，统一译文入口重新显示。
+- 拖动左右栏分隔线：两栏宽度正常变化，没有破坏圆角、边框或内容滚动。
+- 点击 13px 的统一译文入口：编辑器正常展开。
 
 final result: passed
