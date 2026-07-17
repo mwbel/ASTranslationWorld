@@ -89,6 +89,171 @@ body.sidebar-resizing {
   user-select: none;
 }
 
+/* Local workspace patch: compact page navigator with thumbnail / outline views. */
+.sidebar__nav.sutra-page-nav-ready > .nav-item[data-sutra-original-page] {
+  display: none !important;
+}
+
+.sutra-page-browser {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  margin: 8px 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
+}
+
+.sutra-page-browser__tabs,
+.sutra-page-browser__pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sutra-page-browser__tabs button,
+.sutra-page-browser__pager button {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.sutra-page-browser__tabs button {
+  flex: 1;
+  font-size: 12px;
+}
+
+.sutra-page-browser__tabs button.active,
+.sutra-page-browser__pager button:hover:not(:disabled) {
+  color: #e1ba58;
+  border-color: rgba(225, 186, 88, 0.5);
+  background: rgba(225, 186, 88, 0.1);
+}
+
+.sutra-page-browser__pager button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.sutra-page-browser__pager input {
+  width: 48px;
+  height: 30px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  color: #f4f1e8;
+  background: rgba(0, 0, 0, 0.22);
+  text-align: center;
+  font: inherit;
+}
+
+.sutra-page-browser__total {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sutra-page-browser__body {
+  min-height: 0;
+  padding: 9px;
+  overflow: auto;
+}
+
+.sutra-page-thumb {
+  display: block;
+  width: 100%;
+  margin: 0 0 11px;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: rgba(255, 255, 255, 0.66);
+  background: transparent;
+  cursor: pointer;
+}
+
+.sutra-page-thumb:hover,
+.sutra-page-thumb.active {
+  border-color: rgba(225, 186, 88, 0.5);
+  background: rgba(225, 186, 88, 0.08);
+}
+
+.sutra-page-thumb img {
+  display: block;
+  width: 100%;
+  max-height: 156px;
+  object-fit: contain;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.28);
+}
+
+.sutra-page-thumb span {
+  display: block;
+  padding-top: 5px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.sutra-page-outline button {
+  display: block;
+  width: 100%;
+  margin-bottom: 3px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.68);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sutra-page-outline button:hover,
+.sutra-page-outline button.active {
+  color: #f1d58f;
+  background: rgba(225, 186, 88, 0.11);
+}
+
+/* Keep the source header calm: secondary actions live in a More menu. */
+.sutra-source-more {
+  position: relative;
+  margin-left: 2px;
+}
+
+.sutra-source-more__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 80;
+  display: none;
+  min-width: 138px;
+  padding: 6px;
+  border: 1px solid var(--border, #ded8c9);
+  border-radius: 8px;
+  background: var(--paper, #fffdf8);
+  box-shadow: 0 10px 28px rgba(47, 39, 24, 0.18);
+}
+
+.sutra-source-more.open .sutra-source-more__menu {
+  display: grid;
+  gap: 4px;
+}
+
+.sutra-source-more__menu > * {
+  width: 100% !important;
+  justify-content: flex-start !important;
+  margin: 0 !important;
+}
+
 /* Local workspace patch: keep fallback text source compact; PDF uses original page images. */
 .text-source-viewer__content {
   padding: 14px 18px 80px !important;
@@ -300,7 +465,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v38-cross-page-links/g' /usr/share/nginx/html/sw.js
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v39.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v39.css#g' /usr/share/nginx/html/index.html
+
+RUN sed -i 's/as-yilin-v1/as-yilin-v39-page-navigation/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -1999,6 +2167,171 @@ const __sutraInstallMissingSourceRecovery = () => {
 };
 __sutraInstallMissingSourceRecovery();
 
+const __sutraInstallCompactPageNavigation = () => {
+  if (window.__sutraCompactPageNavigationInstalled) return;
+  window.__sutraCompactPageNavigationInstalled = true;
+  let timer = 0;
+  const pageNumber = (button) => Number((button.textContent || "").trim().match(/^P(\d+)/)?.[1] || 0);
+  const pageButtons = (nav) => Array.from(nav.querySelectorAll(":scope > button.nav-item"))
+    .filter((button) => pageNumber(button) > 0)
+    .sort((a, b) => pageNumber(a) - pageNumber(b));
+
+  const bind = () => {
+    const nav = document.querySelector(".sidebar__nav");
+    if (!nav) return;
+    const buttons = pageButtons(nav);
+    if (!buttons.length) return;
+    buttons.forEach((button) => { button.dataset.sutraOriginalPage = String(pageNumber(button)); });
+    nav.classList.add("sutra-page-nav-ready");
+
+    let browser = nav.querySelector(".sutra-page-browser");
+    if (!browser) {
+      browser = document.createElement("section");
+      browser.className = "sutra-page-browser";
+      browser.innerHTML = `
+        <div class="sutra-page-browser__tabs">
+          <button type="button" data-view="thumbs" class="active" title="页面缩略图">▦ 缩略图</button>
+          <button type="button" data-view="outline" title="章节目录">☷ 目录</button>
+        </div>
+        <div class="sutra-page-browser__pager">
+          <button type="button" data-go="first" title="第一页">|‹</button>
+          <button type="button" data-go="prev" title="上一页">‹</button>
+          <input type="number" min="1" aria-label="当前页码">
+          <span class="sutra-page-browser__total"></span>
+          <button type="button" data-go="next" title="下一页">›</button>
+          <button type="button" data-go="last" title="最后一页">›|</button>
+        </div>
+        <div class="sutra-page-browser__body"></div>`;
+      const firstPage = buttons[0];
+      nav.insertBefore(browser, firstPage);
+    }
+
+    const input = browser.querySelector("input");
+    const total = buttons.length;
+    input.max = String(total);
+    browser.querySelector(".sutra-page-browser__total").textContent = `/ ${total}`;
+    const current = () => pageNumber(buttons.find((button) => button.classList.contains("active"))) || Math.max(1, Number(input.value) || 1);
+    const go = (number) => {
+      const safe = Math.max(1, Math.min(total, Number(number) || 1));
+      const target = buttons.find((button) => pageNumber(button) === safe);
+      if (target) target.click();
+    };
+    if (!browser.dataset.bound) {
+      browser.dataset.bound = "true";
+      browser.querySelectorAll("[data-go]").forEach((control) => control.addEventListener("click", () => {
+        const action = control.dataset.go;
+        go(action === "first" ? 1 : action === "last" ? total : current() + (action === "prev" ? -1 : 1));
+      }));
+      input.addEventListener("change", () => go(input.value));
+      input.addEventListener("keydown", (event) => { if (event.key === "Enter") go(input.value); });
+      browser.querySelectorAll("[data-view]").forEach((tab) => tab.addEventListener("click", () => {
+        browser.dataset.view = tab.dataset.view;
+        browser.querySelectorAll("[data-view]").forEach((item) => item.classList.toggle("active", item === tab));
+        render();
+      }));
+    }
+
+    const render = () => {
+      const active = current();
+      input.value = String(active);
+      browser.querySelector('[data-go="first"]').disabled = active <= 1;
+      browser.querySelector('[data-go="prev"]').disabled = active <= 1;
+      browser.querySelector('[data-go="next"]').disabled = active >= total;
+      browser.querySelector('[data-go="last"]').disabled = active >= total;
+      const body = browser.querySelector(".sutra-page-browser__body");
+      const view = browser.dataset.view || "thumbs";
+      body.replaceChildren();
+      if (view === "outline") {
+        const outline = document.createElement("div");
+        outline.className = "sutra-page-outline";
+        const step = total > 120 ? 20 : total > 40 ? 10 : 5;
+        for (let start = 1; start <= total; start += step) {
+          const end = Math.min(total, start + step - 1);
+          const item = document.createElement("button");
+          item.type = "button";
+          item.textContent = `P${start}–P${end}`;
+          item.classList.toggle("active", active >= start && active <= end);
+          item.onclick = () => go(start);
+          outline.appendChild(item);
+        }
+        body.appendChild(outline);
+        outline.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      const sourceImage = document.querySelector('.scan-image-container img[alt^="Page "]');
+      const source = sourceImage?.src || "";
+      const match = source.match(/^(.*\/page-)\d+(\.[a-z]+(?:\?.*)?)$/i);
+      const radius = 2;
+      for (let number = Math.max(1, active - radius); number <= Math.min(total, active + radius); number += 1) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = `sutra-page-thumb${number === active ? " active" : ""}`;
+        if (match) {
+          const image = document.createElement("img");
+          image.alt = `P${number} 缩略图`;
+          image.loading = "lazy";
+          image.src = `${match[1]}${String(number).padStart(3, "0")}${match[2]}`;
+          item.appendChild(image);
+        }
+        const label = document.createElement("span");
+        label.textContent = `P${number}`;
+        item.appendChild(label);
+        item.onclick = () => go(number);
+        body.appendChild(item);
+      }
+    };
+    render();
+  };
+
+  const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(bind, 100); };
+  new MutationObserver((mutations) => {
+    const relevant = mutations.some((mutation) => {
+      const parent = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+      return !parent?.closest(".sutra-page-browser");
+    });
+    if (relevant) schedule();
+  }).observe(document.body, { childList: true, subtree: true });
+  schedule();
+};
+__sutraInstallCompactPageNavigation();
+
+const __sutraInstallSourceMoreMenu = () => {
+  if (window.__sutraSourceMoreMenuInstalled) return;
+  window.__sutraSourceMoreMenuInstalled = true;
+  let timer = 0;
+  const bind = () => {
+    const header = document.querySelector(".source-panel .panel-header");
+    if (!header || header.querySelector(".sutra-source-more")) return;
+    const labels = ["编辑原文", "导入文本", "全部直读"];
+    const candidates = Array.from(header.querySelectorAll("button, label"));
+    const secondary = labels.map((label) => candidates.find((element) => (element.textContent || "").includes(label))).filter(Boolean);
+    if (!secondary.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "sutra-source-more";
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "btn btn--ghost btn--sm";
+    trigger.textContent = "更多 ▾";
+    trigger.setAttribute("aria-expanded", "false");
+    const menu = document.createElement("div");
+    menu.className = "sutra-source-more__menu";
+    secondary.forEach((element) => menu.appendChild(element));
+    wrap.append(trigger, menu);
+    header.appendChild(wrap);
+    trigger.onclick = (event) => {
+      event.stopPropagation();
+      const open = wrap.classList.toggle("open");
+      trigger.setAttribute("aria-expanded", String(open));
+    };
+    menu.onclick = () => wrap.classList.remove("open");
+    document.addEventListener("click", (event) => { if (!wrap.contains(event.target)) wrap.classList.remove("open"); });
+  };
+  const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(bind, 100); };
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+  schedule();
+};
+__sutraInstallSourceMoreMenu();
+
 const __sutraInstallCrossPageLinks = () => {
   if (window.__sutraCrossPageLinksInstalled) return;
   window.__sutraCrossPageLinksInstalled = true;
@@ -2187,5 +2520,6 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v35.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v36.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v37.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v38.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v38.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v39.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v39.js#g' /usr/share/nginx/html/index.html
 SHELL
