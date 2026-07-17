@@ -69,15 +69,16 @@ RUN set -eux; \
   position: absolute;
   top: 0;
   right: 0;
-  width: 2px;
+  width: 3px;
   height: 100%;
-  background: transparent;
-  transition: background 0.15s ease;
+  background: rgba(255, 255, 255, 0.1);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .sidebar__resize-handle:hover::after,
 body.sidebar-resizing .sidebar__resize-handle::after {
   background: var(--gold, #b8963e);
+  box-shadow: -2px 0 8px rgba(184, 150, 62, 0.32);
 }
 
 .sidebar.collapsed .sidebar__resize-handle {
@@ -282,11 +283,42 @@ body.sidebar-resizing {
 .sutra-page-thumb img {
   display: block;
   width: 100%;
-  max-height: 156px;
+  height: auto;
+  max-height: none;
   object-fit: contain;
   border-radius: 2px;
   background: #fff;
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.28);
+}
+
+.scan-image-container.sutra-source-sync-ready {
+  cursor: crosshair;
+}
+
+.sutra-source-sync-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 8;
+  pointer-events: auto;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.sutra-source-sync-overlay:hover,
+.sutra-source-sync-overlay.active {
+  border-color: rgba(184, 150, 62, 0.85);
+  background: rgba(225, 186, 88, 0.16);
+}
+
+.segment-card.sutra-source-sync-active {
+  outline: 2px solid rgba(184, 150, 62, 0.72);
+  outline-offset: -2px;
+}
+
+.segment-source-preview {
+  cursor: pointer;
 }
 
 .sutra-page-thumb span {
@@ -604,10 +636,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v48.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v48.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v50.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v50.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v48-stable-persona-header/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v50-resizable-browser-source-sync/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -2236,6 +2268,86 @@ const __sutraInstallSourceBlockSync = () => {
 };
 __sutraInstallSourceBlockSync();
 
+const __sutraInstallBidirectionalSourceSync = () => {
+  if (window.__sutraBidirectionalSourceSyncInstalled) return;
+  window.__sutraBidirectionalSourceSyncInstalled = true;
+  let timer = 0;
+
+  const previewText = (card) => String(card.querySelector(".segment-source-preview")?.textContent || "").trim();
+  const clearActive = () => {
+    document.querySelectorAll(".sutra-source-sync-overlay.active").forEach((item) => item.classList.remove("active"));
+    document.querySelectorAll(".segment-card.sutra-source-sync-active").forEach((item) => item.classList.remove("sutra-source-sync-active"));
+  };
+
+  const activate = (index, scrollTarget) => {
+    const cards = Array.from(document.querySelectorAll(".segments-list .segment-card"));
+    const overlays = Array.from(document.querySelectorAll(".scan-image-container .sutra-source-sync-overlay"));
+    const card = cards[index];
+    const overlay = overlays[index];
+    if (!card || !overlay) return;
+    clearActive();
+    card.classList.add("sutra-source-sync-active");
+    overlay.classList.add("active");
+    (scrollTarget === "source" ? overlay : card).scrollIntoView({ block: "center", behavior: "smooth" });
+  };
+
+  const bind = () => {
+    const container = document.querySelector(".scan-image-container");
+    const image = container?.querySelector('img[alt^="Page "]');
+    const cards = Array.from(document.querySelectorAll(".segments-list .segment-card"));
+    if (!container || !image || !cards.length) return false;
+    const signature = `${image.src}|${cards.map((card) => card.dataset.segmentId || previewText(card)).join("|")}`;
+    if (container.dataset.sutraSourceSyncSignature === signature) return true;
+    container.dataset.sutraSourceSyncSignature = signature;
+    container.classList.add("sutra-source-sync-ready");
+    container.querySelectorAll(".sutra-source-sync-overlay").forEach((item) => item.remove());
+
+    const weights = cards.map((card) => Math.max(1, Math.ceil(previewText(card).length / 32)));
+    const totalWeight = weights.reduce((sum, value) => sum + value, 0) || cards.length;
+    const topInset = 5;
+    const usableHeight = 90;
+    let offset = 0;
+    cards.forEach((card, index) => {
+      const overlay = document.createElement("button");
+      overlay.type = "button";
+      overlay.className = "sutra-source-sync-overlay";
+      overlay.title = `定位右栏第 ${index + 1} 段`;
+      overlay.setAttribute("aria-label", `定位右栏第 ${index + 1} 段`);
+      const height = usableHeight * weights[index] / totalWeight;
+      overlay.style.top = `${topInset + offset}%`;
+      overlay.style.height = `${height}%`;
+      overlay.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        activate(index, "target");
+      });
+      container.appendChild(overlay);
+      offset += height;
+
+      const sourcePreview = card.querySelector(".segment-source-preview");
+      if (sourcePreview && !sourcePreview.dataset.sutraSourceSyncBound) {
+        sourcePreview.dataset.sutraSourceSyncBound = "true";
+        sourcePreview.title = "点击同步定位左侧原文";
+        sourcePreview.addEventListener("click", () => activate(index, "source"));
+      }
+    });
+    return true;
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(bind, 120);
+  };
+  window.__sutraBindBidirectionalSourceSync = bind;
+  new MutationObserver((mutations) => {
+    if (mutations.some((mutation) => !mutation.target.parentElement?.closest?.(".sutra-source-sync-overlay"))) schedule();
+  }).observe(document.body, { childList: true, subtree: true });
+  window.addEventListener("resize", schedule);
+  schedule();
+  window.setTimeout(schedule, 700);
+};
+__sutraInstallBidirectionalSourceSync();
+
 const __sutraInstallMissingSourceRecovery = () => {
   if (window.__sutraLocalMissingSourceRecoveryInstalled) return;
   window.__sutraLocalMissingSourceRecoveryInstalled = true;
@@ -2514,6 +2626,7 @@ const __sutraInstallCompactPageNavigation = () => {
       }
     };
     render();
+    window.__sutraBindBidirectionalSourceSync?.();
   };
 
   const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(bind, 100); };
@@ -2775,5 +2888,7 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v45.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v46.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v47.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v48.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v48.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v49.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v50.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v50.js#g' /usr/share/nginx/html/index.html
 SHELL
