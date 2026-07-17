@@ -124,6 +124,18 @@ body.sidebar-resizing {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border-light, #ebe6da);
   background: rgba(250, 248, 242, 0.72);
+  white-space: nowrap;
+}
+
+.source-panel.sutra-source-one-line > .panel-header {
+  display: none !important;
+}
+
+.sutra-page-pager-row__title {
+  margin-right: 6px;
+  color: var(--ink, #403d37);
+  font-family: var(--font-serif-cn, serif);
+  font-size: 14px;
 }
 
 .source-panel .sutra-page-browser__pager--source {
@@ -297,6 +309,20 @@ body.sidebar-resizing {
   width: 100% !important;
   justify-content: flex-start !important;
   margin: 0 !important;
+}
+
+.sutra-source-more__menu .scan-viewer__toolbar.sutra-scan-toolbar-in-menu {
+  display: grid !important;
+  width: 100%;
+  gap: 4px;
+  padding: 4px 0 0 !important;
+  border-top: 1px solid var(--border-light, #ebe6da);
+  background: transparent !important;
+}
+
+.sutra-source-more__menu .scan-viewer__toolbar.sutra-scan-toolbar-in-menu > * {
+  width: 100%;
+  justify-content: flex-start;
 }
 
 .source-panel .panel-header [data-sutra-toolbar-secondary="true"] {
@@ -519,10 +545,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v45.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v45.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v46.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v46.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v45-calm-navigation/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v46-source-one-line/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -2272,6 +2298,13 @@ const __sutraInstallCompactPageNavigation = () => {
     }
     pager.classList.add("sutra-page-browser__pager--source");
     if (pager.parentElement !== pagerRow) pagerRow.appendChild(pager);
+    sourcePanel.classList.add("sutra-source-one-line");
+    if (!pagerRow.querySelector(".sutra-page-pager-row__title")) {
+      const title = document.createElement("span");
+      title.className = "sutra-page-pager-row__title";
+      title.textContent = "原典";
+      pagerRow.prepend(title);
+    }
     if (!pagerRow.querySelector(".sutra-source-more")) {
       const labels = ["编辑原文", "导入文本", "全部直读"];
       const candidates = Array.from(sourcePanel.querySelectorAll(".panel-header button"));
@@ -2305,6 +2338,30 @@ const __sutraInstallCompactPageNavigation = () => {
           trigger.setAttribute("aria-expanded", String(open));
         };
         menu.onclick = () => wrap.classList.remove("open");
+      }
+    }
+    const compactMenu = pagerRow.querySelector(".sutra-source-more__menu");
+    if (compactMenu && !compactMenu.dataset.sutraAllSourceTools) {
+      compactMenu.dataset.sutraAllSourceTools = "true";
+      const prependDelegate = (label, source) => {
+        if (!source) return;
+        source.dataset.sutraToolbarSecondary = "true";
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "btn btn--ghost btn--sm";
+        item.textContent = label;
+        item.onclick = () => source.click();
+        compactMenu.prepend(item);
+      };
+      const header = sourcePanel.querySelector(".panel-header");
+      const upload = header?.querySelector('label[title*="上传到当前章节"]');
+      const reread = Array.from(header?.querySelectorAll("button") || []).find((button) => (button.textContent || "").includes("重新直读"));
+      prependDelegate("上传文件", upload);
+      prependDelegate("重新直读", reread);
+      const scanToolbar = sourcePanel.querySelector(".scan-viewer__toolbar");
+      if (scanToolbar) {
+        scanToolbar.classList.add("sutra-scan-toolbar-in-menu");
+        compactMenu.appendChild(scanToolbar);
       }
     }
     const input = pager.querySelector("input");
@@ -2640,5 +2697,6 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v42.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v43.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v44.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v45.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v45.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v46.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v46.js#g' /usr/share/nginx/html/index.html
 SHELL
