@@ -1,4 +1,4 @@
-# AS译林本地副本 v55 设计验收
+# AS译林本地副本 v56 设计验收
 
 - source visual truth paths:
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_P4qw0O/截屏2026-07-17 11.10.36.png`
@@ -25,8 +25,15 @@
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_ngfGLW/截屏2026-07-17 17.51.15.png`
   - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_zlMgMV/截屏2026-07-17 17.51.25.png`
 - v55 implementation screenshot path: `/Users/Min369/Documents/同步空间/Manju/AIProjects/洞见/design-qa-implementation-v55.png`
+- v56 source visual truth paths:
+  - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_i8vsUk/截屏2026-07-17 18.03.38.png`
+  - `/Users/Min369/Desktop/截屏2026-07-17 18.03.30.png`
+  - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/TemporaryItems/NSIRD_screencaptureui_HAI7l0/截屏2026-07-17 18.04.14.png`
+  - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/codex-clipboard-78eccfcb-a1e7-43d2-b602-c985d9b56f18.png`
+  - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/codex-clipboard-26a3ecd3-b643-4245-b49b-ff8db5d3b94c.png`
+  - `/var/folders/yp/ndk322vn0x98q2hcpwf3b9fm0000gp/T/codex-clipboard-19c1e94a-bc0f-4318-8d1e-d16add0d968e.png`
 - viewport: 1280 × 720
-- state: 工作台，P5，缩略图视图，页码导航并入顶部项目行
+- state: 工作台，P13，窄视口 900 × 720，页码导航固定在左侧原文栏顶部
 
 ## Full-view comparison evidence
 
@@ -40,6 +47,8 @@
 - v53 将工作台整理为两个边界明确的独立面板；原始页面和译文 block 分别位于白色内容卡片中。
 - v54 移除覆盖大段原文的蓝色同步焦点框，只显示浅金色同步底色和左侧细标记。
 - v55 使用 PDF 文本层真实坐标替代文字长度估算，P13 的 7 个 block 分别映射到 7 个实际文字区域。
+- v56 将页码导航从全局 breadcrumb 工具栏移回左侧原文栏顶部，浏览器宽度变化时不再挤占语言、通知和角色管理按钮。
+- v56 将通知面板限制在视口内，窄视口下 `.notif-panel` 右边界为 659，小于 900px 视口宽度。
 
 ## Focused region comparison evidence
 
@@ -59,6 +68,7 @@
 - 页面图片继续使用原始 PDF 渲染资源，未引入重绘或占位素材。
 - v54 不改变字体、正文排版、页面图片或文案内容，仅降低同步状态的边框和颜色强度。
 - v55 不改变字体、颜色、图片质量和文案；仅将高亮框的几何位置收敛到匹配到的 PDF 文字行。
+- v56 不改变 PDF 图像、译文数据、分页数据或按钮功能；仅调整页码导航的 DOM 宿主和通知弹层边界。
 
 ## Findings
 
@@ -70,6 +80,7 @@
 - v53 无 P0、P1、P2 问题；左右栏内容密度和边界层级已统一。
 - v54 无 P0、P1、P2 问题；大尺寸蓝色焦点框已经消除。
 - v55 无 P0、P1、P2 问题；第二段和第五段均落在正确文字范围。无文本层页面不会显示估算框。
+- v56 无 P0、P1、P2 问题；console 中没有 v56 新增 error/warning，仅保留服务重启前旧 v55 自动登录 warning。
 
 ## Comparison history
 
@@ -89,6 +100,8 @@
 14. v54 修复及复测：outline 和整段边框均为 none；同步状态使用 5.5% 透明度金色底色及 3px 内侧标记；左右点击仍正常。
 15. v55 初检：旧算法按段落文字长度分配页面高度，无法识别真实段落起止位置，导致高亮落到相邻段落。
 16. v55 修复及复测：PDF.js 返回文本项真实坐标；P13 生成 7 个独立区域；第二段位于页面约 38% 高度，第五段位于约 67% 高度且仅覆盖对应两行；反向点击返回右栏第 5 个 block。
+17. v56 初检：页码导航被移动到 `.breadcrumb-bar`，在窄视口与全局工具按钮争宽度；通知面板跟随顶部按钮展开，可能越出主屏幕。
+18. v56 修复及复测：页码导航父节点为 `.source-panel.sutra-source-one-line`；宽屏和 900px 窄视口均落在 source panel 内；通知面板在 900px 视口内完整显示。
 
 ## Primary interactions tested
 
@@ -109,5 +122,7 @@
 - P13 点击右栏第二段：左侧激活索引 1 的真实文字区域。
 - P13 点击右栏第五段：左侧激活索引 4，区域高度约占页面 6%。
 - 点击左侧第五段区域：右侧激活第 5 个 block。
+- 窄视口 900 × 720：页码导航父节点为 source-panel，左右边界 375–574，位于原文栏 374–575 内。
+- 点击通知按钮：`.notif-panel` 显示“通知 / 暂无通知”，左右边界 339–659，未超出 900px 视口。
 
 final result: passed

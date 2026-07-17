@@ -122,47 +122,16 @@ body.sidebar-resizing {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 7;
+  width: 100%;
+  box-sizing: border-box;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border-light, #ebe6da);
   background: rgba(250, 248, 242, 0.72);
   white-space: nowrap;
-}
-
-.breadcrumb-bar .sutra-page-pager-row {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 5px;
-  margin: 0 8px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  white-space: nowrap;
-}
-
-.breadcrumb-bar .sutra-page-pager-row__title {
-  display: none;
-}
-
-.breadcrumb-bar .sutra-page-browser__pager--source {
-  padding: 0;
-  border: 0;
-}
-
-.breadcrumb-bar .sutra-page-browser__pager--source button {
-  color: #5d5a52;
-  border-color: #d8dde3;
-  background: #f2f5f7;
-}
-
-.breadcrumb-bar .sutra-page-browser__pager--source input {
-  color: #403d37;
-  border-color: #d8dde3;
-  background: #fff;
-}
-
-.breadcrumb-bar .sutra-page-browser__pager--source .sutra-page-browser__total {
-  color: #77736a;
+  overflow: hidden;
 }
 
 .sidebar__nav [data-sutra-unchaptered="true"] {
@@ -183,6 +152,9 @@ body.sidebar-resizing {
 .source-panel .sutra-page-browser__pager--source {
   padding: 0;
   border: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .source-panel .sutra-page-browser__pager--source button {
@@ -198,13 +170,28 @@ body.sidebar-resizing {
 }
 
 .source-panel .sutra-page-browser__pager--source input {
+  width: 54px;
+  min-width: 44px;
+  max-width: 20%;
   color: #403d37;
   border-color: #d8dde3;
   background: #fff;
 }
 
 .source-panel .sutra-page-browser__pager--source .sutra-page-browser__total {
+  flex: 0 1 auto;
+  min-width: 0;
   color: #77736a;
+}
+
+.notif-panel,
+.sutra-notification-popover {
+  box-sizing: border-box !important;
+  max-width: min(360px, calc(100vw - 24px)) !important;
+  max-height: min(420px, calc(100vh - 96px)) !important;
+  overflow: auto !important;
+  right: 12px !important;
+  left: auto !important;
 }
 
 .sutra-page-browser__tabs button,
@@ -662,10 +649,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v55.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v55.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v56.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v56.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v55-pdf-text-coordinate-sync/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v56-source-pager-notification-bounds/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -2701,9 +2688,8 @@ const __sutraInstallCompactPageNavigation = () => {
       title.textContent = "原典";
       pagerRow.prepend(title);
     }
+    if (pagerRow.parentElement !== sourcePanel) sourcePanel.insertBefore(pagerRow, scanViewer);
     const breadcrumbBar = document.querySelector(".breadcrumb-bar");
-    const chainIndicator = breadcrumbBar?.querySelector(".chain-indicator");
-    if (breadcrumbBar && pagerRow.parentElement !== breadcrumbBar) breadcrumbBar.insertBefore(pagerRow, chainIndicator || null);
     const breadcrumb = breadcrumbBar?.querySelector(".breadcrumb");
     if (breadcrumb) {
       const parts = Array.from(breadcrumb.children);
@@ -2865,6 +2851,43 @@ const __sutraInstallCompactPageNavigation = () => {
   schedule();
 };
 __sutraInstallCompactPageNavigation();
+
+const __sutraInstallNotificationBounds = () => {
+  if (window.__sutraNotificationBoundsInstalled) return;
+  window.__sutraNotificationBoundsInstalled = true;
+  const mark = () => {
+    const buttons = Array.from(document.querySelectorAll("button, [role='button']"));
+    const trigger = buttons.find((element) => /通知|🔔/.test(`${element.getAttribute("aria-label") || ""} ${element.getAttribute("title") || ""} ${element.textContent || ""}`));
+    if (!trigger) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const directPanels = Array.from(document.querySelectorAll(".notif-panel"));
+    const fallbackPanels = Array.from(document.body.children).filter((element) => {
+      if (element.contains(trigger) || element.matches("script, style")) return false;
+      const rect = element.getBoundingClientRect();
+      const text = element.textContent || "";
+      const nearTrigger = rect.top >= triggerRect.bottom - 12 && rect.left <= window.innerWidth && rect.right >= triggerRect.left - 8;
+      return nearTrigger && (text.includes("暂无通知") || text.includes("通知"));
+    });
+    const candidates = [...new Set([...directPanels, ...fallbackPanels])];
+    candidates.forEach((element) => {
+      element.classList.add("sutra-notification-popover");
+      element.style.maxWidth = "min(360px, calc(100vw - 24px))";
+      element.style.maxHeight = "min(420px, calc(100vh - 96px))";
+      element.style.overflow = "auto";
+      const rect = element.getBoundingClientRect();
+      if (rect.right > window.innerWidth - 12 || rect.left < 12) {
+        element.style.left = "auto";
+        element.style.right = "12px";
+        element.style.transform = "none";
+      }
+    });
+  };
+  const schedule = () => window.requestAnimationFrame(mark);
+  document.addEventListener("click", schedule, true);
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+  schedule();
+};
+__sutraInstallNotificationBounds();
 
 const __sutraInstallSourceMoreMenu = () => {
   if (window.__sutraSourceMoreMenuInstalled) return;
@@ -3119,6 +3142,6 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v51.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v52.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v53.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v54.js
-cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v55.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v55.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v56.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v56.js#g' /usr/share/nginx/html/index.html
 SHELL
