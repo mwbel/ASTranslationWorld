@@ -3,6 +3,11 @@ FROM sutra-web:20260611-2159-server-runtime-amd64
 RUN sed -i '/upstream sutra_backend {/i upstream cross_page_backend { server cross-page-service:5556; keepalive 8; }' /etc/nginx/conf.d/default.conf \
  && sed -i '/location \^~ \/api\//i\    location ^~ /api/local-cross-page/ {\n        proxy_pass http://cross_page_backend/;\n        proxy_http_version 1.1;\n        proxy_set_header Authorization $http_authorization;\n        proxy_buffering off;\n        proxy_read_timeout 1h;\n    }\n' /etc/nginx/conf.d/default.conf
 
+RUN sed -i 's/limit_req_zone  $binary_remote_addr zone=sutra_global:10m rate=20r\/s;/limit_req_zone  $binary_remote_addr zone=sutra_global:10m rate=200r\/s;/' /etc/nginx/conf.d/default.conf \
+ && sed -i 's/limit_req_zone  $binary_remote_addr zone=sutra_api:10m    rate=10r\/s;/limit_req_zone  $binary_remote_addr zone=sutra_api:10m    rate=200r\/s;/' /etc/nginx/conf.d/default.conf \
+ && sed -i 's/limit_req zone=sutra_global burst=80 nodelay;/limit_req zone=sutra_global burst=2000 nodelay;/' /etc/nginx/conf.d/default.conf \
+ && sed -i 's/limit_req zone=sutra_api burst=40 nodelay;/limit_req zone=sutra_api burst=2000 nodelay;/' /etc/nginx/conf.d/default.conf
+
 COPY login-fractal.png /usr/share/nginx/html/login-fractal.png
 COPY pdfjs/ /usr/share/nginx/html/pdfjs/
 
@@ -51,14 +56,15 @@ RUN set -eux; \
 /* Local workspace patch: make the left navigation sidebar resizable. */
 .sidebar {
   position: relative;
+  overflow: visible !important;
 }
 
 .sidebar__resize-handle {
   position: absolute;
   top: 0;
-  right: 0;
-  z-index: 30;
-  width: 8px;
+  right: -10px;
+  z-index: 320;
+  width: 28px;
   height: 100%;
   cursor: col-resize;
   touch-action: none;
@@ -68,8 +74,9 @@ RUN set -eux; \
   content: "";
   position: absolute;
   top: 0;
-  right: 0;
-  width: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
   height: 100%;
   background: rgba(255, 255, 255, 0.1);
   transition: background 0.15s ease, box-shadow 0.15s ease;
@@ -143,10 +150,7 @@ body.sidebar-resizing {
 }
 
 .sutra-page-pager-row__title {
-  margin-right: 6px;
-  color: var(--ink, #403d37);
-  font-family: var(--font-serif-cn, serif);
-  font-size: 14px;
+  display: none !important;
 }
 
 .source-panel .sutra-page-browser__pager--source {
@@ -415,6 +419,11 @@ body.sidebar-resizing {
   display: none !important;
 }
 
+.source-panel .panel-header .panel-title > span:not(.icon),
+.source-panel .panel-header .panel-title > .reocr-btn {
+  display: none !important;
+}
+
 /* The detailed bilingual pipeline is already visible in the workbench. */
 .status-bar__progress {
   display: none !important;
@@ -551,6 +560,47 @@ body.sutra-same-source-target .segment-card__header {
   margin-bottom: 4px !important;
 }
 
+.sutra-target-lang-dropdown {
+  display: inline-flex !important;
+  align-items: center !important;
+  flex-shrink: 0 !important;
+}
+
+.chain-indicator .chain-tag.sutra-target-lang-display-hidden {
+  display: none !important;
+}
+
+.sutra-target-lang-select {
+  min-height: 28px !important;
+  padding: 4px 28px 4px 10px !important;
+  border: 1px solid #d9d5cc !important;
+  border-radius: 4px !important;
+  background: #f0efe9 !important;
+  color: #546b8b !important;
+  font-size: 13px !important;
+  line-height: 1.2 !important;
+  appearance: auto !important;
+}
+
+.sutra-target-lang-select:focus {
+  outline: 1px solid rgba(83, 121, 170, 0.45) !important;
+  outline-offset: 0 !important;
+}
+
+.workbench .translation-panel .lang-tabs {
+  min-height: 40px !important;
+}
+
+.workbench .translation-panel .lang-tabs .lang-tab,
+.workbench .translation-panel .lang-tabs .lang-dot {
+  display: none !important;
+}
+
+.workbench .translation-panel .lang-tabs .persona-chip.sutra-target-persona-hidden,
+.translation-editor .persona-chip.sutra-target-persona-hidden {
+  display: none !important;
+}
+
 .translation-editor .editor-header {
   display: grid !important;
   grid-template-columns: 64px minmax(0, 1fr) auto !important;
@@ -649,10 +699,10 @@ body.sutra-same-source-target .segment-card__header {
 }
 CSS
 
-RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v56.css \
- && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v56.css#g' /usr/share/nginx/html/index.html
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v80.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v80.css#g' /usr/share/nginx/html/index.html
 
-RUN sed -i 's/as-yilin-v1/as-yilin-v56-source-pager-notification-bounds/g' /usr/share/nginx/html/sw.js
+RUN sed -i 's/as-yilin-v1/as-yilin-v80-source-header-css-simplify/g' /usr/share/nginx/html/sw.js
 
 RUN <<'SHELL'
 set -eux
@@ -991,58 +1041,276 @@ const __sutraInstallSameSourceTargetGuard = () => {
 };
 __sutraInstallSameSourceTargetGuard();
 
-const __sutraInstallAutoEnglishTarget = () => {
-  if (window.__sutraLocalAutoEnglishTargetInstalled) return;
-  window.__sutraLocalAutoEnglishTargetInstalled = true;
+window.__sutraApplyRightPanelTargetLanguage = (desiredValue) => {
+  const normalizeText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const labelToValue = (label) => {
+    const text = normalizeText(label);
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return text.toLowerCase() || "unknown";
+  };
+  const setHidden = (element, hidden) => {
+    if (!(element instanceof HTMLElement)) return;
+    element.classList.toggle("sutra-target-persona-hidden", Boolean(hidden));
+  };
+  const englishRoleNameAllowlist = new Set(["全部", "学术直译", "一行禅师", "通俗当代版", "钦哲仁波切"]);
+  // 中文译者不属于英文目标语言：英文译文栏不要显示这些角色。
+  const chineseTranslatorNames = new Set(["鸠摩罗什", "唐玄奘", "宣化上人"]);
+  const roleAllowedForTarget = (name, target) => {
+    if (!name) return false;
+    if (target === "en") return englishRoleNameAllowlist.has(name) && !chineseTranslatorNames.has(name);
+    return true;
+  };
+  const dedupeVisibleRoleButtons = (buttons, target) => {
+    const keepers = new Map();
+    buttons.forEach((button) => {
+      const name = normalizeText(button.textContent);
+      const currentlyHidden = button.classList.contains("sutra-target-persona-hidden");
+      const allowed = roleAllowedForTarget(name, target);
+      if (!name || currentlyHidden || !allowed) return;
+      // Keep the later duplicate so same-name custom personas override builtins.
+      keepers.set(name, button);
+    });
+    let firstVisible = null;
+    buttons.forEach((button) => {
+      const name = normalizeText(button.textContent);
+      const currentlyHidden = button.classList.contains("sutra-target-persona-hidden");
+      const allowed = roleAllowedForTarget(name, target);
+      const keeper = keepers.get(name);
+      const hidden = currentlyHidden || !allowed || Boolean(keeper && keeper !== button);
+      setHidden(button, hidden);
+      if (!hidden && !firstVisible) firstVisible = button;
+    });
+    const active = buttons.find((button) => button.classList.contains("active"));
+    if (active && active.classList.contains("sutra-target-persona-hidden") && firstVisible) {
+      firstVisible.click();
+    }
+  };
+  document.querySelectorAll(".translation-panel .lang-tabs").forEach((tabs) => {
+    if (!(tabs instanceof HTMLElement)) return;
+    const languageButtons = Array.from(tabs.children)
+      .filter((element) => element instanceof HTMLElement && element.classList.contains("lang-tab"));
+    if (languageButtons.length <= 1) return;
 
+    const active = languageButtons.find((button) => button.classList.contains("active") || button.getAttribute("aria-selected") === "true");
+    const desiredButton = languageButtons.find((button) => labelToValue(button.textContent) === desiredValue) || active || languageButtons[0];
+    const desiredIndex = Math.max(0, languageButtons.indexOf(desiredButton));
+    if (desiredButton && desiredButton !== active) desiredButton.click();
+
+    const personaButtons = Array.from(tabs.querySelectorAll(".persona-chip"))
+      .filter((button) => button instanceof HTMLElement);
+    const globalButtons = personaButtons.filter((button) => normalizeText(button.textContent) === "全部");
+    const roleButtons = personaButtons.filter((button) => normalizeText(button.textContent) !== "全部");
+    const groupSize = languageButtons.length > 0 ? Math.ceil(roleButtons.length / languageButtons.length) : roleButtons.length;
+    const start = desiredIndex * groupSize;
+    const end = start + groupSize;
+
+    globalButtons.forEach((button) => setHidden(button, false));
+    roleButtons.forEach((button, index) => {
+      const name = normalizeText(button.textContent);
+      const outsideTargetGroup = !(index >= start && index < end);
+      const disallowedForTarget = !roleAllowedForTarget(name, desiredValue);
+      setHidden(button, outsideTargetGroup || disallowedForTarget);
+    });
+    dedupeVisibleRoleButtons(roleButtons, desiredValue);
+  });
+  document.querySelectorAll(".translation-editor .persona-selector").forEach((container) => {
+    const buttons = Array.from(container.querySelectorAll(".persona-chip"))
+      .filter((button) => button instanceof HTMLElement);
+    dedupeVisibleRoleButtons(buttons, desiredValue);
+  });
+};
+
+const __sutraInstallTargetLanguageDropdown = () => {
+  if (window.__sutraTargetLanguageDropdownInstalled) return;
+  window.__sutraTargetLanguageDropdownInstalled = true;
+
+  const storageKey = "sutra_target_lang_preference";
   let timer = 0;
-  let lastSwitchKey = "";
 
-  const countMatches = (text, pattern) => (String(text || "").match(pattern) || []).length;
+  const normalizeText = (value) => String(value || "").replace(/\s+/g, " ").trim();
 
-  const currentSourceSample = () => Array.from(document.querySelectorAll(
-    ".text-source-viewer__text, .source-token"
-  ))
-    .slice(0, 120)
-    .map((node) => node.textContent || "")
-    .join("")
-    .slice(0, 1200);
-
-  const shouldPreferEnglish = () => {
-    const sample = currentSourceSample();
-    if (!sample) return false;
-    const zhCount = countMatches(sample, /[\u3400-\u9fff]/g);
-    const boCount = countMatches(sample, /[\u0f00-\u0fff]/g);
-    return zhCount >= Math.max(16, boCount * 2);
+  const labelToValue = (label) => {
+    const text = normalizeText(label);
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return text.toLowerCase() || "unknown";
   };
 
-  const maybeSwitch = () => {
-    timer = 0;
-    const activeTab = document.querySelector(".lang-tab.active");
-    if (!activeTab || !activeTab.textContent.includes("中文")) return;
-    const englishTab = Array.from(document.querySelectorAll(".lang-tab"))
-      .find((tab) => tab.textContent.includes("English"));
-    if (!englishTab || !shouldPreferEnglish()) return;
+  const collectTargetButtons = () => Array.from(document.querySelectorAll(".translation-panel .lang-tabs .lang-tab"))
+    .filter((button) => normalizeText(button.textContent));
 
-    const key = `${location.pathname}|${currentSourceSample().slice(0, 160)}`;
-    if (key === lastSwitchKey) return;
-    lastSwitchKey = key;
-    englishTab.click();
-    console.info("AS译林本地补丁：检测到中文源文，自动切到 English 译文栏");
+  const currentValueFromButtons = (buttons) => {
+    const active = buttons.find((button) => button.classList.contains("active") || button.getAttribute("aria-selected") === "true");
+    return active ? labelToValue(active.textContent) : "";
+  };
+
+  const ensureSelect = (chainContainer, targetDisplay) => {
+    let wrapper = chainContainer.querySelector(".sutra-target-lang-dropdown");
+    if (!wrapper) {
+      wrapper = document.createElement("div");
+      wrapper.className = "sutra-target-lang-dropdown";
+      const select = document.createElement("select");
+      select.className = "sutra-target-lang-select";
+      select.setAttribute("aria-label", "目标语言");
+      select.addEventListener("change", () => {
+        const buttons = collectTargetButtons();
+        const match = buttons.find((button) => labelToValue(button.textContent) === select.value);
+        if (!match) return;
+        localStorage.setItem(storageKey, select.value);
+        if (!(match.classList.contains("active") || match.getAttribute("aria-selected") === "true")) {
+          match.click();
+        }
+      });
+      wrapper.appendChild(select);
+      chainContainer.insertBefore(wrapper, targetDisplay || null);
+    }
+    return wrapper.querySelector("select");
+  };
+
+  const sync = () => {
+    timer = 0;
+    const chainContainer = document.querySelector(".chain-indicator");
+    if (!(chainContainer instanceof HTMLElement)) return;
+    const targetDisplay = Array.from(chainContainer.querySelectorAll(".chain-tag"))
+      .find((element) => !(element instanceof HTMLSelectElement) && normalizeText(element.textContent) && !element.closest(".sutra-target-lang-dropdown"));
+    if (!(targetDisplay instanceof HTMLElement)) return;
+    const buttons = collectTargetButtons();
+    if (!buttons.length) return;
+
+    const select = ensureSelect(chainContainer, targetDisplay);
+    const options = buttons.map((button) => ({
+      value: labelToValue(button.textContent),
+      label: normalizeText(button.textContent),
+    }));
+    const signature = JSON.stringify(options);
+    if (select.dataset.signature !== signature) {
+      select.innerHTML = "";
+      options.forEach((option) => {
+        const el = document.createElement("option");
+        el.value = option.value;
+        el.textContent = option.label;
+        select.appendChild(el);
+      });
+      select.dataset.signature = signature;
+    }
+
+    const activeValue = currentValueFromButtons(buttons);
+    const storedValue = localStorage.getItem(storageKey) || "";
+    const preferredValue = options.some((option) => option.value === storedValue) ? storedValue : activeValue;
+
+    if (preferredValue && select.value !== preferredValue) {
+      select.value = preferredValue;
+    }
+    if (preferredValue && preferredValue !== activeValue) {
+      const match = buttons.find((button) => labelToValue(button.textContent) === preferredValue);
+      if (match && !(match.classList.contains("active") || match.getAttribute("aria-selected") === "true")) {
+        match.click();
+        return;
+      }
+    }
+
+    if (activeValue) {
+      localStorage.setItem(storageKey, activeValue);
+    }
+    const activeButton = buttons.find((button) => labelToValue(button.textContent) === (select.value || activeValue));
+    targetDisplay.textContent = activeButton ? normalizeText(activeButton.textContent) : targetDisplay.textContent;
+    targetDisplay.className = `chain-tag chain-tag--${select.value || activeValue || "en"} sutra-target-lang-display-hidden`;
+    window.__sutraApplyRightPanelTargetLanguage(select.value || activeValue || preferredValue);
   };
 
   const schedule = () => {
     window.clearTimeout(timer);
-    timer = window.setTimeout(maybeSwitch, 180);
+    timer = window.setTimeout(sync, 100);
   };
 
   const observer = new MutationObserver(schedule);
-  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
   window.addEventListener("sutra:file-router:direct-text", schedule);
   window.addEventListener("focus", schedule);
-  [600, 1500, 3500, 7000].forEach((delay) => window.setTimeout(schedule, delay));
+  schedule();
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(schedule, delay));
 };
-__sutraInstallAutoEnglishTarget();
+__sutraInstallTargetLanguageDropdown();
+
+const __sutraInstallRightPanelTargetLanguageGuard = () => {
+  if (window.__sutraRightPanelTargetLanguageGuardInstalled) return;
+  window.__sutraRightPanelTargetLanguageGuardInstalled = true;
+
+  let timer = 0;
+
+  const normalizeText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+
+  const labelToValue = (label) => {
+    const text = normalizeText(label);
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return text.toLowerCase() || "unknown";
+  };
+
+  const topTargetValue = () => {
+    const select = document.querySelector(".chain-indicator .sutra-target-lang-select");
+    if (select instanceof HTMLSelectElement && select.value) return select.value;
+    const display = document.querySelector(".chain-indicator .chain-tag.sutra-target-lang-display-hidden");
+    return display ? labelToValue(display.textContent) : "";
+  };
+
+  const setHidden = (element, hidden) => {
+    if (!(element instanceof HTMLElement)) return;
+    element.classList.toggle("sutra-target-persona-hidden", Boolean(hidden));
+  };
+
+  const syncOneTabs = (tabs) => {
+    if (!(tabs instanceof HTMLElement)) return;
+    const languageButtons = Array.from(tabs.querySelectorAll(":scope > .lang-tab"))
+      .filter((button) => button instanceof HTMLElement);
+    if (languageButtons.length <= 1) return;
+
+    const desired = topTargetValue();
+    const active = languageButtons.find((button) => button.classList.contains("active") || button.getAttribute("aria-selected") === "true");
+    const desiredButton = languageButtons.find((button) => labelToValue(button.textContent) === desired) || active || languageButtons[0];
+    const desiredIndex = Math.max(0, languageButtons.indexOf(desiredButton));
+
+    if (desiredButton && desiredButton !== active) {
+      desiredButton.click();
+    }
+
+    const personaButtons = Array.from(tabs.querySelectorAll(".persona-chip"))
+      .filter((button) => button instanceof HTMLElement);
+    const globalButtons = personaButtons.filter((button) => normalizeText(button.textContent) === "全部");
+    const roleButtons = personaButtons.filter((button) => normalizeText(button.textContent) !== "全部");
+    const groupSize = languageButtons.length > 0 ? Math.ceil(roleButtons.length / languageButtons.length) : roleButtons.length;
+    const start = desiredIndex * groupSize;
+    const end = start + groupSize;
+
+    globalButtons.forEach((button) => setHidden(button, false));
+    roleButtons.forEach((button, index) => setHidden(button, !(index >= start && index < end)));
+  };
+
+  const refresh = () => {
+    timer = 0;
+    window.__sutraApplyRightPanelTargetLanguage?.(topTargetValue());
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 120);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+  window.addEventListener("focus", schedule);
+  window.addEventListener("sutra:file-router:direct-text", schedule);
+  schedule();
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraInstallRightPanelTargetLanguageGuard();
 
 const __sutraInstallFileRouter = () => {
   if (window.__sutraLocalFileRouterInstalled) return;
@@ -1053,6 +1321,74 @@ const __sutraInstallFileRouter = () => {
   const PDFJS_WORKER_URL = "/pdfjs/pdf.worker.min.js";
   const MIN_EXTRACTED_CHARS = 40;
   const MIN_PAGE_EXTRACTED_CHARS = 2;
+  const targetDropdownStorageKey = "sutra_target_lang_preference";
+
+  const normalizeTargetText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const targetLabelToValue = (label) => {
+    const text = normalizeTargetText(label);
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return text.toLowerCase() || "unknown";
+  };
+  const syncTopTargetDropdown = () => {
+    const chainContainer = document.querySelector(".chain-indicator");
+    if (!(chainContainer instanceof HTMLElement)) return;
+    const targetDisplay = Array.from(chainContainer.querySelectorAll(".chain-tag"))
+      .find((element) => !(element instanceof HTMLSelectElement) && normalizeTargetText(element.textContent));
+    if (!(targetDisplay instanceof HTMLElement)) return;
+    const buttons = Array.from(document.querySelectorAll(".translation-panel .lang-tabs .lang-tab"))
+      .filter((button) => normalizeTargetText(button.textContent));
+    if (!buttons.length) return;
+
+    let wrapper = chainContainer.querySelector(".sutra-target-lang-dropdown");
+    if (!wrapper) {
+      wrapper = document.createElement("div");
+      wrapper.className = "sutra-target-lang-dropdown";
+      const select = document.createElement("select");
+      select.className = "sutra-target-lang-select";
+      select.setAttribute("aria-label", "目标语言");
+      select.addEventListener("change", () => {
+        const match = buttons.find((button) => targetLabelToValue(button.textContent) === select.value);
+        if (!match) return;
+        localStorage.setItem(targetDropdownStorageKey, select.value);
+        if (!(match.classList.contains("active") || match.getAttribute("aria-selected") === "true")) match.click();
+      });
+      wrapper.appendChild(select);
+      chainContainer.insertBefore(wrapper, targetDisplay);
+    }
+
+    const select = wrapper.querySelector("select");
+    if (!(select instanceof HTMLSelectElement)) return;
+    const options = buttons.map((button) => ({
+      value: targetLabelToValue(button.textContent),
+      label: normalizeTargetText(button.textContent),
+      active: button.classList.contains("active") || button.getAttribute("aria-selected") === "true",
+    }));
+    const signature = JSON.stringify(options.map(({ value, label }) => ({ value, label })));
+    if (select.dataset.signature !== signature) {
+      select.innerHTML = "";
+      options.forEach((option) => {
+        const el = document.createElement("option");
+        el.value = option.value;
+        el.textContent = option.label;
+        select.appendChild(el);
+      });
+      select.dataset.signature = signature;
+    }
+    const activeValue = (options.find((option) => option.active) || {}).value || "";
+    const storedValue = localStorage.getItem(targetDropdownStorageKey) || "";
+    const preferredValue = options.some((option) => option.value === storedValue) ? storedValue : activeValue;
+    if (preferredValue && select.value !== preferredValue) select.value = preferredValue;
+    targetDisplay.textContent = options.find((option) => option.value === (select.value || activeValue))?.label || targetDisplay.textContent;
+    targetDisplay.className = `chain-tag chain-tag--${select.value || activeValue || "en"} sutra-target-lang-display-hidden`;
+    window.__sutraApplyRightPanelTargetLanguage?.(select.value || activeValue || preferredValue);
+  };
+  const scheduleTopTargetDropdown = () => window.setTimeout(syncTopTargetDropdown, 60);
+  new MutationObserver(scheduleTopTargetDropdown).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(syncTopTargetDropdown, delay));
+  window.addEventListener("focus", scheduleTopTargetDropdown);
 
   const toUrl = (input) => {
     const raw = typeof input === "string" ? input : input && input.url;
@@ -1909,7 +2245,8 @@ const __sutraInstallSidebarResizer = () => {
       document.body.classList.add("sidebar-resizing");
 
       const onPointerMove = (moveEvent) => {
-        applyWidth(startWidth + moveEvent.clientX - startX);
+        const width = applyWidth(startWidth + moveEvent.clientX - startX);
+        localStorage.setItem(storageKey, String(width));
       };
 
       const onPointerUp = (upEvent) => {
@@ -2509,7 +2846,7 @@ const __sutraInstallBalancedPaneStyles = () => {
       background: #fff !important;
     }
     .workbench .translation-panel .lang-tabs {
-      min-height: 52px !important;
+      min-height: 40px !important;
       padding: 7px 10px !important;
       border-bottom: 1px solid #d9d5cc !important;
       background: #f5f3ee !important;
@@ -2688,6 +3025,14 @@ const __sutraInstallCompactPageNavigation = () => {
       title.textContent = "原典";
       pagerRow.prepend(title);
     }
+    const compactHidePatterns = [/^\d+\s*tokens?$/i, /^A[-+]$/i, /^100%$/, /^编辑原文$/];
+    Array.from(pagerRow.querySelectorAll("button, span, div")).forEach((element) => {
+      const text = (element.textContent || "").trim();
+      if (!text) return;
+      if (compactHidePatterns.some((pattern) => pattern.test(text))) {
+        element.style.display = "none";
+      }
+    });
     if (pagerRow.parentElement !== sourcePanel) sourcePanel.insertBefore(pagerRow, scanViewer);
     const breadcrumbBar = document.querySelector(".breadcrumb-bar");
     const breadcrumb = breadcrumbBar?.querySelector(".breadcrumb");
@@ -2704,7 +3049,7 @@ const __sutraInstallCompactPageNavigation = () => {
       .find((element) => (element.textContent || "").trim() === "未分章")?.parentElement;
     if (sidebarChapter) sidebarChapter.dataset.sutraUnchaptered = "true";
     if (!pagerRow.querySelector(".sutra-source-more")) {
-      const labels = ["编辑原文", "导入文本", "全部直读"];
+      const labels = ["导入文本", "全部直读"];
       const candidates = Array.from(sourcePanel.querySelectorAll(".panel-header button"));
       const secondary = labels.map((label) => candidates.find((element) => (element.textContent || "").includes(label))).filter(Boolean);
       if (secondary.length) {
@@ -2897,7 +3242,7 @@ const __sutraInstallSourceMoreMenu = () => {
     const header = document.querySelector(".source-panel .panel-header");
     const host = document.querySelector(".sutra-page-pager-row");
     if (!header || !host || host.querySelector(".sutra-source-more")) return;
-    const labels = ["编辑原文", "导入文本", "全部直读"];
+      const labels = ["导入文本", "全部直读"];
     const candidates = Array.from(header.querySelectorAll("button"));
     const secondary = labels.map((label) => candidates.find((element) => (element.textContent || "").includes(label))).filter(Boolean);
     if (!secondary.length) return;
@@ -2937,6 +3282,48 @@ const __sutraInstallSourceMoreMenu = () => {
   [350, 1000, 2200].forEach((delay) => window.setTimeout(schedule, delay));
 };
 __sutraInstallSourceMoreMenu();
+
+const __sutraSimplifySourceHeader = () => {
+  if (window.__sutraSimplifySourceHeaderInstalled) return;
+  window.__sutraSimplifySourceHeaderInstalled = true;
+  let timer = 0;
+
+  const shouldHideText = (text) => {
+    const value = String(text || "").replace(/\s+/g, " ").trim();
+    if (!value) return false;
+    return /^\d+\s*tokens?$/i.test(value)
+      || /^A[-−]$/u.test(value)
+      || /^A[+]$/u.test(value)
+      || /^100%$/.test(value)
+      || /^原典$/.test(value)
+      || /重新直读/.test(value)
+      || /编辑原文/.test(value);
+  };
+
+  const apply = () => {
+    timer = 0;
+    const header = document.querySelector(".source-panel .panel-header");
+    if (!header) return;
+    Array.from(header.querySelectorAll("button, label, span, div")).forEach((element) => {
+      if (!(element instanceof HTMLElement)) return;
+      const text = (element.textContent || "").trim();
+      if (shouldHideText(text)) {
+        element.style.display = "none";
+      }
+    });
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(apply, 80);
+  };
+
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
+  window.addEventListener("focus", schedule);
+  schedule();
+  [120, 600, 1500].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraSimplifySourceHeader();
 
 const __sutraInstallCrossPageLinks = () => {
   if (window.__sutraCrossPageLinksInstalled) return;
@@ -3077,7 +3464,7 @@ sed -i 's~return a.proposals}return Array.isArray(a)?a:\[\]~return Object.assign
 sed -i 's~H=async()=>{var se;const U=s.slice(0,4).map(ce=>ce.id).filter(Boolean);~H=async()=>{var se;const eligibleCouncil=s.filter(ce=>!ce.is_builtin\&\&ce.model_preference!=="agg-compare-all"\&\&(ce.source_lang==="*"||ce.source_lang===e)\&\&(ce.target_lang==="*"||ce.target_lang===t)),U=(eligibleCouncil.length?eligibleCouncil:s.filter(ce=>ce.model_preference!=="agg-compare-all"\&\&(ce.source_lang==="*"||ce.source_lang===e)\&\&(ce.target_lang==="*"||ce.target_lang===t))).slice(0,8).map(ce=>ce.id).filter(Boolean);~' "$tmp"
 sed -i 's~Ae.length>=1?E(Ae):j({content:((se=ce==null?void 0:ce.errors)==null?void 0:se\[0\])||"会审失败，请检查 LLM 网关配置",persona:"Error"})~Ae.length>=1?(E(Ae),Array.isArray(ce.errors)\&\&ce.errors.length\&\&j({content:"部分角色未返回："+ce.errors.join("；"),persona:"Error"})):j({content:((se=ce==null?void 0:ce.errors)==null?void 0:se[0])||"会审失败，请检查 LLM 网关配置",persona:"Error"})~' "$tmp"
 sed -i 's~finally{$(!1)}}},Z=()=>~finally{$(!1)}}},multiCompare=async()=>{$(!0),j(null),E(null);try{const U=await Wi(n),se=(Array.isArray(U)?U:[]).map(ce=>ce.text||ce.content||ce.value||"").join("").trim();if(!se)throw new Error("当前段落没有可翻译原文");let ce="",ye="";const Ae=qb([{role:"system",content:`Translate from ${On[e]||e} to ${On[t]||t}. Preserve terminology and return only the translation.`},{role:"user",content:se}],"agg-compare-all",{onChunk:Be=>{ce+=Be},onError:Be=>{ye=String(Be||"")}},{temperature:.2,max_tokens:4096});await Ae.promise;const lineBreak=String.fromCharCode(10),modelResults=ce.trim().split("## ").slice(1).map((Be,re)=>{const Je=Be.split(lineBreak),nt=(Je.shift()||"").trim(),dt=Je[0]\&\&Je[0].startsWith("上游:")?Je.shift():"",_e=Je.join(lineBreak).trim();return{content:_e,persona:nt||`模型${re+1}`,persona_id:`model-${re}`,lang:t,proposal_id:null,comparison_kind:"model",comparison_meta:dt,comparison_error:_e.startsWith("[调用失败]")}}).filter(Be=>Be.content);modelResults.length?E(modelResults):j({content:ye||ce||"多模型对照没有返回结果",persona:"Error"})}catch(U){j({content:"多模型对照失败: "+U.message,persona:"Error"})}finally{$(!1)}},Z=()=>~' "$tmp"
-sed -i 's~T?"AI 翻译中...":"AI 翻译"\]}),c.jsxs("button",{className:"btn btn--ghost btn--sm",onClick:H~T?"AI 翻译中...":"AI 翻译"]}),c.jsx("button",{className:"btn btn--ghost btn--sm",onClick:multiCompare,disabled:T,title:"调用聚合器内全部可用模型并排对照",style:{color:"var(--azure)"},children:T?"对照中...":"多模型对照"}),c.jsxs("button",{className:"btn btn--ghost btn--sm",onClick:H~' "$tmp"
+sed -i 's~T?"AI 翻译中...":"AI 翻译"\]}),c.jsxs("button",{className:"btn btn--ghost btn--sm",onClick:H~T?"AI 翻译中...":"AI 翻译"]}),c.jsx("button",{className:"btn btn--ghost btn--sm",onClick:multiCompare,disabled:T,title:"调用聚合器内全部可用模型并排对照",style:{color:"var(--azure)"},children:"多模型对照"}),c.jsxs("button",{className:"btn btn--ghost btn--sm",onClick:H~' "$tmp"
 sed -i 's~children:\[c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:Z~children:[_.persona==="多模型对照"?null:c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:Z~' "$tmp"
 sed -i 's~title:"不采纳，丢弃此建议",children:"丢弃"~title:_.persona==="多模型对照"?"关闭对照结果":"不采纳，丢弃此建议",children:_.persona==="多模型对照"?"关闭":"丢弃"~' "$tmp"
 sed -i 's~className:"council-panel",children:~className:`council-panel ${B[0]\&\&B[0].comparison_kind==="model"?"council-panel--models":""}`,children:~' "$tmp"
@@ -3088,6 +3475,9 @@ sed -i 's/function Zz({segmentId:n,sourceLang:e,targetLang:t,personas:s,onSubmit
 sed -i 's/className:"persona-selector",children:s.map(U=>c.jsx("button",{className:`persona-chip ${p===U.id?"active":""}`,onClick:()=>g(U.id),children:U.display_name},U.id))})]})/className:"persona-selector",children:s.map(U=>c.jsx("button",{className:`persona-chip ${p===U.id?"active":""}`,onClick:()=>g(U.id),children:U.display_name},U.id))}),closeEditor?c.jsx("button",{type:"button",className:"btn btn--ghost btn--sm translation-editor__collapse",onClick:U=>{U.stopPropagation(),f.trim()?(window.confirm("收起编辑框？未提交的译文不会保存。")?closeEditor():null):closeEditor()},title:"收起编辑框；未提交内容不会保存",children:"收起"}):null]})/' "$tmp"
 sed -i 's/c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:ge,disabled:!f.trim()||v,children:\[c.jsx("span",{className:"icon icon--sm",children:c.jsx(nn,{width:14,height:14})}),v?"提交中...":"提交译文"\]})\]})/closeEditor?c.jsx("button",{type:"button",className:"btn btn--ghost btn--sm translation-editor__collapse-bottom",onClick:U=>{U.stopPropagation(),f.trim()?(window.confirm("收起编辑框？未提交的译文不会保存。")?closeEditor():null):closeEditor()},title:"收起编辑框；未提交内容不会保存",children:"收起"}):null,c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:ge,disabled:!f.trim()||v,children:[c.jsx("span",{className:"icon icon--sm",children:c.jsx(nn,{width:14,height:14})}),v?"提交中...":"提交译文"]})]})/' "$tmp"
 sed -i 's/onSubmit:on,onRefreshSegment:Rn,relaySource:We}/onSubmit:on,onRefreshSegment:Rn,relaySource:We,onCancel:Ut}/' "$tmp"
+sed -i 's/\[{mode:"normal",label:"✏️ 工作台",desc:"逐段译校"},{mode:"reading",label:"📖 阅读台",desc:"成品阅读 + AI 编辑"},{mode:"compare",label:"🪞 对照视图",desc:"多角色横向对比"}]/[{mode:"normal",label:"✏️ 工作台",desc:"逐段译校"},{mode:"reading",label:"📖 阅读台",desc:"成品阅读 + AI 编辑"}]/' "$tmp"
+sed -i 's~z==="normal"||z==="reading"||z==="compare"?Ui(z):Array.isArray(k)&&k.length>0?Ui("reading"):Ui("normal")~z==="normal"||z==="reading"?Ui(z):Array.isArray(k)\&\&k.length>0?Ui("reading"):Ui("normal")~' "$tmp"
+sed -i 's~try{z=localStorage.getItem("sutra_view_mode")}catch{}z==="normal"||z==="reading"?Ui(z):Array.isArray(k)\&\&k.length>0?Ui("reading"):Ui("normal")~try{z=localStorage.getItem("sutra_view_mode")}catch{};z==="normal"||z==="reading"?Ui(z):Array.isArray(k)\&\&k.length>0?Ui("reading"):Ui("normal")~' "$tmp"
 grep -q 'translation-editor__collapse' "$tmp"
 grep -q 'translation-editor__collapse-bottom' "$tmp"
 grep -q 'onCancel:Ut' "$tmp"
@@ -3096,6 +3486,7 @@ grep -q 'eligibleCouncil' "$tmp"
 grep -q 'return Object.assign(a.proposals' "$tmp"
 grep -q 'council-panel--models' "$tmp"
 grep -q 'comparison_meta' "$tmp"
+! grep -q 'mode:"compare",label:"🪞 对照视图"' "$tmp"
 ! grep -q 'closeEditorclassName' "$tmp"
 mv "$tmp" "$js"
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-localdev.js
@@ -3142,6 +3533,6 @@ cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v51.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v52.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v53.js
 cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v54.js
-cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v56.js
-sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v56.js#g' /usr/share/nginx/html/index.html
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v80.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v80.js#g' /usr/share/nginx/html/index.html
 SHELL
