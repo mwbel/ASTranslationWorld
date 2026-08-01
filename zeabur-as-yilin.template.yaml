@@ -1,0 +1,172 @@
+# yaml-language-server: $schema=https://schema.zeabur.app/template.json
+apiVersion: zeabur.com/v1
+kind: Template
+metadata:
+    name: as-yilin
+spec:
+    description: Separate AS Yilin deployment based on external RDS and Gemini direct adapter.
+    services:
+        - name: redis
+          icon: https://raw.githubusercontent.com/zeabur/service-icons/main/marketplace/redis.svg
+          template: PREBUILT
+          spec:
+            source:
+                image: redis/redis-stack-server:latest
+            ports:
+                - id: redis
+                  port: 6379
+                  type: TCP
+            env:
+                REDIS_ARGS:
+                    default: --requirepass ${REDIS_PASSWORD}
+                    expose: false
+                REDIS_CONNECTION_STRING:
+                    default: redis://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}
+                    expose: true
+                REDIS_HOST:
+                    default: ${PORT_FORWARDED_HOSTNAME}
+                    expose: true
+                    readonly: true
+                REDIS_PASSWORD:
+                    default: ${PASSWORD}
+                    expose: false
+                    readonly: true
+                REDIS_PORT:
+                    default: ${DATABASE_PORT_FORWARDED_PORT}
+                    expose: true
+                    readonly: true
+                REDIS_URI:
+                    default: ${REDIS_CONNECTION_STRING}
+                    expose: true
+                    readonly: true
+            configs: []
+        - name: sutra-server
+          icon: https://service-icons.zeabur.com/git/docker/default.svg
+          template: PREBUILT_V2
+          dependencies:
+              - redis
+          spec:
+            source:
+                source: GITHUB
+                repo: 1279932811
+                branch: main
+                rootDirectory: sutra-image-package-20260611-2159-server-runtime-amd64
+            ports:
+                - id: web
+                  port: 5555
+                  type: HTTP
+            volumes:
+                - id: sutra-storage
+                  dir: /app/storage
+            env:
+                DATABASE_URL:
+                    default: postgres://USER:PASSWORD@HOST:5432/DB?options=-csearch_path%3Das_yilin
+                    expose: false
+                REDIS_URL:
+                    default: ${REDIS_CONNECTION_STRING}
+                    expose: false
+                HOST:
+                    default: 0.0.0.0
+                    expose: false
+                PORT:
+                    default: "5555"
+                    expose: false
+                JWT_SECRET:
+                    default: CHANGE_ME_AT_LEAST_32_CHARS_RANDOM
+                    expose: false
+                STORAGE_PATH:
+                    default: /app/storage
+                    expose: false
+                OCR_VISION_MODEL:
+                    default: gpt-4o
+                    expose: false
+                RUST_LOG:
+                    default: sutra_server=info,tower_http=info
+                    expose: false
+                TZ:
+                    default: Asia/Shanghai
+                    expose: false
+                ZBPACK_DOCKERFILE_PATH:
+                    default: Dockerfile.server-ubuntu
+                    expose: false
+            configs: []
+        - name: cross-page-service
+          icon: https://service-icons.zeabur.com/git/docker/default.svg
+          template: PREBUILT_V2
+          dependencies:
+              - sutra-server
+          spec:
+            source:
+                source: GITHUB
+                repo: 1279932811
+                branch: main
+                rootDirectory: sutra-image-package-20260611-2159-server-runtime-amd64/cross-page-service
+            ports:
+                - id: web
+                  port: 5556
+                  type: HTTP
+            env:
+                DATABASE_URL:
+                    default: postgres://USER:PASSWORD@HOST:5432/DB?options=-csearch_path%3Das_yilin
+                    expose: false
+                SUTRA_UPSTREAM:
+                    default: http://sutra-server:5555
+                    expose: false
+                ZBPACK_DOCKERFILE_PATH:
+                    default: Dockerfile
+                    expose: false
+            configs: []
+        - name: sutra-web
+          icon: https://service-icons.zeabur.com/git/docker/default.svg
+          template: PREBUILT_V2
+          dependencies:
+              - sutra-server
+              - cross-page-service
+          spec:
+            source:
+                source: GITHUB
+                repo: 1279932811
+                branch: main
+                rootDirectory: sutra-image-package-20260611-2159-server-runtime-amd64
+            ports:
+                - id: web
+                  port: 80
+                  type: HTTP
+            env:
+                ZBPACK_DOCKERFILE_PATH:
+                    default: Dockerfile.web-login-patch
+                    expose: false
+            configs: []
+        - name: as-yilin-model-adapter
+          icon: https://service-icons.zeabur.com/git/docker/default.svg
+          template: PREBUILT_V2
+          spec:
+            source:
+                source: GITHUB
+                repo: 1279932811
+                branch: main
+                rootDirectory: as-yilin-model-adapter
+            ports:
+                - id: web
+                  port: 18081
+                  type: HTTP
+            volumes:
+                - id: adapter-data
+                  dir: /data
+            env:
+                ADAPTER_CONFIG:
+                    default: /config/config.yaml
+                    expose: false
+                ADAPTER_DATA_DIR:
+                    default: /data/adapter
+                    expose: false
+                GEMINI_BASE_URL:
+                    default: https://generativelanguage.googleapis.com
+                    expose: false
+                GEMINI_API_KEYS:
+                    default: key1,key2
+                    expose: false
+                ZBPACK_DOCKERFILE_PATH:
+                    default: Dockerfile.adapter
+                    expose: false
+            configs: []

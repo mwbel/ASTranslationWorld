@@ -1,0 +1,59 @@
+server:
+  host: 0.0.0.0
+  port: 18081
+  data_dir: data
+
+auth:
+  users:
+    - username: demo
+      # 仅示例用途。生产环境请改为 password_hash。
+      password: demo-password
+      reseller_code: demo
+      allowed_models:
+        - agg-gemini-2.5-flash
+        - agg-gemini-3.1-flash-lite
+
+# Zeabur 直连 Gemini 示例：
+# - 不经过 ModelAggregatorService
+# - 不在仓库中保存真实 key
+# - 通过 Zeabur Variables 注入 GEMINI_BASE_URL / GEMINI_API_KEYS
+models:
+  - id: agg-gemini-2.5-flash
+    display_name: Gemini 2.5 Flash (Zeabur Direct)
+    provider: gemini
+    base_url_env: GEMINI_BASE_URL
+    api_keys_env: GEMINI_API_KEYS
+    model: gemini-2.5-flash
+    aliases:
+      - gemini:gemini-2.5-flash
+      - gemini-2.5-flash
+      - gemini:gemini-3-flash-preview
+      - gemini-3-flash-preview
+    category: fast_translation
+    supports_stream: true
+    supports_vision: true
+    context_window: 1048576
+    capabilities: [chat, chinese, reasoning, rag_synthesis, long_context]
+    privacy: remote
+    cost: paid
+    latency: fast
+    priority: 90
+
+  - id: agg-gemini-3.1-flash-lite
+    display_name: Gemini 3.1 Flash-Lite (Zeabur Direct)
+    provider: gemini
+    base_url_env: GEMINI_BASE_URL
+    api_keys_env: GEMINI_API_KEYS
+    model: gemini-3.1-flash-lite
+    aliases:
+      - gemini:gemini-3.1-flash-lite
+      - gemini-3.1-flash-lite
+    category: fast_translation
+    supports_stream: true
+    supports_vision: true
+    context_window: 1048576
+    capabilities: [chat, chinese, reasoning, rag_synthesis, long_context]
+    privacy: remote
+    cost: paid
+    latency: fast
+    priority: 80
