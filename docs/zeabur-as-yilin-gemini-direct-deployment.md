@@ -43,6 +43,8 @@
 - 已创建 adapter 域名：`https://as-yilin-adapter-mwu.zeabur.app/`。
 - 当前 `sutra-web` 返回 `502 Bad Gateway`。原因不是域名未生效，而是 GitHub 构建拿不到 AS译林运行时材料。
 - `sutra-image-package-*/server-runtime/` 和 `sutra-image-package-*/images/` 被 `.gitignore` 排除；这些内容包含 `sutra-server` 二进制和 `sutra-web`/`sutra-server` 镜像包，不能直接从 GitHub 重新构建。
+- `as-yilin-model-adapter` 已补充标准 `Dockerfile`，本地 Docker build 与 `/health` 均可通过；Zeabur 当前仍显示 `CRASHED`，CLI 无法取到运行日志，且 restart 返回平台内部错误。
+- 当前 Zeabur adapter 服务变量已恢复 `ADAPTER_CONFIG`、`ADAPTER_DATA_DIR`、`GEMINI_BASE_URL`、`PORT`、`ZBPACK_DOCKERFILE_PATH`；尚未发现 `GEMINI_API_KEYS` 已设置到该服务，生产翻译前必须在 Zeabur Variables 中补入真实 key。
 
 ## 三、Zeabur 服务清单
 
@@ -196,7 +198,7 @@ SUTRA_UPSTREAM=http://sutra-server:5555
 建议使用：
 
 - 工作目录：`as-yilin-model-adapter/`
-- 镜像入口：`Dockerfile.adapter`
+- 镜像入口：优先 `Dockerfile`；`Dockerfile.adapter` 保留为等价显式入口
 - 配置文件：`/config/config.yaml`
 - 数据目录：`/data`
 

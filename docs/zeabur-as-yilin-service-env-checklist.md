@@ -26,7 +26,7 @@
 | Redis | 必需 | Zeabur 托管 | 托管 Redis | 否 | 6379 | Zeabur 托管卷 |
 | sutra-server | 必需 | `sutra-image-package-20260611-2159-server-runtime-amd64/` | `Dockerfile.server-ubuntu` | 否 | 5555 | `/app/storage` |
 | sutra-web | 必需 | `sutra-image-package-20260611-2159-server-runtime-amd64/` | `Dockerfile.web-login-patch` | 是 | 80 | 无 |
-| as-yilin-model-adapter | 必需 | `as-yilin-model-adapter/` | `Dockerfile.adapter` | 是 | 18081 | `/data` 可选 |
+| as-yilin-model-adapter | 必需 | `as-yilin-model-adapter/` | `Dockerfile`（`Dockerfile.adapter` 保留） | 是 | 18081 | `/data` 可选 |
 | cross-page-service | 可选 | `sutra-image-package-20260611-2159-server-runtime-amd64/cross-page-service/` | `cross-page-service/Dockerfile` | 否 | 5556 | 无 |
 
 说明：
@@ -198,8 +198,10 @@ as-yilin-model-adapter
 Dockerfile：
 
 ```text
-Dockerfile.adapter
+Dockerfile
 ```
+
+说明：`Dockerfile.adapter` 与 `Dockerfile` 内容保持等价；Zeabur 上优先使用标准文件名，避免构建器忽略自定义 Dockerfile 名。
 
 内部监听端口：
 
@@ -217,6 +219,13 @@ Dockerfile.adapter
 ```text
 /data
 ```
+
+当前 Zeabur 状态：
+
+- `as-yilin-model-adapter` 本地镜像 build 通过，`/health` 本地返回 200。
+- Zeabur 服务仍显示 `CRASHED`，公网 `/health` 返回 `502 Bad Gateway`。
+- Zeabur CLI 当前无法读取该服务运行日志，`restart` 返回平台内部错误。
+- 该服务目前未设置 `GEMINI_API_KEYS`，上线翻译前需要在 Zeabur Variables 中补入真实 key。
 
 需要准备的配置文件：
 
