@@ -11,6 +11,7 @@ COPY examples/zeabur-gemini-direct.config.yaml /config/config.yaml
 
 ENV ADAPTER_CONFIG=/config/config.yaml
 ENV ADAPTER_DATA_DIR=/data/adapter
+ENV PORT=18081
 EXPOSE 18081
 
-CMD ["uvicorn", "adapter_server.app:app", "--host", "0.0.0.0", "--port", "18081"]
+CMD ["sh", "-c", "uvicorn adapter_server.app:app --host 0.0.0.0 --port ${PORT:-18081}"]
