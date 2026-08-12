@@ -1,0 +1,3544 @@
+FROM sutra-web:20260611-2159-server-runtime-amd64
+
+ARG ENABLE_LOCAL_DEV_AUTH=0
+
+RUN sed -i '/upstream sutra_backend {/i upstream cross_page_backend { server cross-page-service:5556; keepalive 8; }' /etc/nginx/conf.d/default.conf \
+ && sed -i '/location \^~ \/api\//i\    location ^~ /api/local-cross-page/ {\n        proxy_pass http://cross_page_backend/;\n        proxy_http_version 1.1;\n        proxy_set_header Authorization $http_authorization;\n        proxy_buffering off;\n        proxy_read_timeout 1h;\n    }\n' /etc/nginx/conf.d/default.conf
+
+RUN sed -i 's/limit_req_zone  $binary_remote_addr zone=sutra_global:10m rate=20r\/s;/limit_req_zone  $binary_remote_addr zone=sutra_global:10m rate=200r\/s;/' /etc/nginx/conf.d/default.conf \
+ && sed -i 's/limit_req_zone  $binary_remote_addr zone=sutra_api:10m    rate=10r\/s;/limit_req_zone  $binary_remote_addr zone=sutra_api:10m    rate=200r\/s;/' /etc/nginx/conf.d/default.conf \
+ && sed -i 's/limit_req zone=sutra_global burst=80 nodelay;/limit_req zone=sutra_global burst=2000 nodelay;/' /etc/nginx/conf.d/default.conf \
+ && sed -i 's/limit_req zone=sutra_api burst=40 nodelay;/limit_req zone=sutra_api burst=2000 nodelay;/' /etc/nginx/conf.d/default.conf
+
+COPY login-fractal.png /usr/share/nginx/html/login-fractal.png
+COPY pdfjs/ /usr/share/nginx/html/pdfjs/
+
+RUN set -eux; \
+  css=/usr/share/nginx/html/assets/index-PLAjeyG7.css; \
+  cat >> "$css" <<'CSS'
+
+/* Login visual patch: neutralize religious couplet, use fractal background. */
+.auth-page {
+  background-color: #020518 !important;
+  background-image: url("/login-fractal.png") !important;
+  background-size: cover !important;
+  background-position: center center !important;
+}
+
+.auth-bg {
+  background:
+    linear-gradient(90deg, rgba(2, 5, 24, 0.74) 0%, rgba(4, 10, 48, 0.48) 42%, rgba(4, 12, 56, 0.18) 72%, rgba(0, 0, 0, 0.06) 100%) !important;
+}
+
+.auth-landing .auth-brand__subtitle--couplet {
+  display: none !important;
+}
+
+.auth-landing .auth-brand__title {
+  color: rgba(248, 250, 255, 0.94) !important;
+  text-shadow: 0 2px 18px rgba(0, 91, 255, 0.42), 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.auth-landing .auth-brand__icon {
+  color: rgba(248, 250, 255, 0.84) !important;
+  filter: drop-shadow(0 2px 12px rgba(0, 91, 255, 0.36));
+}
+
+.auth-enter-link {
+  color: rgba(248, 250, 255, 0.78) !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+@media (max-width: 860px) {
+  .auth-bg {
+    background: linear-gradient(180deg, rgba(2, 5, 24, 0.6), rgba(2, 5, 24, 0.78)) !important;
+  }
+}
+
+/* Local workspace patch: make the left navigation sidebar resizable. */
+.sidebar {
+  position: relative;
+  overflow: visible !important;
+}
+
+.sidebar__resize-handle {
+  position: absolute;
+  top: 0;
+  right: -10px;
+  z-index: 320;
+  width: 28px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar__resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.1);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sidebar__resize-handle:hover::after,
+body.sidebar-resizing .sidebar__resize-handle::after {
+  background: var(--gold, #b8963e);
+  box-shadow: -2px 0 8px rgba(184, 150, 62, 0.32);
+}
+
+.sidebar.collapsed .sidebar__resize-handle {
+  display: none;
+}
+
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* Local workspace patch: compact page navigator with thumbnail / outline views. */
+.sidebar__nav.sutra-page-nav-ready > .nav-item[data-sutra-original-page] {
+  display: none !important;
+}
+
+.sutra-page-browser {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  margin: 8px 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
+}
+
+.sutra-page-browser__tabs,
+.sutra-page-browser__pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.source-panel .sutra-page-pager-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 7;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-light, #ebe6da);
+  background: rgba(250, 248, 242, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar__nav [data-sutra-unchaptered="true"] {
+  display: none !important;
+}
+
+.source-panel.sutra-source-one-line > .panel-header {
+  display: none !important;
+}
+
+.sutra-page-pager-row__title {
+  display: none !important;
+}
+
+.source-panel .sutra-page-browser__pager--source {
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.source-panel .sutra-page-browser__pager--source button {
+  color: #5d5a52;
+  border-color: #d8dde3;
+  background: #f2f5f7;
+}
+
+.source-panel .sutra-page-browser__pager--source button:hover:not(:disabled) {
+  color: #8b6a18;
+  border-color: #c9a84f;
+  background: #fffaf0;
+}
+
+.source-panel .sutra-page-browser__pager--source input {
+  width: 54px;
+  min-width: 44px;
+  max-width: 20%;
+  color: #403d37;
+  border-color: #d8dde3;
+  background: #fff;
+}
+
+.source-panel .sutra-page-browser__pager--source .sutra-page-browser__total {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: #77736a;
+}
+
+.notif-panel,
+.sutra-notification-popover {
+  box-sizing: border-box !important;
+  max-width: min(360px, calc(100vw - 24px)) !important;
+  max-height: min(420px, calc(100vh - 96px)) !important;
+  overflow: auto !important;
+  right: 12px !important;
+  left: auto !important;
+}
+
+.sutra-page-browser__tabs button,
+.sutra-page-browser__pager button {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.sutra-page-browser__tabs button {
+  flex: 1;
+  min-height: 38px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.sutra-page-browser__tabs button.active,
+.sutra-page-browser__pager button:hover:not(:disabled) {
+  color: #e1ba58;
+  border-color: rgba(225, 186, 88, 0.5);
+  background: rgba(225, 186, 88, 0.1);
+}
+
+.sutra-page-browser__pager button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.sutra-page-browser__pager input {
+  width: 48px;
+  height: 30px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  color: #f4f1e8;
+  background: rgba(0, 0, 0, 0.22);
+  text-align: center;
+  font: inherit;
+}
+
+.sutra-page-browser__total {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sutra-page-browser__body {
+  min-height: 0;
+  padding: 9px;
+  overflow: auto;
+}
+
+.sutra-page-thumb {
+  display: block;
+  width: 100%;
+  margin: 0 0 11px;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: rgba(255, 255, 255, 0.66);
+  background: transparent;
+  cursor: pointer;
+}
+
+.sutra-page-thumb:hover,
+.sutra-page-thumb.active {
+  border-color: rgba(225, 186, 88, 0.5);
+  background: rgba(225, 186, 88, 0.08);
+}
+
+.sutra-page-thumb img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: none;
+  object-fit: contain;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.28);
+}
+
+.scan-image-container.sutra-source-sync-ready {
+  cursor: crosshair;
+}
+
+.sutra-source-sync-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 8;
+  pointer-events: auto;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sutra-source-sync-overlay:hover,
+.sutra-source-sync-overlay.active {
+  background: rgba(225, 186, 88, 0.055);
+  box-shadow: inset 3px 0 rgba(184, 150, 62, 0.72);
+}
+
+.sutra-source-sync-overlay:focus,
+.sutra-source-sync-overlay:focus-visible {
+  outline: none;
+  box-shadow: inset 3px 0 rgba(184, 150, 62, 0.86);
+}
+
+.segment-card.sutra-source-sync-active {
+  outline: none;
+  box-shadow: inset 3px 0 rgba(184, 150, 62, 0.72) !important;
+}
+
+.segment-source-preview {
+  cursor: pointer;
+}
+
+/* One clear entry opens the translation editor; the invitation already owns the click action. */
+.segment-card:has(.proposal-empty--invitation) > .add-translation-btn {
+  display: none !important;
+}
+
+.proposal-empty--invitation {
+  min-height: 54px !important;
+  margin-bottom: 0 !important;
+  cursor: pointer !important;
+}
+
+.proposal-empty--invitation:hover {
+  border-color: rgba(184, 150, 62, 0.72) !important;
+  background: rgba(225, 186, 88, 0.08) !important;
+}
+
+.sutra-page-thumb span {
+  display: block;
+  padding-top: 5px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.sutra-page-outline button {
+  display: block;
+  width: 100%;
+  margin-bottom: 3px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.68);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sutra-page-outline button:hover,
+.sutra-page-outline button.active {
+  color: #f1d58f;
+  background: rgba(225, 186, 88, 0.11);
+}
+
+/* Keep the source header calm: secondary actions live in a More menu. */
+.sutra-source-more {
+  position: relative;
+  margin-left: 2px;
+}
+
+.sutra-source-more > button {
+  min-width: 30px;
+  font-size: 20px !important;
+  line-height: 1 !important;
+}
+
+.sutra-source-more__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 80;
+  display: none;
+  min-width: 138px;
+  padding: 6px;
+  border: 1px solid var(--border, #ded8c9);
+  border-radius: 8px;
+  background: var(--paper, #fffdf8);
+  box-shadow: 0 10px 28px rgba(47, 39, 24, 0.18);
+}
+
+.sutra-source-more.open .sutra-source-more__menu {
+  display: grid;
+  gap: 4px;
+}
+
+.sutra-source-more__menu > * {
+  width: 100% !important;
+  justify-content: flex-start !important;
+  margin: 0 !important;
+}
+
+.sutra-source-more__menu .scan-viewer__toolbar.sutra-scan-toolbar-in-menu {
+  display: grid !important;
+  width: 100%;
+  gap: 4px;
+  padding: 4px 0 0 !important;
+  border-top: 1px solid var(--border-light, #ebe6da);
+  background: transparent !important;
+}
+
+.sutra-source-more__menu .scan-viewer__toolbar.sutra-scan-toolbar-in-menu > * {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.source-panel .panel-header [data-sutra-toolbar-secondary="true"] {
+  display: none !important;
+}
+
+.source-panel .panel-header .panel-title > span:not(.icon),
+.source-panel .panel-header .panel-title > .reocr-btn {
+  display: none !important;
+}
+
+/* The detailed bilingual pipeline is already visible in the workbench. */
+.status-bar__progress {
+  display: none !important;
+}
+
+/* Local workspace patch: keep fallback text source compact; PDF uses original page images. */
+.text-source-viewer__content {
+  padding: 14px 18px 80px !important;
+  background: #fbfaf6 !important;
+}
+
+.text-source-viewer__segment {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 10px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  margin: 0 0 4px !important;
+  padding: 4px 6px !important;
+  min-height: auto !important;
+  border: 0 !important;
+  border-left: 2px solid transparent !important;
+  border-radius: 3px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.text-source-viewer__segment:hover,
+.text-source-viewer__segment[data-sutra-sync-block="ready"]:hover {
+  border-left-color: rgba(184, 150, 62, 0.98) !important;
+  background: rgba(184, 150, 62, 0.08) !important;
+}
+
+.text-source-viewer__num {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 999px !important;
+  background: rgba(184, 150, 62, 0.1) !important;
+  color: #8a6e25 !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  font-weight: 600 !important;
+}
+
+.text-source-viewer__text {
+  min-width: 0 !important;
+  color: #4d4639 !important;
+  font-size: 16px !important;
+  line-height: 1.62 !important;
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+}
+
+/* Local workspace patch: calm down dense workbench controls. */
+.breadcrumb-bar,
+.panel-header,
+.lang-tabs,
+.scan-viewer__toolbar {
+  gap: 6px !important;
+}
+
+.workbench .panel-header {
+  padding: 9px 16px !important;
+}
+
+.workbench .panel-title {
+  gap: 6px !important;
+  font-size: 1rem !important;
+}
+
+.workbench .btn,
+.workbench .reocr-btn,
+.breadcrumb-bar .btn,
+.chain-indicator .btn,
+.lang-tabs .btn,
+.lang-tabs .persona-chip {
+  min-height: 28px !important;
+  padding: 4px 9px !important;
+  font-size: 13px !important;
+  line-height: 1.2 !important;
+}
+
+.chain-indicator {
+  gap: 6px !important;
+}
+
+.chain-indicator button[title*="木鱼"],
+.chain-indicator button[title*="落笔音"] {
+  display: none !important;
+}
+
+.segments-list {
+  padding: 16px 18px !important;
+}
+
+.segment-card {
+  padding: 14px 18px 12px !important;
+}
+
+.segment-card__header {
+  justify-content: flex-end !important;
+  min-height: 26px !important;
+  margin-bottom: 8px !important;
+}
+
+.segment-card__id,
+.segment-card__token-count {
+  display: none !important;
+}
+
+.segment-card__header > div {
+  margin-left: auto !important;
+}
+
+.segment-card__header .literal-toggle-btn {
+  opacity: 0.75 !important;
+}
+
+.segment-card__header .literal-toggle-btn:hover,
+.segment-card__header .literal-toggle-btn.active {
+  opacity: 1 !important;
+}
+
+body.sutra-same-source-target .proposal-empty--invitation,
+body.sutra-same-source-target .add-translation-btn {
+  display: none !important;
+}
+
+body.sutra-same-source-target .segment-card__header {
+  margin-bottom: 4px !important;
+}
+
+.sutra-target-lang-dropdown {
+  display: inline-flex !important;
+  align-items: center !important;
+  flex-shrink: 0 !important;
+}
+
+.chain-indicator .chain-tag.sutra-target-lang-display-hidden {
+  display: none !important;
+}
+
+.sutra-target-lang-select {
+  min-height: 28px !important;
+  padding: 4px 28px 4px 10px !important;
+  border: 1px solid #d9d5cc !important;
+  border-radius: 4px !important;
+  background: #f0efe9 !important;
+  color: #546b8b !important;
+  font-size: 13px !important;
+  line-height: 1.2 !important;
+  appearance: auto !important;
+}
+
+.sutra-target-lang-select:focus {
+  outline: 1px solid rgba(83, 121, 170, 0.45) !important;
+  outline-offset: 0 !important;
+}
+
+.workbench .translation-panel .lang-tabs {
+  min-height: 40px !important;
+}
+
+.workbench .translation-panel .lang-tabs .lang-tab,
+.workbench .translation-panel .lang-tabs .lang-dot {
+  display: none !important;
+}
+
+.workbench .translation-panel .lang-tabs .persona-chip.sutra-target-persona-hidden,
+.translation-editor .persona-chip.sutra-target-persona-hidden {
+  display: none !important;
+}
+
+.translation-editor .editor-header {
+  display: grid !important;
+  grid-template-columns: 64px minmax(0, 1fr) auto !important;
+  align-items: flex-start !important;
+  gap: 8px !important;
+}
+
+.translation-editor .editor-header__label {
+  width: 64px !important;
+  min-width: 64px !important;
+}
+
+.translation-editor .persona-selector {
+  width: 100% !important;
+  min-width: 0 !important;
+  align-content: flex-start !important;
+}
+
+.segments-list {
+  scrollbar-gutter: stable !important;
+}
+
+.translation-editor,
+.translation-editor .editor-header,
+.translation-editor .persona-selector {
+  box-sizing: border-box !important;
+}
+
+.translation-editor__collapse,
+.translation-editor__collapse-bottom {
+  margin-left: auto !important;
+  min-width: 52px !important;
+  flex-shrink: 0 !important;
+  color: #7b7369 !important;
+}
+
+.translation-editor__collapse:hover,
+.translation-editor__collapse-bottom:hover {
+  color: var(--ink-deep) !important;
+  border-color: var(--paper-aged) !important;
+  background: var(--paper-warm) !important;
+}
+
+.segment-card.sutra-collapse-in-proofread-bar .translation-editor__collapse,
+.segment-card.sutra-collapse-in-proofread-bar .translation-editor__collapse-bottom {
+  display: none !important;
+}
+
+.proofread-bar__collapse-before-revert {
+  margin-left: auto !important;
+  color: #7b7369 !important;
+}
+
+.proofread-bar__collapse-before-revert + button {
+  margin-left: 4px !important;
+}
+
+.sutra-role-visibility-toggle {
+  margin-left: 10px !important;
+  min-height: 28px !important;
+  padding: 4px 10px !important;
+  border: 1px solid rgba(184, 150, 62, 0.35) !important;
+  border-radius: 999px !important;
+  background: rgba(184, 150, 62, 0.08) !important;
+  color: #8a6e25 !important;
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+  white-space: nowrap !important;
+}
+
+.sutra-role-visibility-toggle:hover {
+  background: rgba(184, 150, 62, 0.14) !important;
+  border-color: rgba(184, 150, 62, 0.52) !important;
+}
+
+/* Multi-model comparison returns one readable section per model. */
+.ai-preview__content {
+  white-space: pre-wrap !important;
+}
+
+.council-panel--models .council-grid {
+  display: grid !important;
+  grid-auto-flow: column !important;
+  grid-auto-columns: minmax(260px, 1fr) !important;
+  grid-template-columns: none !important;
+  overflow-x: auto !important;
+}
+
+.council-col__meta {
+  padding: 6px 10px !important;
+  border-bottom: 1px solid var(--paper-aged) !important;
+  color: var(--ink-wash) !important;
+  font-size: 12px !important;
+  line-height: 1.45 !important;
+  overflow-wrap: anywhere !important;
+}
+CSS
+
+RUN cp /usr/share/nginx/html/assets/index-PLAjeyG7.css /usr/share/nginx/html/assets/index-PLAjeyG7-local-v80.css \
+ && sed -i 's#/assets/index-PLAjeyG7.css#/assets/index-PLAjeyG7-local-v80.css#g' /usr/share/nginx/html/index.html
+
+RUN sed -i 's/as-yilin-v1/as-yilin-v80-source-header-css-simplify/g' /usr/share/nginx/html/sw.js
+
+RUN <<'SHELL'
+set -eux
+js=/usr/share/nginx/html/assets/index-ex7lBOJf.js
+tmp=/tmp/index-local-dev-auth.js
+cat > "$tmp" <<'JS'
+const __sutraEnableLocalDevAuth = "__SUTRA_ENABLE_LOCAL_DEV_AUTH__" === "1";
+const __sutraLocalDevAuth = async () => {
+  try {
+    if (location.pathname.startsWith("/p/")) return;
+    const existingToken = localStorage.getItem("sutra_token");
+    if (existingToken) {
+      const me = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${existingToken}` },
+      });
+      if (me.ok) return;
+      localStorage.removeItem("sutra_token");
+      localStorage.removeItem("sutra_user");
+    }
+    const credentials = {
+      email: "local-dev@as-yilin.local",
+      password: "local-dev-password",
+      display_name: "本地测试",
+    };
+    const loginBody = JSON.stringify({
+      email: credentials.email,
+      password: credentials.password,
+    });
+    let response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: loginBody,
+    });
+    if (!response.ok) {
+      await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
+      });
+      response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: loginBody,
+      });
+    }
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.token) {
+        localStorage.setItem("sutra_token", data.token);
+        localStorage.setItem("sutra_user", JSON.stringify(data.user));
+        localStorage.setItem("sutra_login_email", credentials.email);
+        localStorage.setItem("sutra_remember_email", "1");
+      }
+    } else {
+      console.warn("AS译林本地自动登录失败", response.status);
+    }
+  } catch (error) {
+    console.warn("AS译林本地自动登录异常", error);
+  }
+};
+if (__sutraEnableLocalDevAuth) {
+  await __sutraLocalDevAuth();
+}
+
+const __sutraInstallLocalStyles = () => {
+  if (document.getElementById("sutra-local-block-sync-styles")) return;
+  const style = document.createElement("style");
+  style.id = "sutra-local-block-sync-styles";
+  style.textContent = `
+    .text-source-viewer__content {
+      padding: 14px 18px 80px !important;
+      background: #fbfaf6 !important;
+    }
+    .text-source-viewer__segment {
+      display: flex !important;
+      align-items: baseline !important;
+      gap: 10px !important;
+      box-sizing: border-box !important;
+      width: 100% !important;
+      margin: 0 0 4px !important;
+      padding: 4px 6px !important;
+      min-height: auto !important;
+      border: 0 !important;
+      border-left: 2px solid transparent !important;
+      border-radius: 3px !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .text-source-viewer__segment:hover,
+    .text-source-viewer__segment[data-sutra-sync-block="ready"]:hover {
+      border-left-color: rgba(184, 150, 62, 0.98) !important;
+      background: rgba(184, 150, 62, 0.08) !important;
+    }
+    .text-source-viewer__num {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      width: 22px !important;
+      height: 22px !important;
+      border-radius: 999px !important;
+      background: rgba(184, 150, 62, 0.1) !important;
+      color: #8a6e25 !important;
+      font-size: 13px !important;
+      line-height: 1 !important;
+      font-weight: 600 !important;
+    }
+    .text-source-viewer__text {
+      min-width: 0 !important;
+      color: #4d4639 !important;
+      font-size: 16px !important;
+      line-height: 1.62 !important;
+      white-space: pre-wrap !important;
+      overflow-wrap: anywhere !important;
+    }
+    .breadcrumb-bar,
+    .panel-header,
+    .lang-tabs,
+    .scan-viewer__toolbar {
+      gap: 6px !important;
+    }
+    .workbench .panel-header {
+      padding: 9px 16px !important;
+    }
+    .workbench .panel-title {
+      gap: 6px !important;
+      font-size: 1rem !important;
+    }
+    .workbench .btn,
+    .workbench .reocr-btn,
+    .breadcrumb-bar .btn,
+    .chain-indicator .btn,
+    .lang-tabs .btn,
+    .lang-tabs .persona-chip {
+      min-height: 28px !important;
+      padding: 4px 9px !important;
+      font-size: 13px !important;
+      line-height: 1.2 !important;
+    }
+    .chain-indicator {
+      gap: 6px !important;
+    }
+    .chain-indicator button[title*="木鱼"],
+    .chain-indicator button[title*="落笔音"] {
+      display: none !important;
+    }
+    .segments-list {
+      padding: 16px 18px !important;
+    }
+    .segment-card {
+      padding: 14px 18px 12px !important;
+    }
+    .segment-card__header {
+      justify-content: flex-end !important;
+      min-height: 26px !important;
+      margin-bottom: 8px !important;
+    }
+    .segment-card__id,
+    .segment-card__token-count {
+      display: none !important;
+    }
+    .segment-card__header > div {
+      margin-left: auto !important;
+    }
+    .segment-card__header .literal-toggle-btn {
+      opacity: 0.75 !important;
+    }
+    .segment-card__header .literal-toggle-btn:hover,
+    .segment-card__header .literal-toggle-btn.active {
+      opacity: 1 !important;
+    }
+    .sutra-cross-page-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: -2px 0 10px;
+      padding: 8px 10px;
+      border: 1px solid rgba(184, 150, 62, .35);
+      border-radius: 6px;
+      color: #725b20;
+      background: rgba(184, 150, 62, .09);
+      font-size: 13px;
+    }
+    .sutra-cross-page-banner--confirmed {
+      border-color: rgba(54, 124, 92, .35);
+      color: #2f6c50;
+      background: rgba(54, 124, 92, .08);
+    }
+    body.sutra-same-source-target .proposal-empty--invitation,
+    body.sutra-same-source-target .add-translation-btn {
+      display: none !important;
+    }
+    body.sutra-same-source-target .segment-card__header {
+      margin-bottom: 4px !important;
+    }
+    .translation-editor .editor-header {
+      align-items: flex-start !important;
+      gap: 8px !important;
+    }
+    .translation-editor .persona-selector {
+      flex: 1 1 auto !important;
+      min-width: 0 !important;
+    }
+    .translation-editor__collapse,
+    .translation-editor__collapse-bottom {
+      margin-left: auto !important;
+      min-width: 52px !important;
+      flex-shrink: 0 !important;
+      color: #7b7369 !important;
+    }
+    .translation-editor__collapse:hover,
+    .translation-editor__collapse-bottom:hover {
+      color: var(--ink-deep) !important;
+      border-color: var(--paper-aged) !important;
+      background: var(--paper-warm) !important;
+    }
+    .segment-card.sutra-collapse-in-proofread-bar .translation-editor__collapse,
+    .segment-card.sutra-collapse-in-proofread-bar .translation-editor__collapse-bottom {
+      display: none !important;
+    }
+    .proofread-bar__collapse-before-revert {
+      margin-left: auto !important;
+      color: #7b7369 !important;
+    }
+    .proofread-bar__collapse-before-revert + button {
+      margin-left: 4px !important;
+    }
+  `;
+  document.head.appendChild(style);
+};
+__sutraInstallLocalStyles();
+
+const __sutraInstallProofreadBarCollapse = () => {
+  if (window.__sutraProofreadBarCollapseInstalled) return;
+  window.__sutraProofreadBarCollapseInstalled = true;
+
+  let timer = 0;
+
+  const collapseEditor = (card) => {
+    const textarea = card.querySelector(".translation-editor textarea");
+    const hasDraft = textarea && String(textarea.value || "").trim();
+    if (hasDraft && !window.confirm("收起编辑框？未提交的译文不会保存。")) return;
+    const nativeButton = card.querySelector(".translation-editor__collapse, .translation-editor__collapse-bottom");
+    if (nativeButton) nativeButton.click();
+  };
+
+  const refresh = () => {
+    timer = 0;
+    document.querySelectorAll(".segment-card").forEach((card) => {
+      const editor = card.querySelector(".translation-editor");
+      const bar = card.querySelector(".proofread-bar--done");
+      const revertButton = bar
+        ? Array.from(bar.querySelectorAll("button")).find((button) => (button.textContent || "").includes("撤回"))
+        : null;
+
+      if (!editor || !bar || !revertButton) {
+        const existing = card.querySelector(".proofread-bar__collapse-before-revert");
+        if (existing) existing.remove();
+        card.classList.remove("sutra-collapse-in-proofread-bar");
+        return;
+      }
+
+      let collapseButton = bar.querySelector(".proofread-bar__collapse-before-revert");
+      if (!collapseButton) {
+        collapseButton = document.createElement("button");
+        collapseButton.type = "button";
+        collapseButton.className = "btn btn--ghost btn--xs proofread-bar__collapse-before-revert";
+        collapseButton.textContent = "收起";
+        collapseButton.title = "收起新译文编辑框；未提交内容不会保存";
+      }
+
+      collapseButton.onclick = (event) => {
+        event.stopPropagation();
+        collapseEditor(card);
+      };
+
+      if (collapseButton.nextSibling !== revertButton) {
+        bar.insertBefore(collapseButton, revertButton);
+      }
+      card.classList.add("sutra-collapse-in-proofread-bar");
+    });
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 80);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+  window.addEventListener("focus", schedule);
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraInstallProofreadBarCollapse();
+
+const __sutraInstallSameSourceTargetGuard = () => {
+  if (window.__sutraSameSourceTargetGuardInstalled) return;
+  window.__sutraSameSourceTargetGuardInstalled = true;
+
+  let timer = 0;
+
+  const sourceLang = () => {
+    const select = document.querySelector(".chain-indicator select.chain-tag");
+    if (select && select.value) return select.value;
+    const tag = document.querySelector(".chain-indicator .chain-tag");
+    const classText = tag ? String(tag.className || "") : "";
+    const match = classText.match(/chain-tag--([a-z]+)/);
+    return match ? match[1] : "";
+  };
+
+  const targetLang = () => {
+    const tab = document.querySelector(".translation-panel .lang-tab.active, .lang-tabs .lang-tab.active");
+    const text = tab ? (tab.textContent || "") : "";
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return "";
+  };
+
+  const refresh = () => {
+    timer = 0;
+    const source = sourceLang();
+    const target = targetLang();
+    document.body.classList.toggle("sutra-same-source-target", Boolean(source && target && source === target));
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 100);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+  window.addEventListener("sutra:file-router:direct-text", schedule);
+  window.addEventListener("focus", schedule);
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraInstallSameSourceTargetGuard();
+
+window.__sutraApplyRightPanelTargetLanguage = (desiredValue) => {
+  const normalizeText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const labelToValue = (label) => {
+    const text = normalizeText(label);
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return text.toLowerCase() || "unknown";
+  };
+  const setHidden = (element, hidden) => {
+    if (!(element instanceof HTMLElement)) return;
+    element.classList.toggle("sutra-target-persona-hidden", Boolean(hidden));
+  };
+  const englishRoleNameAllowlist = new Set(["全部", "学术直译", "一行禅师", "通俗当代版", "钦哲仁波切"]);
+  // 中文译者不属于英文目标语言：英文译文栏不要显示这些角色。
+  const chineseTranslatorNames = new Set(["鸠摩罗什", "唐玄奘", "宣化上人"]);
+  const roleAllowedForTarget = (name, target) => {
+    if (!name) return false;
+    if (target === "en") return englishRoleNameAllowlist.has(name) && !chineseTranslatorNames.has(name);
+    return true;
+  };
+  const dedupeVisibleRoleButtons = (buttons, target) => {
+    const keepers = new Map();
+    buttons.forEach((button) => {
+      const name = normalizeText(button.textContent);
+      const currentlyHidden = button.classList.contains("sutra-target-persona-hidden");
+      const allowed = roleAllowedForTarget(name, target);
+      if (!name || currentlyHidden || !allowed) return;
+      // Keep the later duplicate so same-name custom personas override builtins.
+      keepers.set(name, button);
+    });
+    let firstVisible = null;
+    buttons.forEach((button) => {
+      const name = normalizeText(button.textContent);
+      const currentlyHidden = button.classList.contains("sutra-target-persona-hidden");
+      const allowed = roleAllowedForTarget(name, target);
+      const keeper = keepers.get(name);
+      const hidden = currentlyHidden || !allowed || Boolean(keeper && keeper !== button);
+      setHidden(button, hidden);
+      if (!hidden && !firstVisible) firstVisible = button;
+    });
+    const active = buttons.find((button) => button.classList.contains("active"));
+    if (active && active.classList.contains("sutra-target-persona-hidden") && firstVisible) {
+      firstVisible.click();
+    }
+  };
+  document.querySelectorAll(".translation-panel .lang-tabs").forEach((tabs) => {
+    if (!(tabs instanceof HTMLElement)) return;
+    const languageButtons = Array.from(tabs.children)
+      .filter((element) => element instanceof HTMLElement && element.classList.contains("lang-tab"));
+    if (languageButtons.length <= 1) return;
+
+    const active = languageButtons.find((button) => button.classList.contains("active") || button.getAttribute("aria-selected") === "true");
+    const desiredButton = languageButtons.find((button) => labelToValue(button.textContent) === desiredValue) || active || languageButtons[0];
+    const desiredIndex = Math.max(0, languageButtons.indexOf(desiredButton));
+    if (desiredButton && desiredButton !== active) desiredButton.click();
+
+    const personaButtons = Array.from(tabs.querySelectorAll(".persona-chip"))
+      .filter((button) => button instanceof HTMLElement);
+    const globalButtons = personaButtons.filter((button) => normalizeText(button.textContent) === "全部");
+    const roleButtons = personaButtons.filter((button) => normalizeText(button.textContent) !== "全部");
+    const groupSize = languageButtons.length > 0 ? Math.ceil(roleButtons.length / languageButtons.length) : roleButtons.length;
+    const start = desiredIndex * groupSize;
+    const end = start + groupSize;
+
+    globalButtons.forEach((button) => setHidden(button, false));
+    roleButtons.forEach((button, index) => {
+      const name = normalizeText(button.textContent);
+      const outsideTargetGroup = !(index >= start && index < end);
+      const disallowedForTarget = !roleAllowedForTarget(name, desiredValue);
+      setHidden(button, outsideTargetGroup || disallowedForTarget);
+    });
+    dedupeVisibleRoleButtons(roleButtons, desiredValue);
+  });
+  document.querySelectorAll(".translation-editor .persona-selector").forEach((container) => {
+    const buttons = Array.from(container.querySelectorAll(".persona-chip"))
+      .filter((button) => button instanceof HTMLElement);
+    dedupeVisibleRoleButtons(buttons, desiredValue);
+  });
+};
+
+const __sutraInstallTargetLanguageDropdown = () => {
+  if (window.__sutraTargetLanguageDropdownInstalled) return;
+  window.__sutraTargetLanguageDropdownInstalled = true;
+
+  const storageKey = "sutra_target_lang_preference";
+  let timer = 0;
+
+  const normalizeText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+
+  const labelToValue = (label) => {
+    const text = normalizeText(label);
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return text.toLowerCase() || "unknown";
+  };
+
+  const collectTargetButtons = () => Array.from(document.querySelectorAll(".translation-panel .lang-tabs .lang-tab"))
+    .filter((button) => normalizeText(button.textContent));
+
+  const currentValueFromButtons = (buttons) => {
+    const active = buttons.find((button) => button.classList.contains("active") || button.getAttribute("aria-selected") === "true");
+    return active ? labelToValue(active.textContent) : "";
+  };
+
+  const ensureSelect = (chainContainer, targetDisplay) => {
+    let wrapper = chainContainer.querySelector(".sutra-target-lang-dropdown");
+    if (!wrapper) {
+      wrapper = document.createElement("div");
+      wrapper.className = "sutra-target-lang-dropdown";
+      const select = document.createElement("select");
+      select.className = "sutra-target-lang-select";
+      select.setAttribute("aria-label", "目标语言");
+      select.addEventListener("change", () => {
+        const buttons = collectTargetButtons();
+        const match = buttons.find((button) => labelToValue(button.textContent) === select.value);
+        if (!match) return;
+        localStorage.setItem(storageKey, select.value);
+        if (!(match.classList.contains("active") || match.getAttribute("aria-selected") === "true")) {
+          match.click();
+        }
+      });
+      wrapper.appendChild(select);
+      chainContainer.insertBefore(wrapper, targetDisplay || null);
+    }
+    return wrapper.querySelector("select");
+  };
+
+  const sync = () => {
+    timer = 0;
+    const chainContainer = document.querySelector(".chain-indicator");
+    if (!(chainContainer instanceof HTMLElement)) return;
+    const targetDisplay = Array.from(chainContainer.querySelectorAll(".chain-tag"))
+      .find((element) => !(element instanceof HTMLSelectElement) && normalizeText(element.textContent) && !element.closest(".sutra-target-lang-dropdown"));
+    if (!(targetDisplay instanceof HTMLElement)) return;
+    const buttons = collectTargetButtons();
+    if (!buttons.length) return;
+
+    const select = ensureSelect(chainContainer, targetDisplay);
+    const options = buttons.map((button) => ({
+      value: labelToValue(button.textContent),
+      label: normalizeText(button.textContent),
+    }));
+    const signature = JSON.stringify(options);
+    if (select.dataset.signature !== signature) {
+      select.innerHTML = "";
+      options.forEach((option) => {
+        const el = document.createElement("option");
+        el.value = option.value;
+        el.textContent = option.label;
+        select.appendChild(el);
+      });
+      select.dataset.signature = signature;
+    }
+
+    const activeValue = currentValueFromButtons(buttons);
+    const storedValue = localStorage.getItem(storageKey) || "";
+    const preferredValue = options.some((option) => option.value === storedValue) ? storedValue : activeValue;
+
+    if (preferredValue && select.value !== preferredValue) {
+      select.value = preferredValue;
+    }
+    if (preferredValue && preferredValue !== activeValue) {
+      const match = buttons.find((button) => labelToValue(button.textContent) === preferredValue);
+      if (match && !(match.classList.contains("active") || match.getAttribute("aria-selected") === "true")) {
+        match.click();
+        return;
+      }
+    }
+
+    if (activeValue) {
+      localStorage.setItem(storageKey, activeValue);
+    }
+    const activeButton = buttons.find((button) => labelToValue(button.textContent) === (select.value || activeValue));
+    targetDisplay.textContent = activeButton ? normalizeText(activeButton.textContent) : targetDisplay.textContent;
+    targetDisplay.className = `chain-tag chain-tag--${select.value || activeValue || "en"} sutra-target-lang-display-hidden`;
+    window.__sutraApplyRightPanelTargetLanguage(select.value || activeValue || preferredValue);
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(sync, 100);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+  window.addEventListener("sutra:file-router:direct-text", schedule);
+  window.addEventListener("focus", schedule);
+  schedule();
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraInstallTargetLanguageDropdown();
+
+const __sutraInstallRightPanelTargetLanguageGuard = () => {
+  if (window.__sutraRightPanelTargetLanguageGuardInstalled) return;
+  window.__sutraRightPanelTargetLanguageGuardInstalled = true;
+
+  let timer = 0;
+
+  const normalizeText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+
+  const labelToValue = (label) => {
+    const text = normalizeText(label);
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return text.toLowerCase() || "unknown";
+  };
+
+  const topTargetValue = () => {
+    const select = document.querySelector(".chain-indicator .sutra-target-lang-select");
+    if (select instanceof HTMLSelectElement && select.value) return select.value;
+    const display = document.querySelector(".chain-indicator .chain-tag.sutra-target-lang-display-hidden");
+    return display ? labelToValue(display.textContent) : "";
+  };
+
+  const setHidden = (element, hidden) => {
+    if (!(element instanceof HTMLElement)) return;
+    element.classList.toggle("sutra-target-persona-hidden", Boolean(hidden));
+  };
+
+  const syncOneTabs = (tabs) => {
+    if (!(tabs instanceof HTMLElement)) return;
+    const languageButtons = Array.from(tabs.querySelectorAll(":scope > .lang-tab"))
+      .filter((button) => button instanceof HTMLElement);
+    if (languageButtons.length <= 1) return;
+
+    const desired = topTargetValue();
+    const active = languageButtons.find((button) => button.classList.contains("active") || button.getAttribute("aria-selected") === "true");
+    const desiredButton = languageButtons.find((button) => labelToValue(button.textContent) === desired) || active || languageButtons[0];
+    const desiredIndex = Math.max(0, languageButtons.indexOf(desiredButton));
+
+    if (desiredButton && desiredButton !== active) {
+      desiredButton.click();
+    }
+
+    const personaButtons = Array.from(tabs.querySelectorAll(".persona-chip"))
+      .filter((button) => button instanceof HTMLElement);
+    const globalButtons = personaButtons.filter((button) => normalizeText(button.textContent) === "全部");
+    const roleButtons = personaButtons.filter((button) => normalizeText(button.textContent) !== "全部");
+    const groupSize = languageButtons.length > 0 ? Math.ceil(roleButtons.length / languageButtons.length) : roleButtons.length;
+    const start = desiredIndex * groupSize;
+    const end = start + groupSize;
+
+    globalButtons.forEach((button) => setHidden(button, false));
+    roleButtons.forEach((button, index) => setHidden(button, !(index >= start && index < end)));
+  };
+
+  const refresh = () => {
+    timer = 0;
+    window.__sutraApplyRightPanelTargetLanguage?.(topTargetValue());
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 120);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+  window.addEventListener("focus", schedule);
+  window.addEventListener("sutra:file-router:direct-text", schedule);
+  schedule();
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraInstallRightPanelTargetLanguageGuard();
+
+const __sutraInstallFileRouter = () => {
+  if (window.__sutraLocalFileRouterInstalled) return;
+  window.__sutraLocalFileRouterInstalled = true;
+  document.documentElement.setAttribute("data-sutra-file-router", "ready");
+  const originalFetch = window.fetch.bind(window);
+  const PDFJS_URL = "/pdfjs/pdf.min.js";
+  const PDFJS_WORKER_URL = "/pdfjs/pdf.worker.min.js";
+  const MIN_EXTRACTED_CHARS = 40;
+  const MIN_PAGE_EXTRACTED_CHARS = 2;
+  const targetDropdownStorageKey = "sutra_target_lang_preference";
+
+  const normalizeTargetText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const targetLabelToValue = (label) => {
+    const text = normalizeTargetText(label);
+    if (text.includes("English")) return "en";
+    if (text.includes("中文")) return "zh";
+    if (text.includes("藏文")) return "bo";
+    if (text.includes("梵文")) return "sa";
+    return text.toLowerCase() || "unknown";
+  };
+  const syncTopTargetDropdown = () => {
+    const chainContainer = document.querySelector(".chain-indicator");
+    if (!(chainContainer instanceof HTMLElement)) return;
+    const targetDisplay = Array.from(chainContainer.querySelectorAll(".chain-tag"))
+      .find((element) => !(element instanceof HTMLSelectElement) && normalizeTargetText(element.textContent));
+    if (!(targetDisplay instanceof HTMLElement)) return;
+    const buttons = Array.from(document.querySelectorAll(".translation-panel .lang-tabs .lang-tab"))
+      .filter((button) => normalizeTargetText(button.textContent));
+    if (!buttons.length) return;
+
+    let wrapper = chainContainer.querySelector(".sutra-target-lang-dropdown");
+    if (!wrapper) {
+      wrapper = document.createElement("div");
+      wrapper.className = "sutra-target-lang-dropdown";
+      const select = document.createElement("select");
+      select.className = "sutra-target-lang-select";
+      select.setAttribute("aria-label", "目标语言");
+      select.addEventListener("change", () => {
+        const match = buttons.find((button) => targetLabelToValue(button.textContent) === select.value);
+        if (!match) return;
+        localStorage.setItem(targetDropdownStorageKey, select.value);
+        if (!(match.classList.contains("active") || match.getAttribute("aria-selected") === "true")) match.click();
+      });
+      wrapper.appendChild(select);
+      chainContainer.insertBefore(wrapper, targetDisplay);
+    }
+
+    const select = wrapper.querySelector("select");
+    if (!(select instanceof HTMLSelectElement)) return;
+    const options = buttons.map((button) => ({
+      value: targetLabelToValue(button.textContent),
+      label: normalizeTargetText(button.textContent),
+      active: button.classList.contains("active") || button.getAttribute("aria-selected") === "true",
+    }));
+    const signature = JSON.stringify(options.map(({ value, label }) => ({ value, label })));
+    if (select.dataset.signature !== signature) {
+      select.innerHTML = "";
+      options.forEach((option) => {
+        const el = document.createElement("option");
+        el.value = option.value;
+        el.textContent = option.label;
+        select.appendChild(el);
+      });
+      select.dataset.signature = signature;
+    }
+    const activeValue = (options.find((option) => option.active) || {}).value || "";
+    const storedValue = localStorage.getItem(targetDropdownStorageKey) || "";
+    const preferredValue = options.some((option) => option.value === storedValue) ? storedValue : activeValue;
+    if (preferredValue && select.value !== preferredValue) select.value = preferredValue;
+    targetDisplay.textContent = options.find((option) => option.value === (select.value || activeValue))?.label || targetDisplay.textContent;
+    targetDisplay.className = `chain-tag chain-tag--${select.value || activeValue || "en"} sutra-target-lang-display-hidden`;
+    window.__sutraApplyRightPanelTargetLanguage?.(select.value || activeValue || preferredValue);
+  };
+  const scheduleTopTargetDropdown = () => window.setTimeout(syncTopTargetDropdown, 60);
+  new MutationObserver(scheduleTopTargetDropdown).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+  [100, 500, 1200, 2500].forEach((delay) => window.setTimeout(syncTopTargetDropdown, delay));
+  window.addEventListener("focus", scheduleTopTargetDropdown);
+
+  const toUrl = (input) => {
+    const raw = typeof input === "string" ? input : input && input.url;
+    if (!raw) return null;
+    try {
+      return new URL(raw, location.origin);
+    } catch {
+      return null;
+    }
+  };
+
+  const uploadRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    let match = url.pathname.match(/^\/api\/chapters\/([^/]+)\/upload$/);
+    if (match) return { kind: "chapter", id: match[1] };
+    match = url.pathname.match(/^\/api\/projects\/([^/]+)\/upload$/);
+    if (match) return { kind: "project", id: match[1] };
+    return null;
+  };
+
+  const pagesRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    const match = url.pathname.match(/^\/api\/chapters\/([^/]+)\/pages$/);
+    return match ? { chapterId: match[1] } : null;
+  };
+
+  const segmentsRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    const match = url.pathname.match(/^\/api\/pages\/([^/]+)\/segments$/);
+    return match ? { pageId: match[1] } : null;
+  };
+
+  const pageOcrRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    const match = url.pathname.match(/^\/api\/pages\/([^/]+)\/ocr$/);
+    return match ? { pageId: match[1] } : null;
+  };
+
+  const chapterOcrAllRouteFor = (input) => {
+    const url = toUrl(input);
+    if (!url || url.origin !== location.origin) return null;
+    const match = url.pathname.match(/^\/api\/chapters\/([^/]+)\/ocr-all$/);
+    return match ? { chapterId: match[1] } : null;
+  };
+
+  const methodOf = (init = {}) => String(init.method || "GET").toUpperCase();
+
+  const getUploadFile = (init = {}) => {
+    const body = init.body;
+    if (!(body instanceof FormData)) return null;
+    const file = body.get("file");
+    return file instanceof File ? file : null;
+  };
+
+  const extensionOf = (file) => {
+    const name = (file && file.name ? file.name : "").toLowerCase();
+    const index = name.lastIndexOf(".");
+    return index >= 0 ? name.slice(index + 1) : "";
+  };
+
+  const chapterTitleFor = (file) => {
+    const name = file && file.name ? String(file.name) : "";
+    const clean = name.replace(/\.[^.]+$/, "").trim();
+    return clean || "文本层导入";
+  };
+
+  const compactText = (text) => String(text || "").replace(/\s+/g, "");
+
+  const hasEnoughText = (text) => compactText(text).length >= MIN_EXTRACTED_CHARS;
+
+  const hasEnoughPageText = (text) => {
+    const value = compactText(text);
+    return value.length >= MIN_PAGE_EXTRACTED_CHARS && /[\u3400-\u9fff\u0f00-\u0fffA-Za-z0-9]/.test(value);
+  };
+
+  const pageTextLength = (page) => compactText(page && page.digital_text).length;
+
+  const isDirectTextPage = (page) => (
+    page &&
+    page.source_type === "text" &&
+    page.ocr_status === "done" &&
+    pageTextLength(page) >= MIN_EXTRACTED_CHARS
+  );
+
+  const isLocalSmokeTextPage = (page) => {
+    const sample = String(page && page.digital_text ? page.digital_text : "").slice(0, 240).toLowerCase();
+    return sample.includes("as yilin file router test pdf text layer");
+  };
+
+  const pageRedirects = new Map();
+  const pageCache = new Map();
+  const pdfDocumentCache = new Map();
+  const directReadInFlight = new Map();
+  const directReadTried = new Set();
+
+  const rememberPages = (pages, chapterId) => {
+    if (!Array.isArray(pages)) return;
+    for (const page of pages) {
+      if (!page || !page.id) continue;
+      pageCache.set(page.id, {
+        ...page,
+        chapter_id: page.chapter_id || chapterId,
+      });
+    }
+  };
+
+  const isEditablePdfPage = (page) => (
+    page &&
+    page.source_type === "pdf_page" &&
+    page.chapter_id &&
+    page.source_file &&
+    String(page.source_file).toLowerCase().endsWith(".pdf")
+  );
+
+  const detectSourceLang = (text, fallback = "zh") => {
+    const value = String(text || "");
+    const zhCount = (value.match(/[\u3400-\u9fff]/g) || []).length;
+    const boCount = (value.match(/[\u0f00-\u0fff]/g) || []).length;
+    if (zhCount >= Math.max(8, boCount * 2)) return "zh";
+    if (boCount >= Math.max(8, zhCount * 2)) return "bo";
+    return fallback || "zh";
+  };
+
+  const normalizePages = (pages, chapterId) => {
+    if (!Array.isArray(pages)) return pages;
+    const pdfPages = pages.filter((page) => page && page.source_type === "pdf_page");
+    const directTextPages = pages.filter(isDirectTextPage).filter((page) => !isLocalSmokeTextPage(page));
+    if (!pdfPages.length || !directTextPages.length) return pages;
+
+    const selectedPdfPages = pdfPages
+      .slice()
+      .sort((a, b) => (
+        Number(a.page_number || 0) - Number(b.page_number || 0) ||
+        new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+      ));
+    if (!selectedPdfPages.length) return pages;
+
+    console.info("AS译林本地文件路由：章节存在 PDF 页，保留原图页并隐藏旧直读文本页", {
+      chapterId,
+      original_pages: pages.length,
+      pdf_pages: selectedPdfPages.length,
+      hidden_text_pages: directTextPages.length,
+    });
+
+    return selectedPdfPages.map((page, index) => ({
+      ...page,
+      page_number: index + 1,
+      source_type: "pdf_page",
+    }));
+  };
+
+  const rewritePagesResponse = async (input, response) => {
+    const route = pagesRouteFor(input);
+    if (!route || !response || !response.ok) return response;
+    const contentType = response.headers && response.headers.get ? response.headers.get("content-type") || "" : "";
+    if (!contentType.includes("application/json")) return response;
+    try {
+      const payload = await response.clone().json();
+      rememberPages(payload, route.chapterId);
+      const normalized = normalizePages(payload, route.chapterId);
+      if (normalized === payload) return response;
+      const headers = new Headers(response.headers);
+      headers.set("Content-Type", "application/json");
+      headers.delete("Content-Length");
+      headers.delete("content-length");
+      return new Response(JSON.stringify(normalized), {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    } catch (error) {
+      console.warn("AS译林本地文件路由：页面列表修正失败，使用原始响应", error);
+      return response;
+    }
+  };
+
+  const headersToObject = (headers) => {
+    const out = {};
+    if (!headers) return out;
+    if (headers instanceof Headers) {
+      headers.forEach((value, key) => {
+        out[key] = value;
+      });
+      return out;
+    }
+    if (Array.isArray(headers)) {
+      for (const [key, value] of headers) out[key] = value;
+      return out;
+    }
+    return { ...headers };
+  };
+
+  const jsonHeadersFrom = (headers) => {
+    const out = headersToObject(headers);
+    out["Content-Type"] = "application/json";
+    return out;
+  };
+
+  const loadPdfJs = async () => {
+    if (window.pdfjsLib) return window.pdfjsLib;
+    await new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${PDFJS_URL}"]`);
+      if (existing) {
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener("error", reject, { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = PDFJS_URL;
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("PDF.js failed to load"));
+      document.head.appendChild(script);
+    });
+    if (!window.pdfjsLib) throw new Error("PDF.js is not available");
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+    return window.pdfjsLib;
+  };
+
+  const extractPdfJsPageText = async (page) => {
+    const textContent = await page.getTextContent();
+    const items = Array.isArray(textContent.items) ? textContent.items : [];
+    const rows = new Map();
+    for (const item of items) {
+      const str = "str" in item ? String(item.str || "") : "";
+      if (!str.trim()) continue;
+      const transform = Array.isArray(item.transform) ? item.transform : [];
+      const x = Number(transform[4] || 0);
+      const y = Number(transform[5] || 0);
+      const key = String(Math.round(y / 4) * 4);
+      if (!rows.has(key)) rows.set(key, []);
+      rows.get(key).push({ str, x });
+    }
+    const pageRows = [...rows.entries()]
+      .sort((a, b) => Number(b[0]) - Number(a[0]))
+      .map(([rowY, row]) => {
+        const sorted = row.sort((a, b) => a.x - b.x);
+        return {
+          y: Number(rowY),
+          x: Number(sorted[0] && sorted[0].x || 0),
+          text: sorted
+            .map((item) => item.str)
+            .join("")
+            .replace(/[ \t]+/g, " ")
+            .trim(),
+        };
+      })
+      .filter((row) => row.text);
+    const lineGaps = pageRows.slice(1)
+      .map((row, index) => Math.abs(pageRows[index].y - row.y))
+      .filter((gap) => gap > 0 && gap < 80)
+      .sort((a, b) => a - b);
+    const typicalGap = lineGaps.length ? lineGaps[Math.floor(lineGaps.length / 2)] : 12;
+    const pageLines = [];
+    pageRows.forEach((row, index) => {
+      const previous = index > 0 ? pageRows[index - 1] : null;
+      const next = index + 1 < pageRows.length ? pageRows[index + 1] : null;
+      const hasLargeVerticalGap = Boolean(previous && Math.abs(previous.y - row.y) > typicalGap * 1.55);
+      const startsIndentedParagraph = Boolean(next && row.x - next.x >= 8);
+      if (pageLines.length && (hasLargeVerticalGap || startsIndentedParagraph)) pageLines.push("");
+      pageLines.push(row.text);
+    });
+    return pageLines.join("\n");
+  };
+
+  const extractPdfText = async (file) => {
+    const pdfjsLib = await loadPdfJs();
+    const data = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data }).promise;
+    const pages = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const text = await extractPdfJsPageText(page);
+      if (text) pages.push(text);
+    }
+    return pages.join("\n\n");
+  };
+
+  const storagePdfUrlForPage = (page) => {
+    if (!isEditablePdfPage(page)) return null;
+    const filename = String(page.source_file).split("/").map(encodeURIComponent).join("/");
+    return `/storage/${page.chapter_id}/${filename}`;
+  };
+
+  const getStoredPdf = async (page) => {
+    const pdfjsLib = await loadPdfJs();
+    const url = storagePdfUrlForPage(page);
+    if (!url) return null;
+    if (!pdfDocumentCache.has(url)) {
+      pdfDocumentCache.set(url, (async () => {
+        const response = await originalFetch(url);
+        if (!response.ok) throw new Error(`PDF 获取失败 HTTP ${response.status}`);
+        const data = await response.arrayBuffer();
+        return pdfjsLib.getDocument({ data }).promise;
+      })());
+    }
+    return pdfDocumentCache.get(url);
+  };
+
+  const extractStoredPdfPageText = async (page) => {
+    const pdf = await getStoredPdf(page);
+    if (!pdf) return "";
+    const pageNumber = Number(page.pdf_page_index || page.page_number || 1);
+    const safePageNumber = Math.max(1, Math.min(pdf.numPages, pageNumber));
+    const pdfPage = await pdf.getPage(safePageNumber);
+    return extractPdfJsPageText(pdfPage);
+  };
+
+  const extractText = async (file) => {
+    const ext = extensionOf(file);
+    if (ext === "pdf") return extractPdfText(file);
+    if (ext === "md" || ext === "markdown" || ext === "txt") return file.text();
+    return null;
+  };
+
+  const terminalPunctuationFor = (sourceLang) => {
+    if (sourceLang === "bo") return /[།༎༏༐༑༔]$/;
+    return /[。！？!?；;]$/;
+  };
+
+  const isLikelyStandaloneLine = (line, sourceLang) => {
+    const value = compactText(line);
+    if (!value) return false;
+    if (/^[-*+•·]\s+/.test(line) || /^\d+[.)、]/.test(line)) return true;
+    if (sourceLang === "bo") return value.length <= 12 && !terminalPunctuationFor(sourceLang).test(value);
+    return value.length <= 12 && !/[，,、。！？!?；;：:]/.test(value);
+  };
+
+  const isLikelyHeadingLine = (line, sourceLang) => {
+    if (sourceLang === "bo") return false;
+    const value = compactText(line);
+    if (!value || value.length > 40) return false;
+    return /^(?:第[0-9一二三四五六七八九十百千万零〇两]+[章节篇部卷讲课]|序言|前言|引言|绪论|结语|后记|附录)(?:[：:、.]|$)/.test(value);
+  };
+
+  const normalizeDirectTextForSegmentation = (text, sourceLang, extension) => {
+    const normalized = String(text || "")
+      .replace(/\r\n?/g, "\n")
+      .replace(/\u00a0/g, " ");
+    if (extension !== "pdf") return normalized;
+
+    const blocks = [];
+    let buffer = [];
+
+    const flush = () => {
+      const value = buffer
+        .join("")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\s+([，,。！？!?；;：:])/g, "$1")
+        .trim();
+      if (value) blocks.push(value);
+      buffer = [];
+    };
+
+    for (const rawLine of normalized.split("\n")) {
+      const line = rawLine.replace(/[ \t]+/g, " ").trim();
+      if (!line) {
+        flush();
+        continue;
+      }
+      if (isLikelyHeadingLine(line, sourceLang)) {
+        flush();
+        blocks.push(line);
+        continue;
+      }
+      if (!buffer.length && isLikelyStandaloneLine(line, sourceLang)) {
+        blocks.push(line);
+        continue;
+      }
+      buffer.push(line);
+    }
+    flush();
+
+    return blocks.length ? blocks.join("\n") : normalized;
+  };
+
+  const resolveProjectChapter = async (projectId, init, file) => {
+    const createResponse = await originalFetch(`/api/projects/${projectId}/chapters`, {
+      method: "POST",
+      headers: jsonHeadersFrom(init.headers),
+      body: JSON.stringify({ title: chapterTitleFor(file) }),
+    });
+    if (!createResponse.ok) return null;
+    const chapter = await createResponse.json();
+    return chapter && chapter.id ? chapter.id : null;
+  };
+
+  const routeTextUpload = async (route, init) => {
+    const file = getUploadFile(init);
+    if (!file) return null;
+    const ext = extensionOf(file);
+    if (ext === "pdf") return null;
+    if (!["md", "markdown", "txt"].includes(ext)) return null;
+
+    const text = await extractText(file);
+    if (!text || !hasEnoughText(text)) return null;
+
+    const form = init.body;
+    const sourceLang = detectSourceLang(text, String(form.get("source_lang") || "zh"));
+    const chapterId = route.kind === "chapter" ? route.id : await resolveProjectChapter(route.id, init, file);
+    if (!chapterId) return null;
+    const segmentedText = normalizeDirectTextForSegmentation(text, sourceLang, ext);
+    const blockCount = segmentedText.split("\n").filter((line) => line.trim()).length;
+
+    const metadata = {
+      filename: file.name,
+      extension: ext,
+      extracted_chars: compactText(text).length,
+      segmented_blocks: blockCount,
+      segmentation: ext === "pdf" ? "paragraph" : "source",
+      route: route.kind,
+    };
+    const payload = {
+      content: segmentedText,
+      source_lang: sourceLang,
+      split_mode: "line",
+    };
+
+    console.info("AS译林本地文件路由：文本层直读，跳过 OCR", metadata);
+    const response = await originalFetch(`/api/chapters/${chapterId}/upload-text`, {
+      method: "POST",
+      headers: jsonHeadersFrom(init.headers),
+      body: JSON.stringify(payload),
+    });
+    if (response.ok) {
+      window.dispatchEvent(new CustomEvent("sutra:file-router:direct-text", { detail: metadata }));
+    }
+    return response;
+  };
+
+  const responseFromJson = (payload, status = 200) => new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  const showDirectReadNotice = (message, type = "info", timeout = 4200) => {
+    if (!message || !document || !document.body) return;
+    const id = "__sutra-local-direct-read-notice";
+    let notice = document.getElementById(id);
+    if (!notice) {
+      notice = document.createElement("div");
+      notice.id = id;
+      notice.style.position = "fixed";
+      notice.style.top = "18px";
+      notice.style.right = "18px";
+      notice.style.zIndex = "2147483647";
+      notice.style.maxWidth = "460px";
+      notice.style.padding = "12px 16px";
+      notice.style.borderRadius = "8px";
+      notice.style.boxShadow = "0 14px 36px rgba(33, 27, 18, 0.2)";
+      notice.style.fontSize = "14px";
+      notice.style.lineHeight = "1.55";
+      notice.style.fontWeight = "600";
+      notice.style.transition = "opacity 160ms ease, transform 160ms ease";
+      document.body.appendChild(notice);
+    }
+    const palette = {
+      info: ["#f9f4e7", "#c59d36", "#5a4b22"],
+      success: ["#edf8f1", "#2f8a54", "#24543a"],
+      warning: ["#fff7e6", "#d4911c", "#6a470f"],
+      error: ["#fff0ed", "#cf5647", "#8b2f25"],
+    };
+    const [background, border, color] = palette[type] || palette.info;
+    notice.textContent = message;
+    notice.style.background = background;
+    notice.style.border = `1px solid ${border}`;
+    notice.style.color = color;
+    notice.style.opacity = "1";
+    notice.style.transform = "translateY(0)";
+    window.clearTimeout(window.__sutraLocalDirectReadNoticeTimer);
+    window.__sutraLocalDirectReadNoticeTimer = window.setTimeout(() => {
+      notice.style.opacity = "0";
+      notice.style.transform = "translateY(-6px)";
+    }, timeout);
+  };
+
+  const revealWorkbenchForDirectRead = (message) => {
+    window.setTimeout(() => {
+      const candidates = Array.from(document.querySelectorAll("button, [role='tab'], a"))
+        .filter((node) => /工作台/.test((node.textContent || "").trim()));
+      const workbenchTab = candidates.find((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      if (!workbenchTab) {
+        showDirectReadNotice(`${message}；请点击顶部「工作台」查看源文分段。`, "warning", 7600);
+        return;
+      }
+      const className = String(workbenchTab.className || "");
+      const isActive = workbenchTab.getAttribute("aria-selected") === "true" || /active|selected|current/.test(className);
+      if (!isActive) workbenchTab.click();
+      window.setTimeout(() => {
+        const hasSegmentCards = Boolean(document.querySelector(".segments-list .segment-card"));
+        if (hasSegmentCards) {
+          showDirectReadNotice(`${message}；已切回「工作台」查看源文分段。`, "success", 5200);
+        } else {
+          showDirectReadNotice(`${message}；如右栏仍未出现分段，请再次点击顶部「工作台」。`, "warning", 7600);
+        }
+      }, 450);
+    }, 120);
+  };
+
+  const directReadFailure = (message, extra = {}) => {
+    showDirectReadNotice(message, "error", 7200);
+    return responseFromJson({
+      error: message,
+      routed: "pdf_text_layer",
+      ...extra,
+    }, 422);
+  };
+
+  const installConfirmTextGuard = () => {
+    if (window.__sutraLocalDirectReadConfirmGuardInstalled) return;
+    window.__sutraLocalDirectReadConfirmGuardInstalled = true;
+    const originalConfirm = window.confirm.bind(window);
+    window.confirm = (message) => {
+      const rawText = String(message || "");
+      const text = String(message || "")
+        .replace(/对章节"([^"]+)"里所有 pending 页跑 OCR？/g, '对章节"$1"里所有 pending 页执行文本层直读？')
+        .replace(/每页一次 LLM Vision 调用，耗时取决于页数（每页 5–20 秒）。/g, "优先读取 PDF 文本层；无法读出有效文本时会停止并提示，不再自动识别。")
+        .replace(/OCR/g, "文本层直读")
+        .replace(/LLM Vision/g, "PDF 文本层");
+      const isDirectReadPrompt = /pending 页跑 OCR|pending 页执行文本层直读|这一页执行 OCR|PDF 文本层|LLM Vision/.test(rawText) || /文本层直读|PDF 文本层/.test(text);
+      if (isDirectReadPrompt) {
+        showDirectReadNotice("已开始 PDF 文本层直读，请稍候。", "info", 3200);
+        return true;
+      }
+      return originalConfirm(text);
+    };
+  };
+  installConfirmTextGuard();
+
+  const routePdfPageOcrAsText = async (pageId, init = {}) => {
+    const page = pageCache.get(pageId);
+    if (!isEditablePdfPage(page)) return null;
+    const text = await extractStoredPdfPageText(page);
+    if (!hasEnoughPageText(text)) {
+      return directReadFailure("该 PDF 页未读出有效文本层，已停止直读；请确认是否为扫描件后再手动 OCR。", {
+        page_id: pageId,
+        page_number: page.page_number,
+        extracted_chars: compactText(text).length,
+      });
+    }
+    const sourceLang = detectSourceLang(text, "zh");
+    const segmentedText = normalizeDirectTextForSegmentation(text, sourceLang, "pdf");
+    const blockCount = segmentedText.split("\n").filter((line) => line.trim()).length;
+    const payload = {
+      content: segmentedText,
+      source_lang: sourceLang,
+      split_mode: "line",
+    };
+    showDirectReadNotice(`正在直读 P${page.page_number || ""} 文本层...`, "info", 2600);
+    console.info("AS译林本地文件路由：当前 PDF 页有文本层，改用直接分段，跳过 OCR", {
+      page_id: pageId,
+      page_number: page.page_number,
+      source_file: page.source_file,
+      extracted_chars: compactText(text).length,
+      segmented_blocks: blockCount,
+      segmentation: "paragraph",
+      source_lang: sourceLang,
+    });
+    const response = await originalFetch(`/api/pages/${pageId}/resegment`, {
+      method: "POST",
+      headers: jsonHeadersFrom(init.headers),
+      body: JSON.stringify(payload),
+    });
+    let routedResponse = response;
+    if (response.ok) {
+      const responseBody = await response.clone().json().catch(() => ({}));
+      routedResponse = responseFromJson({
+        ...responseBody,
+        page_id: pageId,
+        page_number: page.page_number,
+        token_count: Number(responseBody.token_count || blockCount || 1),
+        segment_count: Number(responseBody.segment_count || blockCount || 1),
+        routed: "pdf_text_layer",
+      }, response.status);
+      pageCache.set(pageId, {
+        ...page,
+        ocr_status: "done",
+        digital_text: text,
+      });
+      window.dispatchEvent(new CustomEvent("sutra:file-router:direct-page-text", {
+        detail: { page_id: pageId, page_number: page.page_number, source_lang: sourceLang },
+      }));
+      if (typeof window.__sutraLocalMarkDirectReadDone === "function") {
+        window.__sutraLocalMarkDirectReadDone(page.page_number);
+      }
+      revealWorkbenchForDirectRead(`P${page.page_number || ""} 已直读完成，生成 ${blockCount} 段结构`);
+    } else {
+      showDirectReadNotice(`P${page.page_number || ""} 直读请求失败，请查看当前页错误提示。`, "error", 6200);
+    }
+    return routedResponse;
+  };
+
+  const shouldAutoDirectReadPage = (page) => (
+    isEditablePdfPage(page) &&
+    page.ocr_status !== "done" &&
+    !hasEnoughPageText(page.digital_text)
+  );
+
+  const ensurePdfPageTextSegments = async (pageId, init = {}) => {
+    const page = pageCache.get(pageId);
+    if (!shouldAutoDirectReadPage(page) || directReadTried.has(pageId)) return false;
+    if (!directReadInFlight.has(pageId)) {
+      directReadTried.add(pageId);
+      directReadInFlight.set(pageId, routePdfPageOcrAsText(pageId, init)
+        .then((response) => Boolean(response && response.ok))
+        .catch((error) => {
+          console.warn("AS译林本地文件路由：自动直读 PDF 文本层失败，保留原分段响应", {
+            page_id: pageId,
+            error,
+          });
+          return false;
+        })
+        .finally(() => {
+          directReadInFlight.delete(pageId);
+        }));
+    }
+    return directReadInFlight.get(pageId);
+  };
+
+  const routeChapterOcrAllAsText = async (chapterId, init) => {
+    const pages = [...pageCache.values()]
+      .filter((page) => page && page.chapter_id === chapterId && isEditablePdfPage(page))
+      .sort((a, b) => Number(a.page_number || 0) - Number(b.page_number || 0));
+    if (!pages.length) {
+      return responseFromJson({
+        error: "当前章节的 PDF 页面缓存尚未就绪，已停止直读；请刷新页面后重试，不会自动跑 OCR。",
+        total: 0,
+        done: 0,
+        errors: 1,
+        routed: "pdf_text_layer",
+      }, 409);
+    }
+
+    const targetPages = pages.filter(shouldAutoDirectReadPage);
+    if (!targetPages.length) {
+      const message = `当前章节没有待直读页面；已完成 ${pages.length} 页可直接查看右栏结构。`;
+      showDirectReadNotice(message, "success", 5200);
+      return responseFromJson({
+        total: pages.length,
+        target: 0,
+        done: 0,
+        errors: 0,
+        skipped: pages.length,
+        message,
+        routed: "pdf_text_layer",
+      });
+    }
+
+    showDirectReadNotice(`开始批量直读 ${targetPages.length} 个待处理页面...`, "info", 4200);
+    let done = 0;
+    let errors = 0;
+    const noTextPages = [];
+    let totalTokens = 0;
+    for (const page of targetPages) {
+      try {
+        const response = await routePdfPageOcrAsText(page.id, init);
+        if (!response || !response.ok) {
+          const failure = response
+            ? await response.clone().json().catch(() => ({}))
+            : {};
+          if (response && response.status === 422 && Number(failure.extracted_chars || 0) === 0) {
+            noTextPages.push(Number(page.page_number || 0));
+            continue;
+          }
+          errors += 1;
+          continue;
+        }
+        const data = await response.clone().json().catch(() => ({}));
+        totalTokens += Number(data.token_count || 0);
+        done += 1;
+      } catch (error) {
+        console.warn("AS译林本地文件路由：PDF 文本层批量分段失败", {
+          page_id: page.id,
+          error,
+        });
+        errors += 1;
+      }
+    }
+    const noText = noTextPages.length;
+    const noTextLabel = noTextPages.filter(Boolean).map((pageNumber) => `P${pageNumber}`).join("、");
+    const message = errors
+      ? `批量直读完成：${done} 页生成结构，${noText} 页没有文本层，${errors} 页请求失败。`
+      : noText
+        ? `批量直读完成：${done} 页生成结构；${noTextLabel || `${noText} 页`} 没有文本层，未生成分段。空白页可忽略，扫描页请手动 OCR。`
+        : `批量直读完成：${done} 页已生成右栏结构。`;
+    if (done > 0) {
+      revealWorkbenchForDirectRead(message);
+    } else {
+      showDirectReadNotice(message, errors ? "warning" : noText ? "info" : "success", 7200);
+    }
+    return responseFromJson({
+      total: targetPages.length,
+      done,
+      errors,
+      no_text: noText,
+      no_text_pages: noTextPages,
+      skipped: pages.length - targetPages.length,
+      message,
+      token_count: totalTokens,
+      routed: "pdf_text_layer",
+    });
+  };
+
+  window.fetch = async (input, init = {}) => {
+    const route = uploadRouteFor(input);
+    if (route && methodOf(init) === "POST" && getUploadFile(init)) {
+      try {
+        const routedResponse = await routeTextUpload(route, init);
+        if (routedResponse) return routedResponse;
+      } catch (error) {
+        console.warn("AS译林本地文件路由失败，回退原上传链路", error);
+      }
+    }
+    const method = methodOf(init);
+    if (method === "POST") {
+      const pageOcrRoute = pageOcrRouteFor(input);
+      if (pageOcrRoute) {
+        try {
+          const routedResponse = await routePdfPageOcrAsText(pageOcrRoute.pageId, init);
+          if (routedResponse) return routedResponse;
+        } catch (error) {
+          const page = pageCache.get(pageOcrRoute.pageId);
+          if (isEditablePdfPage(page)) {
+            console.warn("AS译林本地文件路由：PDF 页文本层分段失败，停止 OCR 回退", error);
+            return directReadFailure("PDF 页文本层直读失败，已停止；不会自动跑 OCR。", {
+              page_id: pageOcrRoute.pageId,
+              message: error && error.message ? error.message : String(error),
+            });
+          }
+          console.warn("AS译林本地文件路由：非 PDF 页文本层分段失败，回退 OCR", error);
+        }
+      }
+      const chapterOcrAllRoute = chapterOcrAllRouteFor(input);
+      if (chapterOcrAllRoute) {
+        try {
+          const routedResponse = await routeChapterOcrAllAsText(chapterOcrAllRoute.chapterId, init);
+          if (routedResponse) return routedResponse;
+        } catch (error) {
+          console.warn("AS译林本地文件路由：PDF 批量文本层分段失败，停止 OCR 回退", error);
+          return directReadFailure("PDF 批量文本层直读失败，已停止；不会自动跑 OCR。", {
+            chapter_id: chapterOcrAllRoute.chapterId,
+            message: error && error.message ? error.message : String(error),
+          });
+        }
+      }
+    }
+    const segmentsRoute = segmentsRouteFor(input);
+    if (segmentsRoute && method === "GET") {
+      const redirectedPageId = pageRedirects.get(segmentsRoute.pageId);
+      if (redirectedPageId && redirectedPageId !== segmentsRoute.pageId) {
+        return originalFetch(`/api/pages/${redirectedPageId}/segments`, init);
+      }
+      await ensurePdfPageTextSegments(segmentsRoute.pageId, init);
+    }
+    const response = await originalFetch(input, init);
+    if (method === "GET" && pagesRouteFor(input)) {
+      return rewritePagesResponse(input, response);
+    }
+    return response;
+  };
+};
+__sutraInstallFileRouter();
+
+const __sutraInstallDirectReadStatusLabels = () => {
+  if (window.__sutraLocalDirectReadStatusLabelsInstalled) return;
+  window.__sutraLocalDirectReadStatusLabelsInstalled = true;
+  const donePageNumbers = new Set();
+  let timer = 0;
+
+  const patchVisibleStatus = () => {
+    if (!donePageNumbers.size) return;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      let value = node.nodeValue || "";
+      for (const pageNumber of donePageNumbers) {
+        value = value.replace(new RegExp(`P${pageNumber}\\s*\\(pending\\)`, "g"), `P${pageNumber}`);
+      }
+      if (value.trim() === "pending") value = value.replace("pending", "已直读");
+      if (value !== node.nodeValue) node.nodeValue = value;
+      node = walker.nextNode();
+    }
+  };
+
+  const schedulePatch = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(patchVisibleStatus, 80);
+  };
+
+  window.__sutraLocalDirectReadDonePageNumbers = donePageNumbers;
+  window.__sutraLocalMarkDirectReadDone = (pageNumberValue) => {
+    const pageNumber = Number(pageNumberValue);
+    if (pageNumber) donePageNumbers.add(pageNumber);
+    patchVisibleStatus();
+    [250, 900, 1800].forEach((delay) => window.setTimeout(patchVisibleStatus, delay));
+  };
+
+  window.addEventListener("sutra:file-router:direct-page-text", (event) => {
+    window.__sutraLocalMarkDirectReadDone(event.detail && event.detail.page_number);
+  });
+
+  const observer = new MutationObserver(schedulePatch);
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+};
+__sutraInstallDirectReadStatusLabels();
+
+const __sutraInstallSidebarResizer = () => {
+  if (window.__sutraLocalSidebarResizerInstalled) return;
+  window.__sutraLocalSidebarResizerInstalled = true;
+  const storageKey = "sutra_local_sidebar_width";
+  const defaultWidth = 240;
+  const minWidth = 220;
+  const maxWidth = 560;
+
+  const viewportMax = () => Math.max(minWidth, Math.min(maxWidth, Math.floor(window.innerWidth * 0.42)));
+  const clampWidth = (value) => Math.max(minWidth, Math.min(viewportMax(), Math.round(Number(value) || defaultWidth)));
+  const applyWidth = (value) => {
+    const width = clampWidth(value);
+    document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
+    return width;
+  };
+
+  const storedWidth = Number(localStorage.getItem(storageKey));
+  if (storedWidth) applyWidth(storedWidth);
+
+  const bindSidebar = () => {
+    const sidebar = document.querySelector(".sidebar");
+    if (!sidebar || sidebar.querySelector(".sidebar__resize-handle")) return Boolean(sidebar);
+
+    const handle = document.createElement("div");
+    handle.className = "sidebar__resize-handle";
+    handle.title = "拖拽调整左侧栏宽度，双击恢复默认";
+    sidebar.appendChild(handle);
+
+    handle.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      localStorage.removeItem(storageKey);
+      applyWidth(defaultWidth);
+    });
+
+    handle.addEventListener("pointerdown", (event) => {
+      if (sidebar.classList.contains("collapsed")) return;
+      event.preventDefault();
+      handle.setPointerCapture?.(event.pointerId);
+      const startX = event.clientX;
+      const startWidth = sidebar.getBoundingClientRect().width || defaultWidth;
+      document.body.classList.add("sidebar-resizing");
+
+      const onPointerMove = (moveEvent) => {
+        const width = applyWidth(startWidth + moveEvent.clientX - startX);
+        localStorage.setItem(storageKey, String(width));
+      };
+
+      const onPointerUp = (upEvent) => {
+        const width = applyWidth(startWidth + upEvent.clientX - startX);
+        localStorage.setItem(storageKey, String(width));
+        document.body.classList.remove("sidebar-resizing");
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp, { once: true });
+      window.addEventListener("pointercancel", onPointerUp, { once: true });
+    });
+
+    return true;
+  };
+
+  if (!bindSidebar()) {
+    const observer = new MutationObserver(() => {
+      if (bindSidebar()) observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  window.addEventListener("resize", () => {
+    const width = Number(localStorage.getItem(storageKey)) || defaultWidth;
+    applyWidth(width);
+  });
+};
+__sutraInstallSidebarResizer();
+
+const __sutraInstallBuiltinRoleVisibility = () => {
+  if (window.__sutraLocalBuiltinRoleVisibilityInstalled) return;
+  window.__sutraLocalBuiltinRoleVisibilityInstalled = true;
+  const storageKey = "sutra_hide_builtin_roles";
+  const builtinNamesKey = "sutra_builtin_role_names";
+  const customNamesKey = "sutra_custom_role_names";
+  let timer = 0;
+
+  const normalizedText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const shouldHideBuiltinRoles = () => localStorage.getItem(storageKey) === "1";
+  const firstToken = (text) => normalizedText(text).split(" ")[0] || "";
+
+  const builtinRoleElements = () => {
+    const selectors = [
+      "button",
+      "[role='button']",
+      "[class*='chip']",
+      "[class*='pill']",
+      "[class*='badge']",
+    ].join(",");
+    return Array.from(document.querySelectorAll(selectors)).filter((element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      if (element.dataset.sutraBuiltinToggle === "control") return false;
+      const text = normalizedText(element.textContent);
+      if (!text.includes("内置")) return false;
+      if (text.includes("隐藏内置角色") || text.includes("显示内置角色")) return false;
+      if (!(text.includes("→") || text.includes("任意语言") || text.includes("English") || text.includes("藏文") || text.includes("中文"))) {
+        return false;
+      }
+      return true;
+    });
+  };
+
+  const customRoleElements = () => {
+    const selectors = [
+      "button",
+      "[role='button']",
+      "[class*='chip']",
+      "[class*='pill']",
+      "[class*='badge']",
+    ].join(",");
+    return Array.from(document.querySelectorAll(selectors)).filter((element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const text = normalizedText(element.textContent);
+      if (!text.includes("我的")) return false;
+      if (!(text.includes("→") || text.includes("任意语言") || text.includes("English") || text.includes("藏文") || text.includes("中文"))) {
+        return false;
+      }
+      return true;
+    });
+  };
+
+  const roleNameFromManagedElement = (element) => {
+    const text = normalizedText(element.textContent)
+      .replace(/内置/g, "")
+      .replace(/我的/g, "")
+      .replace(/[×✕xX]\s*$/, "")
+      .trim();
+    return firstToken(text);
+  };
+
+  const countNames = (elements) => {
+    const counts = new Map();
+    elements.forEach((element) => {
+      const name = roleNameFromManagedElement(element);
+      if (!name) return;
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return counts;
+  };
+
+  const readCachedCounts = (key) => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) || "{}");
+      return new Map(Object.entries(raw).filter(([name, count]) => name && Number(count) > 0).map(([name, count]) => [name, Number(count)]));
+    } catch (_) {
+      return new Map();
+    }
+  };
+
+  const writeCachedCounts = (key, counts) => {
+    if (!counts.size) return;
+    localStorage.setItem(key, JSON.stringify(Object.fromEntries(counts.entries())));
+  };
+
+  const getRoleNameCounts = () => {
+    const builtinCounts = countNames(builtinRoleElements());
+    const customCounts = countNames(customRoleElements());
+    if (builtinCounts.size) writeCachedCounts(builtinNamesKey, builtinCounts);
+    if (customCounts.size) writeCachedCounts(customNamesKey, customCounts);
+    return {
+      builtinCounts: builtinCounts.size ? builtinCounts : readCachedCounts(builtinNamesKey),
+      customCounts: customCounts.size ? customCounts : readCachedCounts(customNamesKey),
+    };
+  };
+
+  const ensureToggle = (hiddenCount) => {
+    const headers = Array.from(document.querySelectorAll("div,span,h2,h3,h4,strong"))
+      .filter((element) => normalizedText(element.textContent) === "已有角色");
+    headers.forEach((header) => {
+      const container = header.parentElement;
+      if (!container || container.querySelector(".sutra-role-visibility-toggle")) return;
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "sutra-role-visibility-toggle";
+      toggle.dataset.sutraBuiltinToggle = "control";
+      toggle.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (shouldHideBuiltinRoles()) {
+          localStorage.removeItem(storageKey);
+        } else {
+          localStorage.setItem(storageKey, "1");
+        }
+        scheduleApply();
+      });
+      container.appendChild(toggle);
+    });
+
+    document.querySelectorAll(".sutra-role-visibility-toggle").forEach((toggleNode) => {
+      if (!(toggleNode instanceof HTMLElement)) return;
+      const hidden = shouldHideBuiltinRoles();
+      toggleNode.textContent = hidden ? `显示内置角色${hiddenCount ? ` (${hiddenCount})` : ""}` : "隐藏内置角色";
+      toggleNode.setAttribute("aria-pressed", hidden ? "true" : "false");
+      toggleNode.title = hidden ? "显示当前被隐藏的内置角色" : "隐藏当前内置角色，仅保留“我的”角色";
+    });
+  };
+
+  const setElementHidden = (element, hidden) => {
+    if (!(element instanceof HTMLElement)) return;
+    if (hidden) {
+      if (!Object.prototype.hasOwnProperty.call(element.dataset, "sutraBuiltinOriginalDisplay")) {
+        element.dataset.sutraBuiltinOriginalDisplay = element.style.display || "";
+      }
+      element.style.display = "none";
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(element.dataset, "sutraBuiltinOriginalDisplay")) {
+      element.style.display = element.dataset.sutraBuiltinOriginalDisplay || "";
+      delete element.dataset.sutraBuiltinOriginalDisplay;
+    } else {
+      element.style.display = "";
+    }
+  };
+
+  const preferredVisibleItems = (items) => {
+    const active = items.find((item) => item.classList.contains("active"));
+    const ordered = [];
+    if (active) ordered.push(active);
+    items.slice().reverse().forEach((item) => {
+      if (item !== active) ordered.push(item);
+    });
+    return ordered;
+  };
+
+  const applyPersonaContainerVisibility = (containerSelector, hide, builtinCounts, customCounts) => {
+    const containers = Array.from(document.querySelectorAll(containerSelector));
+    containers.forEach((container) => {
+      const buttons = Array.from(container.querySelectorAll(".persona-chip")).filter((element) => element instanceof HTMLElement);
+      if (!buttons.length) return;
+
+      const groups = new Map();
+      buttons.forEach((button) => {
+        const name = firstToken(button.textContent);
+        if (!name || name === "全部") return;
+        if (!groups.has(name)) groups.set(name, []);
+        groups.get(name).push(button);
+      });
+
+      groups.forEach((items, name) => {
+        const builtinCount = Number(builtinCounts.get(name) || 0);
+        const customCount = Number(customCounts.get(name) || 0);
+        const hasCountHints = builtinCount > 0 || customCount > 0;
+        const hasDuplicates = items.length > 1;
+        if (!hide) {
+          items.forEach((item) => setElementHidden(item, false));
+          return;
+        }
+        if (!hasCountHints && !hasDuplicates) {
+          items.forEach((item) => setElementHidden(item, false));
+          return;
+        }
+        if (hasCountHints && builtinCount <= 0) {
+          items.forEach((item) => setElementHidden(item, false));
+          return;
+        }
+        const preferred = preferredVisibleItems(items);
+        const keepCount = hasCountHints
+          ? (customCount > 0 ? Math.min(items.length, customCount) : 0)
+          : 1;
+        const keepSet = new Set(preferred.slice(0, keepCount));
+        items.forEach((item) => setElementHidden(item, !keepSet.has(item)));
+      });
+
+      const visibleButtons = buttons.filter((button) => button.style.display !== "none");
+      if (!visibleButtons.length) {
+        const fallback = buttons.find((button) => button.classList.contains("active")) || buttons[0];
+        if (fallback) setElementHidden(fallback, false);
+      }
+    });
+  };
+
+  const applyEditorPersonaVisibility = (hide, builtinCounts, customCounts) => {
+    applyPersonaContainerVisibility(".translation-editor .persona-selector", hide, builtinCounts, customCounts);
+    applyPersonaContainerVisibility(".lang-tabs > div", hide, builtinCounts, customCounts);
+  };
+
+  const applyBuiltinVisibility = () => {
+    timer = 0;
+    const hide = shouldHideBuiltinRoles();
+    const { builtinCounts, customCounts } = getRoleNameCounts();
+    let hiddenCount = 0;
+    builtinRoleElements().forEach((element) => {
+      if (!(element instanceof HTMLElement)) return;
+      if (hide) {
+        setElementHidden(element, true);
+        hiddenCount += 1;
+      } else {
+        setElementHidden(element, false);
+      }
+    });
+    applyEditorPersonaVisibility(hide, builtinCounts, customCounts);
+    ensureToggle(hiddenCount);
+  };
+
+  const scheduleApply = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(applyBuiltinVisibility, 80);
+  };
+
+  const observer = new MutationObserver(scheduleApply);
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  window.addEventListener("focus", scheduleApply);
+  scheduleApply();
+  window.setTimeout(scheduleApply, 600);
+  window.setTimeout(scheduleApply, 1800);
+};
+__sutraInstallBuiltinRoleVisibility();
+
+const __sutraInstallSourceBlockSync = () => {
+  if (window.__sutraLocalSourceBlockSyncInstalled) return;
+  window.__sutraLocalSourceBlockSyncInstalled = true;
+  window.__sutraLocalSourceBlockSyncVersion = "v9-perf";
+
+  let rafId = 0;
+  let bindTimer = 0;
+  let mutationTimer = 0;
+  let roots = { source: null, target: null };
+  let contentObserver = null;
+  let resizeObserver = null;
+  const heightCache = new WeakMap();
+  const clampHeight = (height) => Math.max(176, Math.min(420, Math.ceil(Number(height) || 0)));
+
+  const syncHeights = () => {
+    rafId = 0;
+    const sourceRoot = roots.source || document.querySelector(".text-source-viewer__content");
+    const targetRoot = roots.target || document.querySelector(".segments-list");
+    if (!sourceRoot || !targetRoot) return;
+
+    const sourceBlocks = Array.from(sourceRoot.querySelectorAll(".text-source-viewer__segment"));
+    const targetBlocks = Array.from(targetRoot.querySelectorAll(".segment-card"));
+    if (!sourceBlocks.length || !targetBlocks.length) return;
+
+    const count = Math.min(sourceBlocks.length, targetBlocks.length);
+    for (let index = 0; index < count; index += 1) {
+      const block = sourceBlocks[index];
+      const target = targetBlocks[index];
+      const targetHeight = target.getBoundingClientRect().height;
+      const height = clampHeight(targetHeight);
+      if (heightCache.get(block) !== height) {
+        heightCache.set(block, height);
+        block.style.setProperty("--sutra-sync-height", `${height}px`);
+      }
+      if (block.dataset.sutraSyncBlock !== "ready") {
+        block.dataset.sutraSyncBlock = "ready";
+      }
+    }
+  };
+
+  const scheduleSync = () => {
+    if (!rafId) rafId = window.requestAnimationFrame(syncHeights);
+  };
+
+  const scheduleContentSync = () => {
+    window.clearTimeout(mutationTimer);
+    mutationTimer = window.setTimeout(scheduleSync, 120);
+  };
+
+  const bindRoots = () => {
+    const sourceRoot = document.querySelector(".text-source-viewer__content");
+    const targetRoot = document.querySelector(".segments-list");
+    if (!sourceRoot || !targetRoot) return false;
+    if (roots.source === sourceRoot && roots.target === targetRoot) return true;
+
+    roots = { source: sourceRoot, target: targetRoot };
+    contentObserver?.disconnect();
+    resizeObserver?.disconnect();
+
+    contentObserver = new MutationObserver(scheduleContentSync);
+    contentObserver.observe(sourceRoot, { childList: true, subtree: true, characterData: true });
+    contentObserver.observe(targetRoot, { childList: true, subtree: true, characterData: true });
+
+    if (window.ResizeObserver) {
+      resizeObserver = new ResizeObserver(scheduleContentSync);
+      resizeObserver.observe(targetRoot);
+    }
+    scheduleSync();
+    return true;
+  };
+
+  const scheduleBind = () => {
+    if (bindTimer) return;
+    bindTimer = window.setTimeout(() => {
+      bindTimer = 0;
+      bindRoots();
+    }, 200);
+  };
+
+  const rootObserver = new MutationObserver(scheduleBind);
+  rootObserver.observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener("resize", scheduleSync);
+  window.addEventListener("sutra:file-router:direct-text", () => {
+    scheduleBind();
+    scheduleContentSync();
+  });
+  bindRoots();
+  window.setTimeout(() => {
+    bindRoots();
+    scheduleSync();
+  }, 500);
+  window.setTimeout(() => {
+    bindRoots();
+    scheduleSync();
+  }, 1500);
+};
+__sutraInstallSourceBlockSync();
+
+const __sutraInstallBidirectionalSourceSync = () => {
+  if (window.__sutraBidirectionalSourceSyncInstalled) return;
+  window.__sutraBidirectionalSourceSyncInstalled = true;
+  let timer = 0;
+  let pdfJsPromise = null;
+
+  const previewText = (card) => String(card.querySelector(".segment-source-preview")?.textContent || "").trim();
+  const compactText = (value) => String(value || "").replace(/\s+/g, "").trim();
+  const loadPdfJs = () => {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (pdfJsPromise) return pdfJsPromise;
+    pdfJsPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "/pdfjs/pdf.min.js";
+      script.onload = () => {
+        if (!window.pdfjsLib) return reject(new Error("PDF.js 未加载"));
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.js";
+        resolve(window.pdfjsLib);
+      };
+      script.onerror = () => reject(new Error("PDF.js 资源加载失败"));
+      document.head.appendChild(script);
+    });
+    return pdfJsPromise;
+  };
+
+  const locatePdfTextRects = async (image, cards) => {
+    const pdfLink = document.querySelector('a[href*=".pdf"], a[href*=".PDF"]');
+    const pageNumber = Number(String(image.alt || "").match(/Page\s+(\d+)/i)?.[1] || 0);
+    if (!pdfLink || !pageNumber) return [];
+    const pdfjs = await loadPdfJs();
+    const pdfUrl = new URL(pdfLink.href, window.location.href);
+    pdfUrl.hash = "";
+    const pdf = await pdfjs.getDocument({ url: pdfUrl.href, withCredentials: true }).promise;
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const items = content.items.filter((item) => compactText(item.str));
+    const pageWidth = Number(page.view?.[2] - page.view?.[0]) || 1;
+    const pageHeight = Number(page.view?.[3] - page.view?.[1]) || 1;
+    let cursor = 0;
+    const spans = items.map((item) => {
+      const text = compactText(item.str);
+      const span = { item, text, start: cursor, end: cursor + text.length };
+      cursor = span.end;
+      return span;
+    });
+    const pageText = spans.map((span) => span.text).join("");
+
+    return cards.map((card) => {
+      const target = compactText(previewText(card));
+      if (!target) return null;
+      let start = pageText.indexOf(target);
+      let end = start >= 0 ? start + target.length : -1;
+      if (start < 0) {
+        const head = target.slice(0, Math.min(24, target.length));
+        const tail = target.slice(-Math.min(24, target.length));
+        start = pageText.indexOf(head);
+        const tailStart = start >= 0 ? pageText.indexOf(tail, start + head.length) : -1;
+        end = tailStart >= 0 ? tailStart + tail.length : -1;
+      }
+      if (start < 0 || end <= start) return null;
+      const matched = spans.filter((span) => span.end > start && span.start < end);
+      if (!matched.length) return null;
+      const rects = matched.map(({ item }) => {
+        const transform = item.transform || [];
+        const height = Math.abs(Number(transform[3])) || Math.abs(Number(item.height)) || 10;
+        return {
+          left: Number(transform[4]) || 0,
+          top: pageHeight - (Number(transform[5]) || 0) - height,
+          right: (Number(transform[4]) || 0) + (Number(item.width) || 0),
+          bottom: pageHeight - (Number(transform[5]) || 0) + height * 0.2,
+        };
+      });
+      const left = Math.max(0, Math.min(...rects.map((rect) => rect.left)) - 5);
+      const top = Math.max(0, Math.min(...rects.map((rect) => rect.top)) - 3);
+      const right = Math.min(pageWidth, Math.max(...rects.map((rect) => rect.right)) + 5);
+      const bottom = Math.min(pageHeight, Math.max(...rects.map((rect) => rect.bottom)) + 3);
+      return {
+        left: left / pageWidth * 100,
+        top: top / pageHeight * 100,
+        width: Math.max(1, (right - left) / pageWidth * 100),
+        height: Math.max(1, (bottom - top) / pageHeight * 100),
+      };
+    });
+  };
+  const clearActive = () => {
+    document.querySelectorAll(".sutra-source-sync-overlay.active").forEach((item) => item.classList.remove("active"));
+    document.querySelectorAll(".segment-card.sutra-source-sync-active").forEach((item) => item.classList.remove("sutra-source-sync-active"));
+  };
+
+  const activate = (index, scrollTarget) => {
+    const cards = Array.from(document.querySelectorAll(".segments-list .segment-card"));
+    const card = cards[index];
+    const overlay = document.querySelector(`.scan-image-container .sutra-source-sync-overlay[data-sutra-sync-index="${index}"]`);
+    if (!card || !overlay) return;
+    clearActive();
+    card.classList.add("sutra-source-sync-active");
+    overlay.classList.add("active");
+    (scrollTarget === "source" ? overlay : card).scrollIntoView({ block: "center", behavior: "smooth" });
+  };
+
+  const bind = async () => {
+    const container = document.querySelector(".scan-image-container");
+    const image = container?.querySelector('img[alt^="Page "]');
+    const cards = Array.from(document.querySelectorAll(".segments-list .segment-card"));
+    if (!container || !image || !cards.length) return false;
+    const signature = `${image.src}|${cards.map((card) => card.dataset.segmentId || previewText(card)).join("|")}`;
+    if (container.dataset.sutraSourceSyncSignature === signature) return true;
+    container.dataset.sutraSourceSyncSignature = signature;
+    container.classList.add("sutra-source-sync-ready");
+    container.querySelectorAll(".sutra-source-sync-overlay").forEach((item) => item.remove());
+
+    let rects = [];
+    try {
+      rects = await locatePdfTextRects(image, cards);
+    } catch (error) {
+      console.warn("AS译林 PDF 精确同步坐标加载失败", error);
+    }
+    cards.forEach((card, index) => {
+      const rect = rects[index];
+      const sourcePreview = card.querySelector(".segment-source-preview");
+      if (!rect) {
+        if (sourcePreview) sourcePreview.title = "当前页没有可用的精确文字坐标";
+        return;
+      }
+      const overlay = document.createElement("button");
+      overlay.type = "button";
+      overlay.className = "sutra-source-sync-overlay";
+      overlay.dataset.sutraSyncIndex = String(index);
+      overlay.title = `定位右栏第 ${index + 1} 段`;
+      overlay.setAttribute("aria-label", `定位右栏第 ${index + 1} 段`);
+      overlay.style.left = `${rect.left}%`;
+      overlay.style.right = "auto";
+      overlay.style.top = `${rect.top}%`;
+      overlay.style.width = `${rect.width}%`;
+      overlay.style.height = `${rect.height}%`;
+      overlay.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        activate(index, "target");
+      });
+      container.appendChild(overlay);
+
+      if (sourcePreview && !sourcePreview.dataset.sutraSourceSyncBound) {
+        sourcePreview.dataset.sutraSourceSyncBound = "true";
+        sourcePreview.title = "点击同步定位左侧原文";
+        sourcePreview.addEventListener("click", () => activate(index, "source"));
+      }
+    });
+    return true;
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => { void bind(); }, 120);
+  };
+  window.__sutraBindBidirectionalSourceSync = bind;
+  new MutationObserver((mutations) => {
+    if (mutations.some((mutation) => !mutation.target.parentElement?.closest?.(".sutra-source-sync-overlay"))) schedule();
+  }).observe(document.body, { childList: true, subtree: true });
+  window.addEventListener("resize", schedule);
+  schedule();
+  window.setTimeout(schedule, 700);
+};
+__sutraInstallBidirectionalSourceSync();
+
+const __sutraInstallUnifiedTranslationEntry = () => {
+  if (window.__sutraUnifiedTranslationEntryInstalled) return;
+  window.__sutraUnifiedTranslationEntryInstalled = true;
+  let timer = 0;
+  const apply = () => {
+    document.querySelectorAll(".proposal-empty--invitation .proposal-empty__hint").forEach((hint) => {
+      const current = String(hint.textContent || "").trim();
+      const language = current.match(/(?:等待|添加)\s+(.+?)\s+(?:译笔|译文)/)?.[1] || "目标语言";
+      const next = `添加 ${language} 译文 — 点击开始翻译`;
+      if (current !== next) hint.textContent = next;
+    });
+  };
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(apply, 80);
+  };
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
+  schedule();
+};
+__sutraInstallUnifiedTranslationEntry();
+
+const __sutraInstallBalancedPaneStyles = () => {
+  if (document.getElementById("sutra-balanced-pane-styles")) return;
+  const style = document.createElement("style");
+  style.id = "sutra-balanced-pane-styles";
+  style.textContent = `
+    .workbench {
+      gap: 0 !important;
+      padding: 10px !important;
+      background: #f2f0eb !important;
+    }
+    .workbench .source-panel,
+    .workbench .translation-panel {
+      min-width: 0 !important;
+      border: 1px solid #d9d5cc !important;
+      border-radius: 8px !important;
+      background: #f8f7f3 !important;
+      box-shadow: 0 1px 3px rgba(72, 64, 51, 0.06) !important;
+      overflow: hidden !important;
+    }
+    .workbench .panel-divider {
+      width: 10px !important;
+      min-width: 10px !important;
+      border: 0 !important;
+      background: transparent !important;
+    }
+    .workbench .panel-divider::after {
+      width: 2px !important;
+      border-radius: 2px !important;
+      background: #c9c3b8 !important;
+    }
+    .workbench .scan-viewer {
+      margin: 10px !important;
+      border: 1px solid #ddd8ce !important;
+      border-radius: 7px !important;
+      background: #fff !important;
+      overflow: auto !important;
+    }
+    .workbench .scan-image-container {
+      margin: auto !important;
+      background: #fff !important;
+    }
+    .workbench .translation-panel .lang-tabs {
+      min-height: 40px !important;
+      padding: 7px 10px !important;
+      border-bottom: 1px solid #d9d5cc !important;
+      background: #f5f3ee !important;
+      box-sizing: border-box !important;
+    }
+    .workbench .segments-list {
+      padding: 10px !important;
+      background: #f8f7f3 !important;
+    }
+    .workbench .segment-card {
+      margin: 0 0 12px !important;
+      padding: 12px 14px !important;
+      border: 1px solid #ded9cf !important;
+      border-radius: 7px !important;
+      background: #fff !important;
+      box-shadow: 0 1px 2px rgba(72, 64, 51, 0.04) !important;
+    }
+    .workbench .segment-card__header {
+      min-height: 24px !important;
+      margin-bottom: 6px !important;
+    }
+    .workbench .proofread-bar {
+      margin: 10px -2px 8px !important;
+      border-radius: 5px !important;
+    }
+    .workbench .proposal-empty--invitation {
+      min-height: 42px !important;
+      margin: 8px 0 0 !important;
+      padding: 10px 12px !important;
+      box-sizing: border-box !important;
+      border-radius: 5px !important;
+      background: #fbfaf7 !important;
+    }
+    .workbench .proposal-empty--invitation .proposal-empty__hint {
+      font-size: 13px !important;
+      line-height: 1.45 !important;
+      font-weight: 400 !important;
+      letter-spacing: 0 !important;
+    }
+    .workbench .translation-editor {
+      margin-top: 8px !important;
+      border: 1px solid #ded9cf !important;
+      border-radius: 6px !important;
+      background: #fbfaf7 !important;
+    }
+  `;
+  document.head.appendChild(style);
+};
+__sutraInstallBalancedPaneStyles();
+
+const __sutraInstallMissingSourceRecovery = () => {
+  if (window.__sutraLocalMissingSourceRecoveryInstalled) return;
+  window.__sutraLocalMissingSourceRecoveryInstalled = true;
+  const loading = new Set();
+  let timer = 0;
+
+  const tokenText = (token) => String(token && (token.text || token.ocr_text) || "").trim();
+
+  const restoreCard = async (card) => {
+    if (!(card instanceof HTMLElement)) return;
+    if (card.querySelector(".segment-source-preview")) return;
+    const segmentId = String(card.dataset.segmentId || "").trim();
+    if (!segmentId || loading.has(segmentId)) return;
+    loading.add(segmentId);
+    try {
+      const response = await window.fetch(`/api/segments/${encodeURIComponent(segmentId)}/tokens`);
+      if (!response.ok) return;
+      const payload = await response.json().catch(() => []);
+      const tokens = Array.isArray(payload) ? payload : [];
+      const visibleTokens = tokens.filter((token) => tokenText(token));
+      if (!visibleTokens.length || !card.isConnected || card.querySelector(".segment-source-preview")) return;
+
+      const preview = document.createElement("div");
+      preview.className = "segment-source-preview sutra-source-preview-recovered";
+      visibleTokens.forEach((token) => {
+        const inline = document.createElement("span");
+        inline.className = "source-token-inline sutra-source-token-recovered";
+        if (token.id) inline.dataset.tokenId = String(token.id);
+        const text = document.createElement("span");
+        text.className = "source-token-text";
+        text.textContent = tokenText(token);
+        inline.appendChild(text);
+        preview.appendChild(inline);
+      });
+
+      const header = card.querySelector(".segment-card__header");
+      if (header) header.insertAdjacentElement("afterend", preview);
+      else card.prepend(preview);
+      const count = card.querySelector(".segment-card__token-count");
+      if (count) count.textContent = `${visibleTokens.length} tokens`;
+      card.classList.remove("segment-card--empty-source");
+      card.dataset.sutraSourceRecovered = "true";
+    } catch (error) {
+      console.warn("AS译林本地前端：恢复段落原文显示失败", segmentId, error);
+    } finally {
+      loading.delete(segmentId);
+    }
+  };
+
+  const recover = () => {
+    timer = 0;
+    document.querySelectorAll(".segments-list .segment-card").forEach((card) => {
+      if (!card.querySelector(".segment-source-preview")) restoreCard(card);
+    });
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(recover, 100);
+  };
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.body, { childList: true, subtree: true });
+  window.addEventListener("focus", schedule);
+  schedule();
+  window.setTimeout(schedule, 500);
+  window.setTimeout(schedule, 1500);
+};
+__sutraInstallMissingSourceRecovery();
+
+const __sutraInstallCompactPageNavigation = () => {
+  if (window.__sutraCompactPageNavigationInstalled) return;
+  window.__sutraCompactPageNavigationInstalled = true;
+  let timer = 0;
+  const pageNumber = (button) => Number((button.textContent || "").trim().match(/^P(\d+)/)?.[1] || 0);
+  const pageButtons = (nav) => Array.from(nav.querySelectorAll(":scope > button.nav-item"))
+    .filter((button) => pageNumber(button) > 0)
+    .sort((a, b) => pageNumber(a) - pageNumber(b));
+
+  const bind = () => {
+    const nav = document.querySelector(".sidebar__nav");
+    if (!nav) return;
+    const buttons = pageButtons(nav);
+    if (!buttons.length) return;
+    buttons.forEach((button) => { button.dataset.sutraOriginalPage = String(pageNumber(button)); });
+    nav.classList.add("sutra-page-nav-ready");
+
+    let browser = nav.querySelector(".sutra-page-browser");
+    if (!browser) {
+      browser = document.createElement("section");
+      browser.className = "sutra-page-browser";
+      browser.innerHTML = `
+        <div class="sutra-page-browser__tabs">
+          <button type="button" data-view="thumbs" class="active" title="页面缩略图" aria-label="页面缩略图">▦</button>
+          <button type="button" data-view="outline" title="章节目录" aria-label="章节目录">☷</button>
+        </div>
+        <div class="sutra-page-browser__pager">
+          <button type="button" data-go="first" title="第一页">|‹</button>
+          <button type="button" data-go="prev" title="上一页">‹</button>
+          <input type="number" min="1" aria-label="当前页码">
+          <span class="sutra-page-browser__total"></span>
+          <button type="button" data-go="next" title="下一页">›</button>
+          <button type="button" data-go="last" title="最后一页">›|</button>
+        </div>
+        <div class="sutra-page-browser__body"></div>`;
+      const firstPage = buttons[0];
+      nav.insertBefore(browser, firstPage);
+    }
+
+    const pager = browser.querySelector(".sutra-page-browser__pager") || document.querySelector(".sutra-page-browser__pager");
+    const sourcePanel = document.querySelector(".source-panel");
+    const scanViewer = sourcePanel?.querySelector(".scan-viewer");
+    if (!pager || !sourcePanel || !scanViewer) return;
+    let pagerRow = document.querySelector(".sutra-page-pager-row");
+    if (!pagerRow) {
+      pagerRow = document.createElement("div");
+      pagerRow.className = "sutra-page-pager-row";
+      sourcePanel.insertBefore(pagerRow, scanViewer);
+    }
+    pager.classList.add("sutra-page-browser__pager--source");
+    if (pager.parentElement !== pagerRow) pagerRow.appendChild(pager);
+    sourcePanel.classList.add("sutra-source-one-line");
+    if (!pagerRow.querySelector(".sutra-page-pager-row__title")) {
+      const title = document.createElement("span");
+      title.className = "sutra-page-pager-row__title";
+      title.textContent = "原典";
+      pagerRow.prepend(title);
+    }
+    const compactHidePatterns = [/^\d+\s*tokens?$/i, /^A[-+]$/i, /^100%$/, /^编辑原文$/];
+    Array.from(pagerRow.querySelectorAll("button, span, div")).forEach((element) => {
+      const text = (element.textContent || "").trim();
+      if (!text) return;
+      if (compactHidePatterns.some((pattern) => pattern.test(text))) {
+        element.style.display = "none";
+      }
+    });
+    if (pagerRow.parentElement !== sourcePanel) sourcePanel.insertBefore(pagerRow, scanViewer);
+    const breadcrumbBar = document.querySelector(".breadcrumb-bar");
+    const breadcrumb = breadcrumbBar?.querySelector(".breadcrumb");
+    if (breadcrumb) {
+      const parts = Array.from(breadcrumb.children);
+      const unchaptered = parts.find((element) => (element.textContent || "").trim() === "未分章");
+      if (unchaptered) {
+        const before = unchaptered.previousElementSibling;
+        if (before?.classList.contains("breadcrumb__sep")) before.remove();
+        unchaptered.remove();
+      }
+    }
+    const sidebarChapter = Array.from(document.querySelectorAll(".sidebar__nav .nav-item__label"))
+      .find((element) => (element.textContent || "").trim() === "未分章")?.parentElement;
+    if (sidebarChapter) sidebarChapter.dataset.sutraUnchaptered = "true";
+    if (!pagerRow.querySelector(".sutra-source-more")) {
+      const labels = ["导入文本", "全部直读"];
+      const candidates = Array.from(sourcePanel.querySelectorAll(".panel-header button"));
+      const secondary = labels.map((label) => candidates.find((element) => (element.textContent || "").includes(label))).filter(Boolean);
+      if (secondary.length) {
+        const wrap = document.createElement("div");
+        wrap.className = "sutra-source-more";
+        const trigger = document.createElement("button");
+        trigger.type = "button";
+        trigger.className = "btn btn--ghost btn--sm";
+        trigger.textContent = "⋯";
+        trigger.title = "更多操作";
+        trigger.setAttribute("aria-label", "更多操作");
+        trigger.setAttribute("aria-expanded", "false");
+        const menu = document.createElement("div");
+        menu.className = "sutra-source-more__menu";
+        secondary.forEach((element) => {
+          element.dataset.sutraToolbarSecondary = "true";
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "btn btn--ghost btn--sm";
+          item.textContent = (element.textContent || "").trim();
+          item.onclick = () => element.click();
+          menu.appendChild(item);
+        });
+        wrap.append(trigger, menu);
+        pagerRow.appendChild(wrap);
+        trigger.onclick = (event) => {
+          event.stopPropagation();
+          const open = wrap.classList.toggle("open");
+          trigger.setAttribute("aria-expanded", String(open));
+        };
+        menu.onclick = () => wrap.classList.remove("open");
+      }
+    }
+    const compactMenu = pagerRow.querySelector(".sutra-source-more__menu");
+    if (compactMenu && !compactMenu.dataset.sutraAllSourceTools) {
+      compactMenu.dataset.sutraAllSourceTools = "true";
+      const prependDelegate = (label, source) => {
+        if (!source) return;
+        source.dataset.sutraToolbarSecondary = "true";
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "btn btn--ghost btn--sm";
+        item.textContent = label;
+        item.onclick = () => source.click();
+        compactMenu.prepend(item);
+      };
+      const header = sourcePanel.querySelector(".panel-header");
+      const upload = header?.querySelector('label[title*="上传到当前章节"]');
+      const reread = Array.from(header?.querySelectorAll("button") || []).find((button) => (button.textContent || "").includes("重新直读"));
+      prependDelegate("上传文件", upload);
+      prependDelegate("重新直读", reread);
+      const scanToolbar = sourcePanel.querySelector(".scan-viewer__toolbar");
+      if (scanToolbar) {
+        scanToolbar.classList.add("sutra-scan-toolbar-in-menu");
+        compactMenu.appendChild(scanToolbar);
+      }
+    }
+    const input = pager.querySelector("input");
+    const total = buttons.length;
+    input.max = String(total);
+    pager.querySelector(".sutra-page-browser__total").textContent = `/ ${total}`;
+    const current = () => pageNumber(buttons.find((button) => button.classList.contains("active"))) || Math.max(1, Number(input.value) || 1);
+    const go = (number) => {
+      const safe = Math.max(1, Math.min(total, Number(number) || 1));
+      const target = buttons.find((button) => pageNumber(button) === safe);
+      if (target) target.click();
+    };
+    if (!browser.dataset.bound) {
+      browser.dataset.bound = "true";
+      pager.querySelectorAll("[data-go]").forEach((control) => control.addEventListener("click", () => {
+        const action = control.dataset.go;
+        go(action === "first" ? 1 : action === "last" ? total : current() + (action === "prev" ? -1 : 1));
+      }));
+      input.addEventListener("change", () => go(input.value));
+      input.addEventListener("keydown", (event) => { if (event.key === "Enter") go(input.value); });
+      browser.querySelectorAll("[data-view]").forEach((tab) => tab.addEventListener("click", () => {
+        browser.dataset.view = tab.dataset.view;
+        browser.querySelectorAll("[data-view]").forEach((item) => item.classList.toggle("active", item === tab));
+        render();
+      }));
+    }
+
+    const render = () => {
+      const active = current();
+      input.value = String(active);
+      pager.querySelector('[data-go="first"]').disabled = active <= 1;
+      pager.querySelector('[data-go="prev"]').disabled = active <= 1;
+      pager.querySelector('[data-go="next"]').disabled = active >= total;
+      pager.querySelector('[data-go="last"]').disabled = active >= total;
+      const body = browser.querySelector(".sutra-page-browser__body");
+      const view = browser.dataset.view || "thumbs";
+      body.replaceChildren();
+      if (view === "outline") {
+        const outline = document.createElement("div");
+        outline.className = "sutra-page-outline";
+        const step = total > 120 ? 20 : total > 40 ? 10 : 5;
+        for (let start = 1; start <= total; start += step) {
+          const end = Math.min(total, start + step - 1);
+          const item = document.createElement("button");
+          item.type = "button";
+          item.textContent = `P${start}–P${end}`;
+          item.classList.toggle("active", active >= start && active <= end);
+          item.onclick = () => go(start);
+          outline.appendChild(item);
+        }
+        body.appendChild(outline);
+        outline.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      const sourceImage = document.querySelector('.scan-image-container img[alt^="Page "]');
+      const source = sourceImage?.src || "";
+      const match = source.match(/^(.*\/page-)\d+(\.[a-z]+(?:\?.*)?)$/i);
+      const radius = 2;
+      for (let number = Math.max(1, active - radius); number <= Math.min(total, active + radius); number += 1) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = `sutra-page-thumb${number === active ? " active" : ""}`;
+        if (match) {
+          const image = document.createElement("img");
+          image.alt = `P${number} 缩略图`;
+          image.loading = "lazy";
+          image.src = `${match[1]}${String(number).padStart(3, "0")}${match[2]}`;
+          item.appendChild(image);
+        }
+        const label = document.createElement("span");
+        label.textContent = `P${number}`;
+        item.appendChild(label);
+        item.onclick = () => go(number);
+        body.appendChild(item);
+      }
+    };
+    render();
+    window.__sutraBindBidirectionalSourceSync?.();
+  };
+
+  const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(bind, 100); };
+  new MutationObserver((mutations) => {
+    const relevant = mutations.some((mutation) => {
+      const parent = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+      return !parent?.closest(".sutra-page-browser");
+    });
+    if (relevant) schedule();
+  }).observe(document.body, { childList: true, subtree: true });
+  schedule();
+};
+__sutraInstallCompactPageNavigation();
+
+const __sutraInstallNotificationBounds = () => {
+  if (window.__sutraNotificationBoundsInstalled) return;
+  window.__sutraNotificationBoundsInstalled = true;
+  const mark = () => {
+    const buttons = Array.from(document.querySelectorAll("button, [role='button']"));
+    const trigger = buttons.find((element) => /通知|🔔/.test(`${element.getAttribute("aria-label") || ""} ${element.getAttribute("title") || ""} ${element.textContent || ""}`));
+    if (!trigger) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const directPanels = Array.from(document.querySelectorAll(".notif-panel"));
+    const fallbackPanels = Array.from(document.body.children).filter((element) => {
+      if (element.contains(trigger) || element.matches("script, style")) return false;
+      const rect = element.getBoundingClientRect();
+      const text = element.textContent || "";
+      const nearTrigger = rect.top >= triggerRect.bottom - 12 && rect.left <= window.innerWidth && rect.right >= triggerRect.left - 8;
+      return nearTrigger && (text.includes("暂无通知") || text.includes("通知"));
+    });
+    const candidates = [...new Set([...directPanels, ...fallbackPanels])];
+    candidates.forEach((element) => {
+      element.classList.add("sutra-notification-popover");
+      element.style.maxWidth = "min(360px, calc(100vw - 24px))";
+      element.style.maxHeight = "min(420px, calc(100vh - 96px))";
+      element.style.overflow = "auto";
+      const rect = element.getBoundingClientRect();
+      if (rect.right > window.innerWidth - 12 || rect.left < 12) {
+        element.style.left = "auto";
+        element.style.right = "12px";
+        element.style.transform = "none";
+      }
+    });
+  };
+  const schedule = () => window.requestAnimationFrame(mark);
+  document.addEventListener("click", schedule, true);
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+  schedule();
+};
+__sutraInstallNotificationBounds();
+
+const __sutraInstallSourceMoreMenu = () => {
+  if (window.__sutraSourceMoreMenuInstalled) return;
+  window.__sutraSourceMoreMenuInstalled = true;
+  let timer = 0;
+  const bind = () => {
+    const header = document.querySelector(".source-panel .panel-header");
+    const host = document.querySelector(".sutra-page-pager-row");
+    if (!header || !host || host.querySelector(".sutra-source-more")) return;
+      const labels = ["导入文本", "全部直读"];
+    const candidates = Array.from(header.querySelectorAll("button"));
+    const secondary = labels.map((label) => candidates.find((element) => (element.textContent || "").includes(label))).filter(Boolean);
+    if (!secondary.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "sutra-source-more";
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "btn btn--ghost btn--sm";
+    trigger.textContent = "⋯";
+    trigger.title = "更多操作";
+    trigger.setAttribute("aria-label", "更多操作");
+    trigger.setAttribute("aria-expanded", "false");
+    const menu = document.createElement("div");
+    menu.className = "sutra-source-more__menu";
+    secondary.forEach((element) => {
+      element.dataset.sutraToolbarSecondary = "true";
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "btn btn--ghost btn--sm";
+      item.textContent = (element.textContent || "").trim();
+      item.onclick = () => element.click();
+      menu.appendChild(item);
+    });
+    wrap.append(trigger, menu);
+    host.appendChild(wrap);
+    trigger.onclick = (event) => {
+      event.stopPropagation();
+      const open = wrap.classList.toggle("open");
+      trigger.setAttribute("aria-expanded", String(open));
+    };
+    menu.onclick = () => wrap.classList.remove("open");
+    document.addEventListener("click", (event) => { if (!wrap.contains(event.target)) wrap.classList.remove("open"); });
+  };
+  const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(bind, 100); };
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+  schedule();
+  [350, 1000, 2200].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraInstallSourceMoreMenu();
+
+const __sutraSimplifySourceHeader = () => {
+  if (window.__sutraSimplifySourceHeaderInstalled) return;
+  window.__sutraSimplifySourceHeaderInstalled = true;
+  let timer = 0;
+
+  const shouldHideText = (text) => {
+    const value = String(text || "").replace(/\s+/g, " ").trim();
+    if (!value) return false;
+    return /^\d+\s*tokens?$/i.test(value)
+      || /^A[-−]$/u.test(value)
+      || /^A[+]$/u.test(value)
+      || /^100%$/.test(value)
+      || /^原典$/.test(value)
+      || /重新直读/.test(value)
+      || /编辑原文/.test(value);
+  };
+
+  const apply = () => {
+    timer = 0;
+    const header = document.querySelector(".source-panel .panel-header");
+    if (!header) return;
+    Array.from(header.querySelectorAll("button, label, span, div")).forEach((element) => {
+      if (!(element instanceof HTMLElement)) return;
+      const text = (element.textContent || "").trim();
+      if (shouldHideText(text)) {
+        element.style.display = "none";
+      }
+    });
+  };
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(apply, 80);
+  };
+
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
+  window.addEventListener("focus", schedule);
+  schedule();
+  [120, 600, 1500].forEach((delay) => window.setTimeout(schedule, delay));
+};
+__sutraSimplifySourceHeader();
+
+const __sutraInstallCrossPageLinks = () => {
+  if (window.__sutraCrossPageLinksInstalled) return;
+  window.__sutraCrossPageLinksInstalled = true;
+  const baseFetch = window.fetch.bind(window);
+  const state = { pages: [], pageSegments: new Map(), tokens: new Map(), currentPageId: "", timer: 0 };
+  const jsonClone = async (response) => { try { return await response.clone().json(); } catch { return null; } };
+  const segmentText = async (id) => {
+    if (state.tokens.has(id)) return state.tokens.get(id);
+    const response = await baseFetch(`/api/segments/${encodeURIComponent(id)}/tokens`);
+    const data = response.ok ? await response.json() : [];
+    const text = (Array.isArray(data) ? data : []).map(t => String(t.text || t.ocr_text || "")).join("").trim();
+    state.tokens.set(id, text);
+    return text;
+  };
+  const getLink = async (id) => {
+    const response = await baseFetch(`/api/local-cross-page/links/by-segment/${encodeURIComponent(id)}`);
+    return response.ok ? (await response.json()).link : null;
+  };
+  const schedule = () => {
+    window.clearTimeout(state.timer);
+    state.timer = window.setTimeout(render, 120);
+  };
+  window.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    const translate = String(url).match(/^\/api\/segments\/([0-9a-f-]+)\/(translate(?:-stream)?)$/i);
+    if (translate) {
+      const link = await getLink(translate[1]).catch(() => null);
+      if (link && String(link.anchor_segment_id) === translate[1]) {
+        return baseFetch(`/api/local-cross-page/segments/${translate[1]}/${translate[2]}`, init);
+      }
+    }
+    const response = await baseFetch(input, init);
+    const chapterPages = String(url).match(/^\/api\/chapters\/[^/]+\/pages/);
+    const pageSegments = String(url).match(/^\/api\/pages\/([0-9a-f-]+)\/segments/i);
+    if (chapterPages && response.ok) {
+      const data = await jsonClone(response);
+      if (Array.isArray(data)) state.pages = data.slice().sort((a,b) => Number(a.page_number)-Number(b.page_number));
+    }
+    if (pageSegments && response.ok) {
+      const data = await jsonClone(response);
+      if (Array.isArray(data)) {
+        state.currentPageId = pageSegments[1];
+        document.documentElement.dataset.sutraCrossPageCurrentPage = state.currentPageId;
+        state.pageSegments.set(pageSegments[1], data.slice().sort((a,b) => Number(a.sort_order)-Number(b.sort_order)));
+        schedule();
+      }
+    }
+    return response;
+  };
+
+  const banner = (kind, text) => {
+    const el = document.createElement("div");
+    el.className = `sutra-cross-page-banner sutra-cross-page-banner--${kind}`;
+    const label = document.createElement("span");
+    label.textContent = text;
+    el.appendChild(label);
+    return el;
+  };
+  const button = (text, action, primary=false) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = primary ? "btn btn--primary btn--xs" : "btn btn--ghost btn--xs";
+    el.textContent = text;
+    el.onclick = async (event) => { event.stopPropagation(); el.disabled = true; try { await action(); } finally { el.disabled = false; } };
+    return el;
+  };
+  const notify = (message) => window.dispatchEvent(new CustomEvent("sutra:local-direct-read-notice", {detail:{message,type:"success"}}));
+  const render = async () => {
+    document.documentElement.dataset.sutraCrossPageRender = String(Date.now());
+    document.querySelectorAll(".sutra-cross-page-banner").forEach(el => el.remove());
+    const segments = state.pageSegments.get(state.currentPageId) || [];
+    const cards = Array.from(document.querySelectorAll(".segments-list .segment-card"));
+    if (!segments.length || !cards.length) return;
+    const first = segments[0], firstCard = cards.find(c => c.dataset.segmentId === String(first.id)) || cards[0];
+    const candidateResponse = await baseFetch(`/api/local-cross-page/candidates/by-continuation/${encodeURIComponent(first.id)}`).catch(() => null);
+    const candidatePayload = candidateResponse && candidateResponse.ok ? await candidateResponse.json() : {};
+    document.documentElement.dataset.sutraCrossPageCandidate = candidatePayload.candidate ? "yes" : "no";
+    const firstLink = candidatePayload.link || null;
+    if (firstLink) {
+      const el = banner("confirmed", "已确认：本段接续上一页，翻译时将作为一个完整段落");
+      el.appendChild(button("撤销合并", async () => {
+        if (!window.confirm("撤销跨页关联？两页原文和已有译文不会删除。")) return;
+        const response = await baseFetch(`/api/local-cross-page/links/${firstLink.id}`, {method:"DELETE"});
+        if (!response.ok) throw new Error(await response.text());
+        notify("已撤销跨页合并"); schedule();
+      }));
+      firstCard.prepend(el); return;
+    }
+    const candidate = candidatePayload.candidate;
+    if (!candidate) return;
+    const anchor = {id:String(candidate.anchor_segment_id)};
+    const tail = String(candidate.anchor_text || "").trim(), head = String(candidate.continuation_text || "").trim();
+    const anchorLink = await getLink(anchor.id).catch(()=>null);
+    if (anchorLink || !tail || !head || /[。！？!?；;：:]\s*$/.test(tail)) return;
+    const el = banner("candidate", `跨页续段候选 · P${candidate.previous_page_number} 末段 → P${candidate.page_number} 首段`);
+    el.title = `${tail.slice(-80)} ｜ ${head.slice(0,80)}`;
+    el.appendChild(button("确认合并", async () => {
+      if (!window.confirm("确认将上一页末段与本页首段关联为一个逻辑段落？原文不会删除，可随时撤销。")) return;
+      const response = await baseFetch("/api/local-cross-page/links", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({anchor_segment_id:anchor.id,continuation_segment_id:first.id})});
+      if (!response.ok) throw new Error(await response.text());
+      notify("跨页段落已确认；翻译时会自动组合两页原文"); schedule();
+    }, true));
+    firstCard.prepend(el);
+  };
+  const observer = new MutationObserver((mutations) => {
+    const relevant = mutations.some(mutation => Array.from(mutation.addedNodes).concat(Array.from(mutation.removedNodes)).some(node => {
+      if (!(node instanceof HTMLElement)) return false;
+      return !node.classList.contains("sutra-cross-page-banner") && !node.closest(".sutra-cross-page-banner");
+    }));
+    if (relevant) schedule();
+  });
+  observer.observe(document.body, {childList:true,subtree:true});
+};
+__sutraInstallCrossPageLinks();
+JS
+cat "$js" >> "$tmp"
+sed -i 's/拆分 PDF 页面/检测 PDF 文本层/g' "$tmp"
+sed -i 's/执行 OCR/直读文本/g' "$tmp"
+sed -i 's/重新 OCR/重新直读/g' "$tmp"
+sed -i 's/全部识别/全部直读/g' "$tmp"
+sed -i 's/对这一页执行 OCR（一次 LLM Vision 调用）/对这一页直读 PDF 文本层；无有效文本层时停止并提示/g' "$tmp"
+sed -i 's/对这一页直读文本（一次 LLM Vision 调用）/对这一页直读 PDF 文本层；无有效文本层时停止并提示/g' "$tmp"
+sed -i 's/对当前章节里所有 pending 状态的页统一跑 OCR/对当前章节里所有 pending 状态的 PDF 页批量直读文本层；无有效文本层时停止并提示/g' "$tmp"
+sed -i 's/对章节"${_e.title}"里所有 pending 页跑 OCR？/对章节"${_e.title}"里所有 pending 页执行文本层直读？/g' "$tmp"
+sed -i 's/每页一次 LLM Vision 调用，耗时取决于页数（每页 5–20 秒）。/优先读取 PDF 文本层；无法读出有效文本时会停止并提示，不再自动识别。/g' "$tmp"
+sed -i 's/批量 OCR 失败：/批量直读失败：/g' "$tmp"
+sed -i 's/正在将 PDF 拆为图片（不会立即识别）\.\.\./正在检测 PDF 文本层；可直读则跳过 OCR，否则拆分页面.../g' "$tmp"
+sed -i 's/原文已校对 · 等待译笔/原文已确认/g' "$tmp"
+sed -i 's/原文已校对/原文已确认/g' "$tmp"
+sed -i 's/撤回校对状态/撤回确认状态/g' "$tmp"
+sed -i 's/原文已签字校对完毕/原文已确认完毕/g' "$tmp"
+sed -i 's/撤回"已校对"/撤回"已确认"/g' "$tmp"
+sed -i 's/已撤回校对/已撤回确认/g' "$tmp"
+sed -i 's/请先校对原文/请先确认原文/g' "$tmp"
+sed -i 's/⌛ 待校对/⌛ 待确认/g' "$tmp"
+sed -i 's~return a.proposals}return Array.isArray(a)?a:\[\]~return Object.assign(a.proposals,{errors:Array.isArray(a.errors)?a.errors:[]})}return Array.isArray(a)?a:[]~' "$tmp"
+sed -i 's~H=async()=>{var se;const U=s.slice(0,4).map(ce=>ce.id).filter(Boolean);~H=async()=>{var se;const eligibleCouncil=s.filter(ce=>!ce.is_builtin\&\&ce.model_preference!=="agg-compare-all"\&\&(ce.source_lang==="*"||ce.source_lang===e)\&\&(ce.target_lang==="*"||ce.target_lang===t)),U=(eligibleCouncil.length?eligibleCouncil:s.filter(ce=>ce.model_preference!=="agg-compare-all"\&\&(ce.source_lang==="*"||ce.source_lang===e)\&\&(ce.target_lang==="*"||ce.target_lang===t))).slice(0,8).map(ce=>ce.id).filter(Boolean);~' "$tmp"
+sed -i 's~Ae.length>=1?E(Ae):j({content:((se=ce==null?void 0:ce.errors)==null?void 0:se\[0\])||"会审失败，请检查 LLM 网关配置",persona:"Error"})~Ae.length>=1?(E(Ae),Array.isArray(ce.errors)\&\&ce.errors.length\&\&j({content:"部分角色未返回："+ce.errors.join("；"),persona:"Error"})):j({content:((se=ce==null?void 0:ce.errors)==null?void 0:se[0])||"会审失败，请检查 LLM 网关配置",persona:"Error"})~' "$tmp"
+sed -i 's~finally{$(!1)}}},Z=()=>~finally{$(!1)}}},multiCompare=async()=>{$(!0),j(null),E(null);try{const U=await Wi(n),se=(Array.isArray(U)?U:[]).map(ce=>ce.text||ce.content||ce.value||"").join("").trim();if(!se)throw new Error("当前段落没有可翻译原文");let ce="",ye="";const Ae=qb([{role:"system",content:`Translate from ${On[e]||e} to ${On[t]||t}. Preserve terminology and return only the translation.`},{role:"user",content:se}],"agg-compare-all",{onChunk:Be=>{ce+=Be},onError:Be=>{ye=String(Be||"")}},{temperature:.2,max_tokens:4096});await Ae.promise;const lineBreak=String.fromCharCode(10),modelResults=ce.trim().split("## ").slice(1).map((Be,re)=>{const Je=Be.split(lineBreak),nt=(Je.shift()||"").trim(),dt=Je[0]\&\&Je[0].startsWith("上游:")?Je.shift():"",_e=Je.join(lineBreak).trim();return{content:_e,persona:nt||`模型${re+1}`,persona_id:`model-${re}`,lang:t,proposal_id:null,comparison_kind:"model",comparison_meta:dt,comparison_error:_e.startsWith("[调用失败]")}}).filter(Be=>Be.content);modelResults.length?E(modelResults):j({content:ye||ce||"多模型对照没有返回结果",persona:"Error"})}catch(U){j({content:"多模型对照失败: "+U.message,persona:"Error"})}finally{$(!1)}},Z=()=>~' "$tmp"
+sed -i 's~T?"AI 翻译中...":"AI 翻译"\]}),c.jsxs("button",{className:"btn btn--ghost btn--sm",onClick:H~T?"AI 翻译中...":"AI 翻译"]}),c.jsx("button",{className:"btn btn--ghost btn--sm",onClick:multiCompare,disabled:T,title:"调用聚合器内全部可用模型并排对照",style:{color:"var(--azure)"},children:"多模型对照"}),c.jsxs("button",{className:"btn btn--ghost btn--sm",onClick:H~' "$tmp"
+sed -i 's~children:\[c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:Z~children:[_.persona==="多模型对照"?null:c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:Z~' "$tmp"
+sed -i 's~title:"不采纳，丢弃此建议",children:"丢弃"~title:_.persona==="多模型对照"?"关闭对照结果":"不采纳，丢弃此建议",children:_.persona==="多模型对照"?"关闭":"丢弃"~' "$tmp"
+sed -i 's~className:"council-panel",children:~className:`council-panel ${B[0]\&\&B[0].comparison_kind==="model"?"council-panel--models":""}`,children:~' "$tmp"
+sed -i 's~children:\["🪞 译师会审 · 分歧已高亮 · 按 1–",B.length," 或点「采纳」选定"\]~children:[B[0]\&\&B[0].comparison_kind==="model"?"多模型对照":"🪞 译师会审"," · 分歧已高亮 · 按 1–",B.length," 或点「采纳」选定"]~' "$tmp"
+sed -i 's~c.jsx("button",{className:"btn btn--primary btn--sm",onClick:()=>ie(U),style:{fontSize:"0.8125rem",padding:"1px 8px"},children:"采纳"})~U.comparison_error?null:c.jsx("button",{className:"btn btn--primary btn--sm",onClick:()=>ie(U),style:{fontSize:"0.8125rem",padding:"1px 8px"},children:"采纳"})~' "$tmp"
+sed -i 's~})]}),c.jsx("div",{className:`council-col__text~})]}),U.comparison_meta\&\&c.jsx("div",{className:"council-col__meta",children:U.comparison_meta}),c.jsx("div",{className:`council-col__text~' "$tmp"
+sed -i 's/function Zz({segmentId:n,sourceLang:e,targetLang:t,personas:s,onSubmit:a,onRefreshSegment:l,relaySource:u})/function Zz({segmentId:n,sourceLang:e,targetLang:t,personas:s,onSubmit:a,onRefreshSegment:l,relaySource:u,onCancel:closeEditor})/' "$tmp"
+sed -i 's/className:"persona-selector",children:s.map(U=>c.jsx("button",{className:`persona-chip ${p===U.id?"active":""}`,onClick:()=>g(U.id),children:U.display_name},U.id))})]})/className:"persona-selector",children:s.map(U=>c.jsx("button",{className:`persona-chip ${p===U.id?"active":""}`,onClick:()=>g(U.id),children:U.display_name},U.id))}),closeEditor?c.jsx("button",{type:"button",className:"btn btn--ghost btn--sm translation-editor__collapse",onClick:U=>{U.stopPropagation(),f.trim()?(window.confirm("收起编辑框？未提交的译文不会保存。")?closeEditor():null):closeEditor()},title:"收起编辑框；未提交内容不会保存",children:"收起"}):null]})/' "$tmp"
+sed -i 's/c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:ge,disabled:!f.trim()||v,children:\[c.jsx("span",{className:"icon icon--sm",children:c.jsx(nn,{width:14,height:14})}),v?"提交中...":"提交译文"\]})\]})/closeEditor?c.jsx("button",{type:"button",className:"btn btn--ghost btn--sm translation-editor__collapse-bottom",onClick:U=>{U.stopPropagation(),f.trim()?(window.confirm("收起编辑框？未提交的译文不会保存。")?closeEditor():null):closeEditor()},title:"收起编辑框；未提交内容不会保存",children:"收起"}):null,c.jsxs("button",{className:"btn btn--primary btn--sm",onClick:ge,disabled:!f.trim()||v,children:[c.jsx("span",{className:"icon icon--sm",children:c.jsx(nn,{width:14,height:14})}),v?"提交中...":"提交译文"]})]})/' "$tmp"
+sed -i 's/onSubmit:on,onRefreshSegment:Rn,relaySource:We}/onSubmit:on,onRefreshSegment:Rn,relaySource:We,onCancel:Ut}/' "$tmp"
+sed -i 's/\[{mode:"normal",label:"✏️ 工作台",desc:"逐段译校"},{mode:"reading",label:"📖 阅读台",desc:"成品阅读 + AI 编辑"},{mode:"compare",label:"🪞 对照视图",desc:"多角色横向对比"}]/[{mode:"normal",label:"✏️ 工作台",desc:"逐段译校"},{mode:"reading",label:"📖 阅读台",desc:"成品阅读 + AI 编辑"}]/' "$tmp"
+sed -i 's~z==="normal"||z==="reading"||z==="compare"?Ui(z):Array.isArray(k)&&k.length>0?Ui("reading"):Ui("normal")~z==="normal"||z==="reading"?Ui(z):Array.isArray(k)\&\&k.length>0?Ui("reading"):Ui("normal")~' "$tmp"
+sed -i 's~try{z=localStorage.getItem("sutra_view_mode")}catch{}z==="normal"||z==="reading"?Ui(z):Array.isArray(k)\&\&k.length>0?Ui("reading"):Ui("normal")~try{z=localStorage.getItem("sutra_view_mode")}catch{};z==="normal"||z==="reading"?Ui(z):Array.isArray(k)\&\&k.length>0?Ui("reading"):Ui("normal")~' "$tmp"
+grep -q 'translation-editor__collapse' "$tmp"
+grep -q 'translation-editor__collapse-bottom' "$tmp"
+grep -q 'onCancel:Ut' "$tmp"
+grep -q 'multiCompare=async' "$tmp"
+grep -q 'eligibleCouncil' "$tmp"
+grep -q 'return Object.assign(a.proposals' "$tmp"
+grep -q 'council-panel--models' "$tmp"
+grep -q 'comparison_meta' "$tmp"
+! grep -q 'mode:"compare",label:"🪞 对照视图"' "$tmp"
+! grep -q 'closeEditorclassName' "$tmp"
+mv "$tmp" "$js"
+sed -i "s/__SUTRA_ENABLE_LOCAL_DEV_AUTH__/${ENABLE_LOCAL_DEV_AUTH}/g" "$js"
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-localdev.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v3.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v6.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v7.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v8.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v9.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v10.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v11.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v12.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v13.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v14.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v15.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v16.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v17.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v21.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v22.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v23.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v24.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v25.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v26.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v29.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v30.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v33.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v34.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v35.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v36.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v37.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v38.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v39.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v40.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v41.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v42.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v43.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v44.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v45.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v46.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v47.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v48.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v49.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v50.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v51.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v52.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v53.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v54.js
+cp "$js" /usr/share/nginx/html/assets/index-ex7lBOJf-file-router-v80.js
+sed -i 's#/assets/index-ex7lBOJf.js#/assets/index-ex7lBOJf-file-router-v80.js#g' /usr/share/nginx/html/index.html
+SHELL
