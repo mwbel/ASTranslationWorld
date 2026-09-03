@@ -320,6 +320,26 @@ button {
   gap: 8px;
 }
 
+.home-folder-parts {
+  max-height: 122px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7fbf8;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.home-folder-parts span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .danger-action {
   color: var(--danger);
   border-color: #e1bbb6;
@@ -345,7 +365,8 @@ button {
   flex-wrap: wrap;
 }
 
-#fileInput {
+#fileInput,
+#folderInput {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -643,10 +664,6 @@ button:disabled {
 
 .workspace.proofread-merged-view .pane-resizer[data-resizer="ocr-ai"],
 .workspace.proofread-merged-view .ai-ocr-pane {
-  display: none;
-}
-
-.workspace.proofread-merged-view .source-block-overlay {
   display: none;
 }
 
@@ -1072,7 +1089,7 @@ body.is-resizing-panes * {
 
 .source-block-overlay {
   position: absolute;
-  z-index: 2;
+  z-index: 12;
   inset: 0;
   pointer-events: none;
 }
@@ -1097,16 +1114,22 @@ body.is-resizing-panes * {
   background: rgba(247, 144, 9, 0.055);
 }
 
+.source-sync-block.is-estimated {
+  border-style: dashed;
+  border-color: rgba(224, 68, 56, 0.55);
+  background: rgba(224, 68, 56, 0.055);
+}
+
 .source-sync-block.is-active {
-  z-index: 4;
-  border: 2px solid #e04438;
-  background: rgba(224, 68, 56, 0.12);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.86);
+  z-index: 14;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .source-line-highlight {
   position: absolute;
-  z-index: 3;
+  z-index: 13;
   display: none;
   border: 2px solid #e04438;
   background: rgba(224, 68, 56, 0.12);

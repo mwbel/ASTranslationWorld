@@ -21,8 +21,14 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from io import BytesIO
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional runtime dependency
+    Image = None  # type: ignore[assignment]
 
 
 HOST = os.environ.get("AI_VISION_OCR_HOST", "127.0.0.1")
@@ -38,6 +44,8 @@ MODEL = os.environ.get("AI_VISION_MODEL", DEFAULT_MODEL)
 TIMEOUT = float(os.environ.get("AI_VISION_TIMEOUT", "120"))
 MAX_TOKENS = int(os.environ.get("AI_VISION_MAX_TOKENS", "8192"))
 TEMPERATURE = float(os.environ.get("AI_VISION_TEMPERATURE", "0.0"))
+MAX_IMAGE_SIDE = int(os.environ.get("AI_VISION_MAX_IMAGE_SIDE", "1800"))
+IMAGE_JPEG_QUALITY = int(os.environ.get("AI_VISION_IMAGE_JPEG_QUALITY", "88"))
 AGGREGATOR_ALLOW_FALLBACK = os.environ.get("AI_VISION_ALLOW_FALLBACK", "0").strip().lower() not in {
     "0",
     "false",
@@ -93,6 +101,38 @@ def image_data_url(image_bytes: bytes, filename: str) -> str:
     mime_type = mimetypes.guess_type(filename)[0] or "image/png"
     encoded = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
+
+
+def prepare_vision_image(image_bytes: bytes, filename: str) -> tuple[bytes, str, str]:
+    """Downscale full-page OCR images before sending them to a slow vision model."""
+    if Image is None or MAX_IMAGE_SIDE <= 0:
+        mime_type = mimetypes.guess_type(filename)[0] or "image/png"
+        return image_bytes, filename, mime_type
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            image.load()
+            width, height = image.size
+            if max(width, height) <= MAX_IMAGE_SIDE:
+                mime_type = mimetypes.guess_type(filename)[0] or "image/png"
+                return image_bytes, filename, mime_type
+
+            normalized = image.convert("RGB")
+            resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+            normalized.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE), resampling)
+
+            output = BytesIO()
+            normalized.save(
+                output,
+                format="JPEG",
+                quality=max(60, min(95, IMAGE_JPEG_QUALITY)),
+                optimize=True,
+            )
+            stem = os.path.splitext(filename or "page.png")[0] or "page"
+            return output.getvalue(), f"{stem}.jpg", "image/jpeg"
+    except Exception:
+        mime_type = mimetypes.guess_type(filename)[0] or "image/png"
+        return image_bytes, filename, mime_type
 
 
 def parse_model_text(payload: dict[str, Any]) -> str:
@@ -162,14 +202,27 @@ def summarize_attempts(attempts: Any) -> str:
     if not isinstance(attempts, list) or not attempts:
         return ""
     chunks: list[str] = []
-    for attempt in attempts[:4]:
+    for attempt in attempts[:6]:
         if not isinstance(attempt, dict):
             continue
         model = attempt.get("modelRef") or attempt.get("model") or "model"
         status = attempt.get("status") or "unknown"
-        error = attempt.get("error")
+        error = compact_upstream_error(str(attempt.get("error") or ""))
         chunks.append(f"{model}: {status}" + (f" ({redact_sensitive(str(error))})" if error else ""))
     return "；".join(chunks)
+
+
+def compact_upstream_error(text: str) -> str:
+    lowered = text.lower()
+    if "http 503" in lowered or '"code": 503' in lowered or "unavailable" in lowered:
+        if "high demand" in lowered:
+            return "HTTP 503 high demand，模型暂时拥堵"
+        return "HTTP 503，模型服务暂时不可用"
+    if "timed out" in lowered or "timeout" in lowered:
+        return "请求超时"
+    if "429" in lowered or "resource_exhausted" in lowered:
+        return "额度或频率限制"
+    return text[:220] + ("..." if len(text) > 220 else "")
 
 
 def redact_sensitive(text: str) -> str:
@@ -181,14 +234,15 @@ def redact_sensitive(text: str) -> str:
 
 
 def call_model_aggregator(image_bytes: bytes, filename: str, prompt: str) -> dict[str, Any]:
-    data_url = image_data_url(image_bytes, filename)
+    prepared_bytes, prepared_filename, mime_type = prepare_vision_image(image_bytes, filename)
+    data_url = image_data_url(prepared_bytes, prepared_filename)
     upload = post_json(
         aggregator_url("/api/aggregate/upload"),
         {
-            "name": filename,
+            "name": prepared_filename,
             "kind": "image",
-            "mimeType": mimetypes.guess_type(filename)[0] or "image/png",
-            "size": len(image_bytes),
+            "mimeType": mime_type,
+            "size": len(prepared_bytes),
             "dataUrl": data_url,
         },
         AGGREGATOR_API_KEY,
@@ -237,6 +291,12 @@ def call_model_aggregator(image_bytes: bytes, filename: str, prompt: str) -> dic
         "model": resolved_model,
         "provider": "model_aggregator",
         "upstream": aggregator_url("/api/aggregate/image-to-markdown"),
+        "image": {
+            "originalSize": len(image_bytes),
+            "sentSize": len(prepared_bytes),
+            "filename": prepared_filename,
+            "maxSide": MAX_IMAGE_SIDE,
+        },
     }
 
 

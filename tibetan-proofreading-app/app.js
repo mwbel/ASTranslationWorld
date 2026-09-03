@@ -1,8 +1,9 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260717-proofread-markdown-export-43";
+const APP_BUILD_ID = "20260903-smart-ocr-protect-result-57";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
+const FOLDER_PROJECTS_KEY = "tibetan-proofreading-app:folder-projects:v1";
 const HOME_PROJECT_FILTERS = new Set(["all", "ocr", "translation"]);
 const OCR_FONT_SIZE_KEY = "tibetan-proofreading-app:ocr-font-size";
 const SOURCE_PREVIEW_SCALE_KEY = "tibetan-proofreading-app:source-preview-scale";
@@ -105,6 +106,8 @@ const els = {};
 const state = {
   pdfDoc: null,
   pdfUrl: "",
+  pdfFile: null,
+  pdfPageRenderUrl: "",
   imageUrl: "",
   imageBlob: null,
   markdownText: "",
@@ -130,6 +133,9 @@ const state = {
   editingRoleId: "academic-literal",
   activeWorkflow: "home",
   homeProjectFilter: "all",
+  folderProjectFiles: new Map(),
+  pendingFolderProjectId: "",
+  activeFolderProjectId: "",
   isOcrBusy: false,
   isTranslateBusy: false,
   remoteBookId: "",
@@ -176,6 +182,7 @@ function cacheElements() {
     "newProjectButton",
     "deleteProjectButton",
     "fileInput",
+    "folderInput",
     "ocrModeSelect",
     "endpointInput",
     "aiOcrEndpointInput",
@@ -281,7 +288,7 @@ function configureDeploymentEndpoints() {
 
 function wireEvents() {
   bindOptionalClick("homeButton", () => showHomeView());
-  bindOptionalClick("homeNewOcrProjectButton", () => startNewWorkflowProject("ocr"));
+  bindOptionalClick("homeNewOcrProjectButton", () => startNewOcrFolderProject());
   bindOptionalClick("homeBrowseOcrProjectsButton", () => browseHomeProjects("ocr"));
   bindOptionalClick("homeContinueOcrTaskButton", () => continueHomeTask("ocr"));
   bindOptionalClick("homeNewTranslationProjectButton", () => startNewWorkflowProject("translation"));
@@ -323,6 +330,25 @@ function wireEvents() {
     }
   });
 
+  if (els.folderInput) {
+    els.folderInput.addEventListener("change", async (event) => {
+      const files = Array.from(event.target.files || []);
+      try {
+        if (files.length) {
+          await loadFolderProject(files);
+        } else {
+          setStatus("已取消文件夹选择。", "warn");
+        }
+      } catch (error) {
+        console.error("Failed to load folder project", error);
+        setStatus(`文件夹项目加载失败：${error.message || error}`, "error");
+      } finally {
+        state.pendingFolderProjectId = "";
+        event.target.value = "";
+      }
+    });
+  }
+
   els.prevButton.addEventListener("click", () => goToPage(state.pageNum - 1));
   els.nextButton.addEventListener("click", () => goToPage(state.pageNum + 1));
   els.viewerFirstPageButton.addEventListener("click", () => goToPage(1));
@@ -360,7 +386,7 @@ function wireEvents() {
     }
   });
   bindOptionalClick("checkTranslateButton", checkTranslateService);
-  els.ocrButton.addEventListener("click", runOcrForCurrentPage);
+  els.ocrButton.addEventListener("click", runOcrForAllPages);
   els.copyButton.addEventListener("click", copyCurrentText);
   els.downloadTextButton.addEventListener("click", downloadAllOcrText);
   els.copyAiButton.addEventListener("click", copyCurrentAiText);
@@ -559,6 +585,179 @@ function startNewWorkflowProject(workflow) {
   }
 }
 
+function startNewOcrFolderProject() {
+  if (!els.folderInput) {
+    setStatus("文件夹选择控件未初始化，请刷新页面后重试。", "error");
+    return;
+  }
+  if (state.isOcrBusy || state.isTranslateBusy) {
+    setStatus("OCR 或翻译正在运行，请等当前任务结束后再新建项目。", "warn");
+    return;
+  }
+  state.pendingFolderProjectId = "";
+  els.folderInput.value = "";
+  els.folderInput.click();
+}
+
+async function loadFolderProject(files) {
+  const pdfFiles = files.filter(isPdfFile);
+  if (!pdfFiles.length) {
+    throw new Error("所选总文件夹中没有找到 PDF 分册。");
+  }
+
+  const manifest = makeFolderProjectManifest(pdfFiles, state.pendingFolderProjectId);
+  state.folderProjectFiles.set(manifest.id, manifest.parts.map((part) => ({
+    id: part.id,
+    file: part.file,
+  })));
+  persistFolderProjectManifest(manifest);
+  renderHomeDashboard();
+
+  const firstPart = manifest.parts[0];
+  if (!firstPart?.file) {
+    setStatus(`已建立“${manifest.sourceName}”项目，但没有可打开的 PDF 分册。`, "warn");
+    return;
+  }
+
+  state.activeFolderProjectId = manifest.id;
+  showWorkbenchView("ocr");
+  await loadFile(firstPart.file);
+  state.activeFolderProjectId = manifest.id;
+  setStatus(
+    `已载入“${manifest.sourceName}”：${manifest.parts.length} 个 PDF 分册已纳入项目。当前打开第 1 个分册“${firstPart.file.name}”。`,
+    "ok"
+  );
+}
+
+function makeFolderProjectManifest(files, preferredId = "") {
+  const rootName = inferFolderRootName(files);
+  const parts = files
+    .map((file, index) => makeFolderProjectPart(file, index))
+    .sort(compareFolderProjectParts)
+    .map((part, index) => ({
+      ...part,
+      order: index + 1,
+      id: `${String(index + 1).padStart(4, "0")}-${slugifyProjectPart(part.relativePath || part.name)}`,
+    }));
+  const knownPages = parts.reduce((total, part) => total + (part.estimatedPages || 0), 0);
+  const id = preferredId || makeFolderProjectId(rootName, parts);
+
+  return {
+    id,
+    kind: "folder",
+    workflow: "ocr",
+    sourceName: rootName || "未命名藏文书籍",
+    sourceMime: "folder/pdf-parts",
+    sourceType: "pdf-folder",
+    partCount: parts.length,
+    pageCount: knownPages,
+    hasEstimatedPageCount: knownPages > 0,
+    updatedAt: new Date().toISOString(),
+    parts,
+  };
+}
+
+function makeFolderProjectPart(file, index) {
+  const relativePath = file.webkitRelativePath || file.name;
+  const range = parsePageRangeFromName(relativePath);
+  const partNumber = parsePartNumberFromName(relativePath);
+  return {
+    name: file.name,
+    relativePath,
+    folderPath: relativePath.includes("/") ? relativePath.split("/").slice(0, -1).join("/") : "",
+    pageStart: range?.start || 0,
+    pageEnd: range?.end || 0,
+    estimatedPages: range ? Math.max(1, range.end - range.start + 1) : 0,
+    partNumber,
+    fallbackOrder: index,
+    file,
+  };
+}
+
+function inferFolderRootName(files) {
+  const firstPath = files.find((file) => file.webkitRelativePath)?.webkitRelativePath || "";
+  const [root] = firstPath.split("/");
+  if (root) return root;
+  const firstFile = files[0];
+  return firstFile?.name?.replace(/\.pdf$/i, "") || "未命名藏文书籍";
+}
+
+function compareFolderProjectParts(left, right) {
+  if (left.pageStart && right.pageStart && left.pageStart !== right.pageStart) {
+    return left.pageStart - right.pageStart;
+  }
+  if (left.partNumber && right.partNumber && left.partNumber !== right.partNumber) {
+    return left.partNumber - right.partNumber;
+  }
+  return (left.relativePath || left.name).localeCompare(right.relativePath || right.name, "zh-Hans-CN", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function parsePageRangeFromName(value) {
+  const normalized = String(value || "").replace(/[_\s]+/g, " ");
+  const patterns = [
+    /pages?\s*0*(\d{1,6})\s*[-_~至]\s*0*(\d{1,6})/i,
+    /p(?:age)?\s*0*(\d{1,6})\s*[-_~至]\s*0*(\d{1,6})/i,
+    /(?:^|[^\d])0*(\d{1,6})\s*[-_~至]\s*0*(\d{1,6})(?:[^\d]|$)/,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (!match) continue;
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    if (Number.isFinite(start) && Number.isFinite(end) && start > 0 && end >= start) {
+      return { start, end };
+    }
+  }
+  return null;
+}
+
+function parsePartNumberFromName(value) {
+  const match = String(value || "").match(/part[_\s-]*0*(\d{1,5})/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function makeFolderProjectId(rootName, parts) {
+  const signature = [
+    rootName || "book",
+    parts.length,
+    parts[0]?.relativePath || "",
+    parts[parts.length - 1]?.relativePath || "",
+  ].join("|");
+  return `folder:${slugifyProjectPart(signature)}`;
+}
+
+function slugifyProjectPart(value) {
+  return encodeURIComponent(String(value || "part").toLowerCase())
+    .replace(/%/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72) || "part";
+}
+
+function persistFolderProjectManifest(manifest) {
+  const stored = getStoredFolderProjects().filter((project) => project.id !== manifest.id);
+  const cleanParts = manifest.parts.map(({ file: _file, ...part }) => part);
+  stored.unshift({
+    ...manifest,
+    parts: cleanParts,
+  });
+  window.localStorage.setItem(FOLDER_PROJECTS_KEY, JSON.stringify(stored.slice(0, 50)));
+}
+
+function getStoredFolderProjects() {
+  try {
+    const raw = window.localStorage.getItem(FOLDER_PROJECTS_KEY);
+    const projects = JSON.parse(raw || "[]");
+    return Array.isArray(projects) ? projects.filter((project) => project?.kind === "folder") : [];
+  } catch (error) {
+    console.warn("Failed to parse folder projects", error);
+    return [];
+  }
+}
+
 function setAppTitle(title) {
   const heading = document.querySelector(".brand h1");
   if (heading) {
@@ -671,26 +870,44 @@ function renderHomeProjectList(projects) {
     const meta = document.createElement("div");
     meta.className = "home-project-meta";
     meta.append(
-      makeHomePill(`${project.pageCount || 0} 页`),
+      makeHomePill(makeProjectPageLabel(project)),
       makeHomePill(project.sourceMime || project.sourceType || "本机缓存"),
       makeHomePill(formatHomeDate(project.updatedAt)),
     );
+    if (project.kind === "folder") {
+      meta.append(makeHomePill(`${project.partCount || 0} 个 PDF 分册`));
+    }
 
     const progress = document.createElement("div");
     progress.className = "home-project-progress";
-    progress.append(
-      makeHomePill(`OCR ${project.ocrCount}/${project.pageCount || 0}`),
-      makeHomePill(`译文 ${project.translationCount}/${project.pageCount || 0}`),
-    );
+    if (project.kind === "folder") {
+      progress.append(makeHomePill(makeFolderProjectRangeLabel(project)));
+    } else {
+      progress.append(
+        makeHomePill(`OCR ${project.ocrCount}/${project.pageCount || 0}`),
+        makeHomePill(`译文 ${project.translationCount}/${project.pageCount || 0}`),
+      );
+    }
 
     const actions = document.createElement("div");
     actions.className = "home-project-actions";
-    actions.append(
-      makeHomeProjectButton("继续校对", "scan-text", () => openHomeProject(project, "ocr")),
-      makeHomeProjectButton("继续翻译", "languages", () => openHomeProject(project, "translation")),
-    );
+    if (project.kind === "folder") {
+      actions.append(
+        makeHomeProjectButton("打开首个分册", "scan-text", () => openFolderProject(project, "ocr")),
+        makeHomeProjectButton("重选总文件夹", "folder-open", () => requestFolderProjectSource(project)),
+      );
+    } else {
+      actions.append(
+        makeHomeProjectButton("继续校对", "scan-text", () => openHomeProject(project, "ocr")),
+        makeHomeProjectButton("继续翻译", "languages", () => openHomeProject(project, "translation")),
+      );
+    }
 
-    card.append(title, meta, progress, actions);
+    card.append(title, meta, progress);
+    if (project.kind === "folder") {
+      card.append(makeFolderProjectPartsList(project));
+    }
+    card.append(actions);
     fragment.appendChild(card);
   });
   els.homeProjectList.appendChild(fragment);
@@ -710,6 +927,10 @@ function makeHomeProjectFilterSummary(filter, filteredCount, totalCount) {
 }
 
 function openHomeProject(project, workflow) {
+  if (project.kind === "folder") {
+    openFolderProject(project, workflow);
+    return;
+  }
   if (project.isActive) {
     showWorkbenchView(workflow);
     if (workflow === "ocr") {
@@ -718,6 +939,74 @@ function openHomeProject(project, workflow) {
     return;
   }
   requestCachedProjectSource(project, workflow);
+}
+
+async function openFolderProject(project, workflow = "ocr") {
+  const sessionParts = state.folderProjectFiles.get(project.id) || [];
+  const firstPart = sessionParts[0];
+  if (!firstPart?.file) {
+    requestFolderProjectSource(project);
+    return;
+  }
+  state.activeFolderProjectId = project.id;
+  showWorkbenchView(workflow === "translation" ? "translation" : "ocr");
+  await loadFile(firstPart.file);
+  state.activeFolderProjectId = project.id;
+  setStatus(`已打开“${project.sourceName}”的第 1 个 PDF 分册。当前版本先以分册为单位校对。`, "ok");
+}
+
+function requestFolderProjectSource(project) {
+  if (!els.folderInput) {
+    setStatus("文件夹选择控件未初始化，请刷新页面后重试。", "error");
+    return;
+  }
+  state.pendingFolderProjectId = project.id;
+  setStatus(`请选择“${project.sourceName}”的总文件夹，以恢复 ${project.partCount || 0} 个 PDF 分册。`, "warn");
+  els.folderInput.value = "";
+  els.folderInput.click();
+}
+
+function makeProjectPageLabel(project) {
+  if (project.kind === "folder" && !project.hasEstimatedPageCount) {
+    return "页数待加载";
+  }
+  return `${project.pageCount || 0} 页`;
+}
+
+function makeFolderProjectRangeLabel(project) {
+  const parts = Array.isArray(project.parts) ? project.parts : [];
+  const ranges = parts
+    .filter((part) => part.pageStart && part.pageEnd)
+    .slice(0, 2)
+    .map((part) => `${part.pageStart}-${part.pageEnd}`);
+  if (!ranges.length) {
+    return "未识别页码范围，按文件名排序";
+  }
+  const suffix = parts.length > 2 ? ` 等 ${parts.length} 段` : "";
+  return `页码范围 ${ranges.join("、")}${suffix}`;
+}
+
+function makeFolderProjectPartsList(project) {
+  const list = document.createElement("div");
+  list.className = "home-folder-parts";
+  const parts = Array.isArray(project.parts) ? project.parts.slice(0, 8) : [];
+  parts.forEach((part) => {
+    const item = document.createElement("span");
+    item.textContent = formatFolderProjectPartLabel(part);
+    list.appendChild(item);
+  });
+  if ((project.parts?.length || 0) > parts.length) {
+    const more = document.createElement("span");
+    more.textContent = `另 ${project.parts.length - parts.length} 个分册`;
+    list.appendChild(more);
+  }
+  return list;
+}
+
+function formatFolderProjectPartLabel(part) {
+  const range = part.pageStart && part.pageEnd ? ` pages ${part.pageStart}-${part.pageEnd}` : "";
+  const folder = part.folderPath ? `${part.folderPath}/` : "";
+  return `${String(part.order || "").padStart(2, "0")} ${folder}${part.name}${range}`;
 }
 
 function makeHomePill(text) {
@@ -749,6 +1038,10 @@ function getHomeProjects() {
     if (!project) continue;
     if (activeProject?.cacheKey === project.cacheKey) continue;
     projects.push(project);
+  }
+
+  for (const folderProject of getStoredFolderProjects()) {
+    projects.push(parseStoredFolderProject(folderProject));
   }
 
   return projects.sort((left, right) => {
@@ -795,6 +1088,23 @@ function parseCachedProject(cacheKey) {
     console.warn("Failed to parse cached project", cacheKey, error);
     return null;
   }
+}
+
+function parseStoredFolderProject(project) {
+  const pageCount = Number(project.pageCount) || 0;
+  return {
+    ...project,
+    cacheKey: project.id,
+    sourceName: project.sourceName || "未命名藏文书籍",
+    sourceMime: project.sourceMime || "folder/pdf-parts",
+    sourceType: project.sourceType || "pdf-folder",
+    pageCount,
+    partCount: Number(project.partCount) || project.parts?.length || 0,
+    ocrCount: 0,
+    translationCount: 0,
+    isActive: state.activeFolderProjectId === project.id,
+    kind: "folder",
+  };
 }
 
 function decodeCacheProjectName(cacheKey) {
@@ -1198,7 +1508,7 @@ async function loadFile(file) {
     }
   }
 
-  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+  if (isPdfFile(file)) {
     await loadPdf(file);
     return;
   }
@@ -1285,6 +1595,10 @@ function isMarkdownFile(file) {
     name.endsWith(".txt");
 }
 
+function isPdfFile(file) {
+  return file?.type === "application/pdf" || /\.pdf$/i.test(file?.name || "");
+}
+
 function isWordFile(file) {
   const name = file.name.toLowerCase();
   return file.type === DOCX_MIME || name.endsWith(".docx") || name.endsWith(".doc");
@@ -1296,8 +1610,14 @@ async function loadPdf(file) {
     return;
   }
 
+  state.pdfFile = file;
   state.pdfUrl = URL.createObjectURL(file);
-  const task = window.pdfjsLib.getDocument({ url: state.pdfUrl });
+  const task = window.pdfjsLib.getDocument({
+    url: state.pdfUrl,
+    disableFontFace: false,
+    useSystemFonts: true,
+    fontExtraProperties: true,
+  });
   state.pdfDoc = await task.promise;
   state.sourceType = "pdf";
   state.pageNum = 1;
@@ -1433,12 +1753,17 @@ function resetDocumentState() {
   if (state.pdfUrl) {
     URL.revokeObjectURL(state.pdfUrl);
   }
+  if (state.pdfPageRenderUrl) {
+    URL.revokeObjectURL(state.pdfPageRenderUrl);
+  }
   if (state.imageUrl) {
     URL.revokeObjectURL(state.imageUrl);
   }
 
   state.pdfDoc = null;
   state.pdfUrl = "";
+  state.pdfFile = null;
+  state.pdfPageRenderUrl = "";
   state.imageUrl = "";
   state.imageBlob = null;
   state.markdownText = "";
@@ -1448,6 +1773,7 @@ function resetDocumentState() {
   state.sourceMime = "";
   state.cacheKey = "";
   state.sourceType = "";
+  state.activeFolderProjectId = "";
   state.pageNum = 1;
   state.pageCount = 0;
   state.ocrResults.clear();
@@ -1502,9 +1828,14 @@ function restoreCachedResults() {
     state.ocrResults.clear();
     state.translationResults.clear();
 
+    let droppedBadPdfTextCount = 0;
     for (const [page, result] of Object.entries(payload.ocrResults || {})) {
       const pageNum = Number(page);
       if (!isValidPageNumber(pageNum) || typeof result?.text !== "string") continue;
+      if (result.source === "pdf-text" && !isUsablePdfDirectText(result.text)) {
+        droppedBadPdfTextCount += 1;
+        continue;
+      }
       state.ocrResults.set(pageNum, {
         text: result.text,
         raw: result.raw || null,
@@ -1513,6 +1844,9 @@ function restoreCachedResults() {
         source: result.source || "cache",
         updatedAt: result.updatedAt || payload.updatedAt || "",
       });
+    }
+    if (droppedBadPdfTextCount > 0) {
+      window.localStorage.removeItem(state.cacheKey);
     }
 
     for (const [page, result] of Object.entries(payload.translationResults || {})) {
@@ -1907,8 +2241,22 @@ function makeTextResult(text, source, extra = {}) {
 function shouldReplaceExistingWithPdfText(existing, existingText, overwrite) {
   if (overwrite) return true;
   if (!existingText) return true;
-  if (existing?.source === "manual") return false;
-  return !isDirectTextSource(existing?.source);
+  // Text-layer discovery is a fallback for an empty page, never a replacement
+  // for an explicit OCR or manually corrected result on that page.
+  return false;
+}
+
+function discardCurrentBadPdfTextResult() {
+  const existing = state.ocrResults.get(state.pageNum);
+  if (existing?.source !== "pdf-text") return false;
+  if (isUsablePdfDirectText(existing.text || "")) return false;
+  state.ocrResults.delete(state.pageNum);
+  els.ocrText.value = "";
+  saveCachedResults();
+  updateOcrPanelForPage();
+  updateSummary();
+  updateThumbnailState();
+  return true;
 }
 
 function getResultSourceLabel(result) {
@@ -1950,6 +2298,15 @@ async function renderCurrentPage() {
   }
 
   const token = ++state.renderToken;
+  if (await renderCurrentPdfPageWithLocalService(token)) {
+    syncPageControls(true);
+    renderActiveSourceHighlight();
+    updateOcrPanelForPage();
+    updateTranslationPanelForPage();
+    updateThumbnailState();
+    return;
+  }
+
   const page = await state.pdfDoc.getPage(state.pageNum);
   if (token !== state.renderToken) return;
 
@@ -1984,6 +2341,48 @@ async function renderCurrentPage() {
   updateOcrPanelForPage();
   updateTranslationPanelForPage();
   updateThumbnailState();
+}
+
+async function renderCurrentPdfPageWithLocalService(token) {
+  if (!state.pdfFile || isCloudDeployment()) return false;
+  try {
+    const blob = await renderPdfPageBlobWithLocalService(state.pageNum, 180);
+    if (token !== state.renderToken) return true;
+    if (state.pdfPageRenderUrl) {
+      URL.revokeObjectURL(state.pdfPageRenderUrl);
+    }
+    state.pdfPageRenderUrl = URL.createObjectURL(blob);
+    els.imagePage.onload = null;
+    els.imagePage.onerror = null;
+    els.imagePage.src = state.pdfPageRenderUrl;
+    if (typeof els.imagePage.decode === "function") {
+      await els.imagePage.decode().catch(() => {});
+      if (token !== state.renderToken) return true;
+    }
+    els.imagePage.style.display = "block";
+    els.pdfCanvas.style.display = "none";
+    els.emptyState.style.display = "none";
+    return true;
+  } catch (error) {
+    console.warn("Local Poppler PDF render unavailable, falling back to PDF.js", error);
+    return false;
+  }
+}
+
+async function renderPdfPageBlobWithLocalService(pageNum, dpi) {
+  const formData = new FormData();
+  formData.append("file", state.pdfFile, state.pdfFile.name || "source.pdf");
+  formData.append("page", String(pageNum));
+  formData.append("dpi", String(dpi));
+  const response = await fetch(`${window.location.origin}/api/render-pdf-page`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || `HTTP ${response.status}`);
+  }
+  return response.blob();
 }
 
 function renderImagePage() {
@@ -2124,7 +2523,7 @@ async function syncPageInputBeforeAction() {
   }
 }
 
-async function runOcrForCurrentPage() {
+async function runOcrForAllPages() {
   if (!state.pageCount) {
     setStatus("请先上传 PDF 或图片。", "warn");
     return;
@@ -2132,18 +2531,51 @@ async function runOcrForCurrentPage() {
 
   await syncPageInputBeforeAction();
 
-  if (state.sourceType === "pdf") {
-    try {
-      const directText = await ensureCurrentPageDirectText({ overwrite: true, updatePanel: true });
-      if (directText.text) {
-        setOcrView("lines");
-        setStatus(`第 ${state.pageNum} 页是可编辑文字 PDF，已直接提取文本，未调用 OCR。`, "ok");
-        return;
-      }
-    } catch (error) {
-      setStatus(`PDF 文本层提取失败，改用 OCR：${error.message || error}`, "warn");
-    }
+  const endpoint = els.endpointInput.value.trim();
+  const aiEndpoint = els.aiOcrEndpointInput.value.trim();
+  const mode = getOcrMode();
+  if ((mode === "bdrc" || mode === "smart") && !endpoint) {
+    setStatus("请填写 BDRC OCR 接口地址。", "warn");
+    return;
   }
+  if (mode === "ai" && !aiEndpoint) {
+    setStatus("请填写 AI Vision OCR 接口地址。", "warn");
+    return;
+  }
+
+  const originalPage = state.pageNum;
+  setBusy(true);
+  try {
+    for (let pageNum = 1; pageNum <= state.pageCount; pageNum += 1) {
+      if (state.pageNum !== pageNum) {
+        await goToPage(pageNum);
+      }
+      setStatus(`正在统一识别第 ${pageNum} / ${state.pageCount} 页...`, "warn");
+      await runOcrForCurrentPage({ skipPageSync: true, skipBusy: true });
+    }
+    if (state.pageNum !== originalPage) {
+      await goToPage(originalPage);
+    }
+    setStatus(`已完成 ${state.pageCount} 页统一识别。`, "ok");
+  } catch (error) {
+    setStatus(`统一识别中断：第 ${state.pageNum} 页 ${formatNetworkError(error)}`, "error");
+  } finally {
+    setBusy(false);
+    refreshControls();
+  }
+}
+
+async function runOcrForCurrentPage(options = {}) {
+  if (!state.pageCount) {
+    setStatus("请先上传 PDF 或图片。", "warn");
+    return;
+  }
+
+  if (!options.skipPageSync) {
+    await syncPageInputBeforeAction();
+  }
+
+  discardCurrentBadPdfTextResult();
 
   const endpoint = els.endpointInput.value.trim();
   const aiEndpoint = els.aiOcrEndpointInput.value.trim();
@@ -2159,7 +2591,9 @@ async function runOcrForCurrentPage() {
   }
 
   try {
-    setBusy(true);
+    if (!options.skipBusy) {
+      setBusy(true);
+    }
     setStatus(`正在生成第 ${state.pageNum} 页 OCR 图片...`, "warn");
     const blob = await getCurrentPageImageBlob();
 
@@ -2220,6 +2654,13 @@ async function runOcrForCurrentPage() {
       return;
     }
 
+    saveSmartOcrCompareResult({
+      bdrcParsed,
+      aiPending: true,
+      statusMessage: `第 ${state.pageNum} 页 BDRC 识别完成，正在等待 AI Vision 校正。`,
+      statusType: "warn",
+    });
+
     try {
       setStatus("BDRC 完成，正在调用 AI Vision 校正高危藏文字母...", "warn");
       const aiParsed = await callOcrEndpoint(aiEndpoint, blob, {
@@ -2258,8 +2699,11 @@ async function runOcrForCurrentPage() {
       `OCR 调用失败：${formatNetworkError(error, mode === "ai" ? aiEndpoint : endpoint, mode === "ai" ? "ai-ocr" : "ocr")}`,
       "error"
     );
+    throw error;
   } finally {
-    setBusy(false);
+    if (!options.skipBusy) {
+      setBusy(false);
+    }
   }
 }
 
@@ -2323,7 +2767,7 @@ function saveOcrResultFromParsed(parsed, source, statusMessage, fallbackLines = 
   updateThumbnailState();
 }
 
-function saveSmartOcrCompareResult({ bdrcParsed, aiParsed = null, aiError = "", statusMessage, statusType = "ok" }) {
+function saveSmartOcrCompareResult({ bdrcParsed, aiParsed = null, aiError = "", aiPending = false, statusMessage, statusType = "ok" }) {
   const bdrcText = getParsedOcrText(bdrcParsed);
   const bdrcRawLines = getParsedOcrLines(bdrcParsed);
   const bdrcLines = bdrcRawLines.length ? bdrcRawLines : makeOcrLinesFromText(bdrcText);
@@ -2334,6 +2778,14 @@ function saveSmartOcrCompareResult({ bdrcParsed, aiParsed = null, aiError = "", 
   const hasAiContent = Boolean(aiText || aiRawLines.some((line) => String(line?.text || "").trim()));
   const aiLines = hasAiContent
     ? (aiRawLines.length ? aiRawLines : makeOcrLinesFromText(aiText))
+    : aiPending
+      ? [{
+          text: "AI Vision 正在识别...",
+          bbox: null,
+          index: 0,
+          diagnostic: true,
+          pending: true,
+        }]
     : [{
         text: aiError || "AI Vision 未返回文本。",
         bbox: null,
@@ -2362,6 +2814,7 @@ function saveSmartOcrCompareResult({ bdrcParsed, aiParsed = null, aiError = "", 
         text: aiText,
         lines: aiLines,
         error: Boolean(aiError),
+        pending: aiPending,
         model: aiModel,
         provider: aiProvider,
         expectedLineCount: countNonEmptyOcrLines(bdrcLines),
@@ -2511,6 +2964,7 @@ function normalizeOcrCompareSide(side) {
     text: normalizedText,
     lines: lines.length ? lines : makeOcrLinesFromText(normalizedText),
     error: Boolean(side.error),
+    pending: Boolean(side.pending || side.isPending),
     model: String(side.model || ""),
     provider: String(side.provider || ""),
     expectedLineCount: Number(side.expectedLineCount || 0),
@@ -2613,6 +3067,27 @@ async function ensureCurrentPageDirectText(options = {}) {
   }
 
   if (!overwrite && existing?.source === "pdf-text" && existingText) {
+    if (!isUsablePdfDirectText(existingText)) {
+      state.ocrResults.delete(state.pageNum);
+      saveCachedResults();
+      if (updatePanel) {
+        els.ocrText.value = "";
+        updateOcrPanelForPage();
+        updateSummary();
+        updateThumbnailState();
+      }
+    } else {
+      return {
+        text: existingText,
+        source: "pdf-text",
+        label: getResultSourceLabel(existing),
+        persisted: false,
+        fromExisting: true,
+      };
+    }
+  }
+
+  if (!overwrite && existing?.source === "pdf-text" && existingText && isUsablePdfDirectText(existingText)) {
     return {
       text: existingText,
       source: "pdf-text",
@@ -2625,6 +3100,27 @@ async function ensureCurrentPageDirectText(options = {}) {
   const pdfTextResult = await extractCurrentPdfPageText();
   if (!pdfTextResult.text) {
     return { text: "", source: "pdf-text", label: "PDF 文本层", persisted: false };
+  }
+
+  if (!isUsablePdfDirectText(pdfTextResult.text)) {
+    if (existing?.source === "pdf-text") {
+      state.ocrResults.delete(state.pageNum);
+      saveCachedResults();
+      if (updatePanel) {
+        els.ocrText.value = "";
+        updateOcrPanelForPage();
+        updateSummary();
+        updateThumbnailState();
+      }
+    }
+    return {
+      text: "",
+      source: "pdf-text",
+      label: "PDF 文本层",
+      persisted: false,
+      rejected: true,
+      reason: "PDF 文本层疑似字体编码乱码",
+    };
   }
 
   const shouldPersist = shouldReplaceExistingWithPdfText(existing, existingText, overwrite);
@@ -2652,6 +3148,33 @@ async function ensureCurrentPageDirectText(options = {}) {
     label: "PDF 文本层",
     persisted: shouldPersist,
   };
+}
+
+function isUsablePdfDirectText(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+
+  const visibleChars = [...value].filter((char) => !/\s/.test(char));
+  if (visibleChars.length < 12) return false;
+
+  const tibetanCount = visibleChars.filter((char) => /[\u0F00-\u0FFF]/u.test(char)).length;
+  const cjkCount = visibleChars.filter((char) => /[\u3400-\u9FFF]/u.test(char)).length;
+  const latinExtendedCount = visibleChars.filter((char) => /[\u00C0-\u024F]/u.test(char)).length;
+  const replacementCount = visibleChars.filter((char) => char === "\uFFFD").length;
+  const controlCount = visibleChars.filter((char) => /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/u.test(char)).length;
+  const readableScriptCount = tibetanCount + cjkCount;
+  const suspiciousCount = latinExtendedCount + replacementCount + controlCount;
+
+  if (readableScriptCount >= 10 && readableScriptCount / visibleChars.length >= 0.18) {
+    return true;
+  }
+
+  if (suspiciousCount >= 5 && suspiciousCount > readableScriptCount) {
+    return false;
+  }
+
+  const plainLatinCount = visibleChars.filter((char) => /[A-Za-z0-9.,;:!?'"()[\]{}\-_/]/.test(char)).length;
+  return plainLatinCount >= 20 && suspiciousCount / visibleChars.length < 0.08;
 }
 
 function groupPdfTextItemsIntoLines(items) {
@@ -3223,6 +3746,14 @@ async function getCurrentPageImageBlob() {
     return state.imageBlob;
   }
 
+  if (state.pdfFile && !isCloudDeployment()) {
+    try {
+      return await renderPdfPageBlobWithLocalService(state.pageNum, Number(els.dpiInput.value) || 260);
+    } catch (error) {
+      console.warn("Local Poppler OCR render unavailable, falling back to PDF.js", error);
+    }
+  }
+
   const dpi = Number(els.dpiInput.value) || 260;
   const page = await state.pdfDoc.getPage(state.pageNum);
   const scale = dpi / 72;
@@ -3435,7 +3966,11 @@ function renderOcrLineComparison() {
     editor.spellcheck = false;
     editor.value = line.text || "";
     editor.setAttribute("aria-label", `第 ${index + 1} 行 OCR 文本`);
-    const activateLine = () => activateOcrLine(line, index, row);
+    const activateLine = () => activateOcrLine(
+      getSourceLineForRow(line, null),
+      index,
+      row,
+    );
     row.addEventListener("click", activateLine);
     editor.addEventListener("focus", activateLine);
     editor.addEventListener("input", () => {
@@ -3494,7 +4029,9 @@ function renderProofreadMergedView() {
     const bdrcLine = bdrcLines[index] || { text: "", bbox: aiLines[index]?.bbox || finalLines[index]?.bbox || null, index };
     const rawAiLine = aiLines[index] || { text: "", bbox: bdrcLine.bbox || finalLines[index]?.bbox || null, index };
     const aiLine = makeProofreadAiLine(compare, rawAiLine, index, rawAiLine.bbox || bdrcLine.bbox || finalLines[index]?.bbox || null);
-    const sourceLine = getSourceLineForRow(bdrcLine, aiLine) || getSourceLineForRow(finalLines[index], null);
+    const sourceLine =
+      getSourceLineForRow(bdrcLine, aiLine) ||
+      getSourceLineForRow(finalLines[index], null);
     fragment.appendChild(renderProofreadBlockCard({
       index,
       bdrcLine,
@@ -3564,14 +4101,8 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
   );
 
   const activate = () => {
-    const line = sourceLine || bdrcLine || aiLine;
-    if (line?.bbox) {
-      activateOcrSourceBlock(line, index, { scrollRows: false });
-    } else {
-      state.activeOcrLine = index;
-      markOcrSourceRowsActive(index);
-      setActiveSourceBlock(index);
-    }
+    const line = sourceLine || getSourceLineForRow(bdrcLine, aiLine);
+    activateOcrSourceBlock(line, index, { scrollRows: false });
   };
   card.addEventListener("click", (event) => {
     if (event.target.closest("button, textarea, input, label, select")) return;
@@ -3678,7 +4209,7 @@ function renderProofreadSourcePanel(sourceLine, index) {
     panel.appendChild(fallback);
   }
 
-  if (sourceLine?.bbox) {
+  if (sourceLine?.bbox && !sourceLine.estimated) {
     panel.classList.add("is-locatable");
     panel.addEventListener("click", () => activateOcrSourceBlock(sourceLine, index));
   }
@@ -3714,6 +4245,7 @@ function renderSourcePreviewScaleButton(action, icon, label) {
 }
 
 function createSourceBlockPreviewCanvas(sourceLine) {
+  if (sourceLine?.estimated) return null;
   const bbox = normalizeBbox(sourceLine?.bbox);
   const source = getVisibleSourceElement();
   if (!bbox || !source) return null;
@@ -3845,6 +4377,8 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     const sourceLine = getSourceLineForRow(line, peerLine);
     if (sourceLine?.bbox) {
       activateOcrSourceBlock(sourceLine, index, { scrollRows: false });
+    } else {
+      activateOcrSourceBlock(null, index, { scrollRows: false });
     }
   });
   editor.addEventListener("input", () => {
@@ -4280,10 +4814,8 @@ function renderOcrSourceRows({ lines, peerLines, rowCount, side, compare = null 
 
     row.append(number, text);
     const sourceLine = getSourceLineForRow(line, peerLine);
-    if (sourceLine?.bbox) {
-      row.classList.add("is-locatable");
-      row.addEventListener("click", () => activateOcrSourceBlock(sourceLine, index));
-    }
+    row.classList.add("is-locatable");
+    row.addEventListener("click", () => activateOcrSourceBlock(sourceLine, index));
     body.appendChild(row);
   }
   return body;
@@ -4599,9 +5131,15 @@ function getSourceLineForRow(line, peerLine = null) {
 }
 
 function getVisibleSourceElement() {
-  const source = state.sourceType === "image" ? els.imagePage : els.pdfCanvas;
-  if (!source || source.style.display === "none") return null;
-  return source;
+  const candidates = [els.imagePage, els.pdfCanvas];
+  return candidates.find((source) => {
+    if (!source) return false;
+    const style = window.getComputedStyle(source);
+    return style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      source.clientWidth > 0 &&
+      source.clientHeight > 0;
+  }) || null;
 }
 
 function clearSourceBlockOverlay() {
@@ -4616,12 +5154,14 @@ function renderSourceBlockOverlay() {
 
   const source = getVisibleSourceElement();
   if (!source || !state.pageCount) return;
+  if (state.activeOcrLine < 0) return;
 
   const blocks = getCurrentSourceBlockRecords();
   if (!blocks.length) return;
 
   const fragment = document.createDocumentFragment();
   blocks.forEach((block) => {
+    if (block.index !== state.activeOcrLine) return;
     const box = getSourceOverlayBox(block.bbox, source);
     if (!box) return;
 
@@ -4631,6 +5171,7 @@ function renderSourceBlockOverlay() {
       block.hasBdrc ? "has-bdrc" : "",
       block.hasAi ? "has-ai" : "",
       block.hasDifference ? "has-difference" : "",
+      block.estimated ? "is-estimated" : "",
       state.activeOcrLine === block.index ? "is-active" : "",
     ].filter(Boolean).join(" ");
     item.dataset.sourceRowIndex = String(block.index);
@@ -4672,7 +5213,7 @@ function getCurrentSourceBlockRecords() {
   return (lines || [])
     .map((line, index) => makeSourceBlockRecord({
       index,
-      line,
+      line: getSourceLineForRow(line, null),
       hasBdrc: Boolean(String(line?.text || "").trim()),
       hasAi: false,
       hasDifference: false,
@@ -4686,9 +5227,26 @@ function makeSourceBlockRecord({ index, line, hasBdrc, hasAi, hasDifference }) {
   return {
     index,
     bbox,
+    estimated: Boolean(line?.estimated),
     hasBdrc,
     hasAi,
     hasDifference,
+  };
+}
+
+function makeEstimatedSourceLineForRow(index, rowCount) {
+  const count = Math.max(1, Number(rowCount) || 1);
+  const contentTop = 0.14;
+  const contentBottom = 0.92;
+  const step = (contentBottom - contentTop) / count;
+  return {
+    bbox: {
+      x: 0.08,
+      y: clamp(contentTop + index * step, 0, 0.96),
+      width: 0.84,
+      height: Math.max(0.018, Math.min(0.055, step * 0.86)),
+    },
+    estimated: true,
   };
 }
 
@@ -4708,8 +5266,8 @@ function getSourceOverlayBox(bbox, source) {
   const rawTop = sourceTop + normalized.y * sourceHeight;
   const rawWidth = normalized.width * sourceWidth;
   const rawHeight = normalized.height * sourceHeight;
-  const horizontalPadding = Math.max(2, Math.min(8, rawHeight * 0.16));
-  const verticalPadding = Math.max(3, Math.min(12, rawHeight * 0.32));
+  const horizontalPadding = getSourceHorizontalPadding(rawHeight);
+  const verticalPadding = getSourceVerticalPadding(rawHeight);
   const left = Math.max(sourceLeft, rawLeft - horizontalPadding);
   const top = Math.max(sourceTop, rawTop - verticalPadding);
   return {
@@ -4779,9 +5337,14 @@ function findSourceBlockAtPoint(clientX, clientY) {
 function activateOcrSourceBlock(line, index, options = {}) {
   state.activeOcrLine = index;
   markOcrSourceRowsActive(index);
+  renderSourceBlockOverlay();
   setActiveSourceBlock(index);
   if (options.scrollRows) {
     scrollOcrRowsIntoView(index);
+  }
+  if (line?.estimated) {
+    showSourceLineHighlight(null);
+    return;
   }
   showSourceLineHighlight(line, { scrollIntoView: options.scrollSource !== false });
 }
@@ -4830,6 +5393,7 @@ function activateOcrLine(line, index, row) {
     item.classList.remove("is-active");
   });
   row.classList.add("is-active");
+  renderSourceBlockOverlay();
   setActiveSourceBlock(index);
   showSourceLineHighlight(line);
 }
@@ -4837,8 +5401,8 @@ function activateOcrLine(line, index, row) {
 function showSourceLineHighlight(line, options = {}) {
   const bbox = line?.bbox || line;
   const normalized = normalizeBbox(bbox);
-  const source = state.sourceType === "image" ? els.imagePage : els.pdfCanvas;
-  if (!normalized || !source || source.style.display === "none") {
+  const source = getVisibleSourceElement();
+  if (!normalized || !source) {
     els.sourceLineHighlight.classList.remove("is-visible");
     return;
   }
@@ -4849,13 +5413,16 @@ function showSourceLineHighlight(line, options = {}) {
   const sourceRect = source.getBoundingClientRect();
   const sourceLeft = sourceRect.left - viewportRect.left + els.pageViewport.scrollLeft;
   const sourceTop = sourceRect.top - viewportRect.top + els.pageViewport.scrollTop;
-  const left = sourceLeft + normalized.x * sourceWidth;
-  const width = normalized.width * sourceWidth;
+  const rawLeft = sourceLeft + normalized.x * sourceWidth;
+  const rawWidth = normalized.width * sourceWidth;
   const rawTop = sourceTop + normalized.y * sourceHeight;
   const rawHeight = normalized.height * sourceHeight;
-  const verticalPadding = Math.max(8, rawHeight * 0.45);
+  const horizontalPadding = getSourceHorizontalPadding(rawHeight);
+  const verticalPadding = getSourceVerticalPadding(rawHeight);
+  const left = Math.max(sourceLeft, rawLeft - horizontalPadding);
+  const width = Math.max(6, Math.min(sourceLeft + sourceWidth - left, rawWidth + horizontalPadding * 2));
   const top = Math.max(sourceTop, rawTop - verticalPadding);
-  const height = Math.min(sourceTop + sourceHeight - top, rawHeight + verticalPadding * 2);
+  const height = Math.max(12, Math.min(sourceTop + sourceHeight - top, rawHeight + verticalPadding * 2));
   Object.assign(els.sourceLineHighlight.style, {
     left: `${left}px`,
     top: `${top}px`,
@@ -4879,10 +5446,23 @@ function renderActiveSourceHighlight() {
     setActiveSourceBlock(-1);
     return;
   }
-  const result = state.ocrResults.get(state.pageNum);
-  const line = result?.lines?.[state.activeOcrLine];
+  const line = getSourceLineByIndex(state.activeOcrLine);
+  renderSourceBlockOverlay();
   setActiveSourceBlock(state.activeOcrLine);
   showSourceLineHighlight(line);
+}
+
+function getSourceLineByIndex(index) {
+  const result = state.ocrResults.get(state.pageNum);
+  const compare = getOcrSourceCompare(result);
+  if (compare) {
+    const bdrcLines = getEffectiveOcrSideLines(compare.bdrc);
+    const aiLines = getEffectiveOcrSideLines(compare.llm, bdrcLines);
+    const count = Math.max(bdrcLines.length, aiLines.length);
+    return getSourceLineForRow(bdrcLines[index], aiLines[index]);
+  }
+  const lines = result?.lines?.length ? result.lines : extractOcrLines(result?.raw);
+  return getSourceLineForRow(lines?.[index], null);
 }
 
 function clearSourceLineHighlight() {
@@ -5060,6 +5640,7 @@ function updateAiOcrPanelMeta(compare = null) {
   const aiText = sourceCompare.llm.text || "";
   const aiLines = sourceCompare.llm.lines || [];
   const bdrcLines = sourceCompare.bdrc?.lines || [];
+  const aiPending = Boolean(sourceCompare.llm.pending);
   const hasAiText = Boolean(aiText.trim());
   const hasAiError = Boolean(sourceCompare.llm.error || aiLines.some((line) => line.error));
   const returnedLineCount = sourceCompare.llm.returnedLineCount || countNonEmptyOcrLines(aiLines);
@@ -5070,11 +5651,13 @@ function updateAiOcrPanelMeta(compare = null) {
     : `${returnedLineCount} 行`;
 
   els.aiOcrTitle.textContent = state.pageCount ? `第 ${state.pageNum} 页 AI Vision` : "等待智能识别";
-  els.aiOcrMeta.textContent = hasAiText ? `${model} · ${lineMeta}` : hasAiError ? "调用失败" : "未返回";
+  els.aiOcrMeta.textContent = aiPending ? "识别中" : hasAiText ? `${model} · ${lineMeta}` : hasAiError ? "调用失败" : "未返回";
   els.aiOcrMeta.title = hasAiText
     ? `AI Vision 模型：${model}${sourceCompare.llm.provider ? `；服务：${sourceCompare.llm.provider}` : ""}；返回行数：${lineMeta}`
     : "";
-  els.aiOcrMeta.style.color = hasAiText
+  els.aiOcrMeta.style.color = aiPending
+    ? "var(--amber)"
+    : hasAiText
     ? "var(--blue)"
     : hasAiError
       ? "var(--danger)"
@@ -5147,6 +5730,14 @@ function updateThumbnailState() {
   });
 }
 
+function getSourceHorizontalPadding(rawHeight) {
+  return Math.max(14, Math.min(42, Number(rawHeight || 0) * 0.9));
+}
+
+function getSourceVerticalPadding(rawHeight) {
+  return Math.max(6, Math.min(16, Number(rawHeight || 0) * 0.42));
+}
+
 function refreshControls() {
   const hasDocument = state.pageCount > 0;
   syncPageControls(hasDocument);
@@ -5156,7 +5747,7 @@ function refreshControls() {
   els.viewerPrevPageButton.disabled = !hasDocument || state.pageNum <= 1;
   els.viewerNextPageButton.disabled = !hasDocument || state.pageNum >= state.pageCount;
   els.viewerLastPageButton.disabled = !hasDocument || state.pageNum >= state.pageCount;
-  els.ocrButton.disabled = !hasDocument;
+  els.ocrButton.disabled = !hasDocument || state.isOcrBusy;
   setOptionalDisabled("downloadPageButton", !hasDocument);
   els.copyButton.disabled = !hasDocument;
   setOptionalDisabled("clearButton", !hasDocument);

@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>藏文典籍 OCR 对照工作台</title>
-    <link rel="stylesheet" href="./styles.css?v=20260717-proofread-markdown-export-43" />
+    <link rel="stylesheet" href="./styles.css?v=20260815-batch-ocr-sync-height-55" />
     <script src="./vendor/pdf.min.js" defer></script>
     <script src="./vendor/lucide.min.js" defer></script>
-    <script src="./app.js?v=20260717-proofread-markdown-export-43" defer></script>
+    <script src="./app.js?v=20260903-smart-ocr-protect-result-57" defer></script>
   </head>
   <body>
     <main class="app-shell ocr-only-mode">
@@ -186,6 +186,14 @@
                 id="fileInput"
                 type="file"
                 accept=".pdf,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain,image/*"
+              />
+              <input
+                id="folderInput"
+                type="file"
+                accept=".pdf,application/pdf"
+                webkitdirectory
+                directory
+                multiple
               />
             </div>
             <div class="viewer-header-actions">
