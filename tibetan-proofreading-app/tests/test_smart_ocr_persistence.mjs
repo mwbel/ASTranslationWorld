@@ -39,4 +39,20 @@ assert.doesNotMatch(
   "PDF text extraction must not overwrite persisted BDRC/AI OCR results"
 );
 
+const pdfTextGuardStart = source.indexOf("function isUsablePdfDirectText");
+const pdfTextGuardEnd = source.indexOf("function groupPdfTextItemsIntoLines", pdfTextGuardStart);
+const pdfTextGuard = source.slice(pdfTextGuardStart, pdfTextGuardEnd);
+
+assert.notEqual(pdfTextGuardStart, -1, "PDF text-layer quality guard must exist");
+assert.match(
+  pdfTextGuard,
+  /tibetanRatio >= 0\.5/,
+  "Tibetan PDF text layers must be Tibetan-dominant before they are treated as usable text"
+);
+assert.match(
+  pdfTextGuard,
+  /latinExtendedCount >= 4/,
+  "Latin-extended mojibake must cause a Tibetan PDF text layer to be rejected"
+);
+
 console.log("smart OCR persistence regression check passed");
