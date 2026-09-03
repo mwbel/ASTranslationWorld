@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260903-smart-ocr-protect-result-57";
+const APP_BUILD_ID = "20260903-cloud-single-pdf-import-58";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
 const FOLDER_PROJECTS_KEY = "tibetan-proofreading-app:folder-projects:v1";
@@ -169,6 +169,7 @@ function cacheElements() {
   [
     "homeButton",
     "homeNewOcrProjectButton",
+    "homeNewOcrFolderProjectButton",
     "homeBrowseOcrProjectsButton",
     "homeContinueOcrTaskButton",
     "homeNewTranslationProjectButton",
@@ -288,7 +289,8 @@ function configureDeploymentEndpoints() {
 
 function wireEvents() {
   bindOptionalClick("homeButton", () => showHomeView());
-  bindOptionalClick("homeNewOcrProjectButton", () => startNewOcrFolderProject());
+  bindOptionalClick("homeNewOcrProjectButton", () => startNewWorkflowProject("ocr"));
+  bindOptionalClick("homeNewOcrFolderProjectButton", () => startNewOcrFolderProject());
   bindOptionalClick("homeBrowseOcrProjectsButton", () => browseHomeProjects("ocr"));
   bindOptionalClick("homeContinueOcrTaskButton", () => continueHomeTask("ocr"));
   bindOptionalClick("homeNewTranslationProjectButton", () => startNewWorkflowProject("translation"));
@@ -582,6 +584,12 @@ function showWorkbenchView(workflow = "ocr", options = {}) {
 function startNewWorkflowProject(workflow) {
   if (newProject()) {
     showWorkbenchView(workflow);
+    if (!els.fileInput) {
+      setStatus("文件选择控件未初始化，请刷新页面后重试。", "error");
+      return;
+    }
+    els.fileInput.value = "";
+    els.fileInput.click();
   }
 }
 
