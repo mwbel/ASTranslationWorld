@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260903-cloud-single-pdf-import-58";
+const APP_BUILD_ID = "20260903-cloud-poppler-pdf-render-59";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
 const FOLDER_PROJECTS_KEY = "tibetan-proofreading-app:folder-projects:v1";
@@ -2352,7 +2352,7 @@ async function renderCurrentPage() {
 }
 
 async function renderCurrentPdfPageWithLocalService(token) {
-  if (!state.pdfFile || isCloudDeployment()) return false;
+  if (!state.pdfFile) return false;
   try {
     const blob = await renderPdfPageBlobWithLocalService(state.pageNum, 180);
     if (token !== state.renderToken) return true;
@@ -3754,7 +3754,7 @@ async function getCurrentPageImageBlob() {
     return state.imageBlob;
   }
 
-  if (state.pdfFile && !isCloudDeployment()) {
+  if (state.pdfFile) {
     try {
       return await renderPdfPageBlobWithLocalService(state.pageNum, Number(els.dpiInput.value) || 260);
     } catch (error) {

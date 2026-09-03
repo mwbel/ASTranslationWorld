@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 import uuid
@@ -13,7 +16,7 @@ from typing import Any
 import oss2
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 
@@ -161,6 +164,57 @@ async def bdrc_ocr(file: UploadFile = File(...)) -> JSONResponse:
             return JSONResponse(json.loads(response.read().decode("utf-8")))
     except (urllib.error.URLError, urllib.error.HTTPError) as exc:
         raise HTTPException(502, f"BDRC OCR 上游调用失败：{exc}") from exc
+
+
+@app.post("/api/render-pdf-page")
+async def render_pdf_page(
+    file: UploadFile = File(...),
+    page: int = Form(1),
+    dpi: int = Form(180),
+) -> Response:
+    if not shutil.which("pdftoppm"):
+        raise HTTPException(500, "pdftoppm not found in deployment image")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "上传 PDF 为空")
+
+    page_num = max(1, int(page or 1))
+    safe_dpi = min(420, max(72, int(dpi or 180)))
+    with tempfile.TemporaryDirectory(prefix="tibetan-pdf-render-") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        pdf_path = tmp_path / "input.pdf"
+        out_prefix = tmp_path / "page"
+        pdf_path.write_bytes(content)
+        try:
+            subprocess.run(
+                [
+                    "pdftoppm",
+                    "-f",
+                    str(page_num),
+                    "-l",
+                    str(page_num),
+                    "-singlefile",
+                    "-png",
+                    "-r",
+                    str(safe_dpi),
+                    str(pdf_path),
+                    str(out_prefix),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+        except subprocess.CalledProcessError as exc:
+            detail = exc.stderr.decode("utf-8", errors="replace").strip() if exc.stderr else str(exc)
+            raise HTTPException(500, detail or "pdftoppm failed") from exc
+
+        output = tmp_path / "page.png"
+        if not output.exists():
+            raise HTTPException(500, "pdftoppm did not produce a PNG page")
+        png_bytes = output.read_bytes()
+
+    return Response(content=png_bytes, media_type="image/png")
 
 
 @app.post("/api/ai-ocr")
