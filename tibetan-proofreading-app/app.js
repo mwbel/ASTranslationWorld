@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260903-reject-mixed-pdf-text-mojibake-62";
+const APP_BUILD_ID = "20260903-bdrc-diagnostic-cache-63";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
 const FOLDER_PROJECTS_KEY = "tibetan-proofreading-app:folder-projects:v1";
@@ -108,6 +108,7 @@ const state = {
   pdfUrl: "",
   pdfFile: null,
   pdfPageRenderUrl: "",
+  pdfPageRenderCache: new Map(),
   imageUrl: "",
   imageBlob: null,
   markdownText: "",
@@ -1764,6 +1765,11 @@ function resetDocumentState() {
   if (state.pdfPageRenderUrl) {
     URL.revokeObjectURL(state.pdfPageRenderUrl);
   }
+  state.pdfPageRenderCache.forEach((entry) => {
+    if (entry?.url) {
+      URL.revokeObjectURL(entry.url);
+    }
+  });
   if (state.imageUrl) {
     URL.revokeObjectURL(state.imageUrl);
   }
@@ -1772,6 +1778,7 @@ function resetDocumentState() {
   state.pdfUrl = "";
   state.pdfFile = null;
   state.pdfPageRenderUrl = "";
+  state.pdfPageRenderCache.clear();
   state.imageUrl = "";
   state.imageBlob = null;
   state.markdownText = "";
@@ -2354,12 +2361,14 @@ async function renderCurrentPage() {
 async function renderCurrentPdfPageWithLocalService(token) {
   if (!state.pdfFile) return false;
   try {
-    const blob = await renderPdfPageBlobWithLocalService(state.pageNum, 180);
+    const blob = await getRenderedPdfPageBlobWithCache(state.pageNum, 180);
     if (token !== state.renderToken) return true;
-    if (state.pdfPageRenderUrl) {
-      URL.revokeObjectURL(state.pdfPageRenderUrl);
+    const cacheKey = makePdfPageRenderCacheKey(state.pageNum, 180);
+    const cached = state.pdfPageRenderCache.get(cacheKey);
+    state.pdfPageRenderUrl = cached?.url || URL.createObjectURL(blob);
+    if (cached && !cached.url) {
+      cached.url = state.pdfPageRenderUrl;
     }
-    state.pdfPageRenderUrl = URL.createObjectURL(blob);
     els.imagePage.onload = null;
     els.imagePage.onerror = null;
     els.imagePage.src = state.pdfPageRenderUrl;
@@ -2375,6 +2384,19 @@ async function renderCurrentPdfPageWithLocalService(token) {
     console.warn("Local Poppler PDF render unavailable, falling back to PDF.js", error);
     return false;
   }
+}
+
+function makePdfPageRenderCacheKey(pageNum, dpi) {
+  return `${state.sourceName}:${state.sourceSize}:${pageNum}:${dpi}`;
+}
+
+async function getRenderedPdfPageBlobWithCache(pageNum, dpi) {
+  const cacheKey = makePdfPageRenderCacheKey(pageNum, dpi);
+  const cached = state.pdfPageRenderCache.get(cacheKey);
+  if (cached?.blob) return cached.blob;
+  const blob = await renderPdfPageBlobWithLocalService(pageNum, dpi);
+  state.pdfPageRenderCache.set(cacheKey, { blob, url: "" });
+  return blob;
 }
 
 async function renderPdfPageBlobWithLocalService(pageNum, dpi) {
@@ -2627,7 +2649,8 @@ async function runOcrForCurrentPage(options = {}) {
       if (mode !== "smart" || !aiEndpoint) {
         throw error;
       }
-      setStatus(`BDRC 未返回有效结果，正在改用 AI Vision：${formatNetworkError(error, endpoint)}`, "warn");
+      const bdrcError = formatNetworkError(error, endpoint);
+      setStatus(`BDRC 未返回有效结果，正在改用 AI Vision：${bdrcError}`, "warn");
       let aiParsed;
       try {
         aiParsed = await callOcrEndpoint(aiEndpoint, blob, {
@@ -2638,11 +2661,22 @@ async function runOcrForCurrentPage(options = {}) {
       } catch (aiError) {
         throw new Error(`AI Vision 调用失败：${formatNetworkError(aiError, aiEndpoint, "ai-ocr")}`);
       }
-      saveOcrResultFromParsed(
+      saveSmartOcrCompareResult({
+        bdrcParsed: {
+          text: "",
+          raw: { error: bdrcError, source: "bdrc-unavailable" },
+          lines: [{
+            text: `BDRC 当前不可用：${bdrcError}`,
+            bbox: null,
+            index: 0,
+            error: true,
+          }],
+        },
         aiParsed,
-        "ai-vision",
-        `第 ${state.pageNum} 页智能识别完成：BDRC 无有效结果，已使用 AI Vision。`
-      );
+        bdrcError,
+        statusMessage: `第 ${state.pageNum} 页智能识别完成：BDRC 无有效结果，已使用 AI Vision。`,
+        statusType: "warn",
+      });
       return;
     }
 
@@ -2775,10 +2809,19 @@ function saveOcrResultFromParsed(parsed, source, statusMessage, fallbackLines = 
   updateThumbnailState();
 }
 
-function saveSmartOcrCompareResult({ bdrcParsed, aiParsed = null, aiError = "", aiPending = false, statusMessage, statusType = "ok" }) {
+function saveSmartOcrCompareResult({ bdrcParsed, aiParsed = null, aiError = "", bdrcError = "", aiPending = false, statusMessage, statusType = "ok" }) {
   const bdrcText = getParsedOcrText(bdrcParsed);
   const bdrcRawLines = getParsedOcrLines(bdrcParsed);
-  const bdrcLines = bdrcRawLines.length ? bdrcRawLines : makeOcrLinesFromText(bdrcText);
+  const bdrcLines = bdrcRawLines.length
+    ? bdrcRawLines
+    : bdrcError
+      ? [{
+          text: `BDRC 当前不可用：${bdrcError}`,
+          bbox: null,
+          index: 0,
+          error: true,
+        }]
+      : makeOcrLinesFromText(bdrcText);
   const aiText = getParsedOcrText(aiParsed);
   const aiRawLines = getParsedOcrLines(aiParsed);
   const aiModel = getOcrResponseModel(aiParsed?.raw);
@@ -2804,18 +2847,22 @@ function saveSmartOcrCompareResult({ bdrcParsed, aiParsed = null, aiError = "", 
     raw: {
       source: "smart",
       bdrc: bdrcParsed.raw,
+      bdrc_error: bdrcError || "",
       ai: aiParsed?.raw || null,
       ai_error: aiError || "",
     },
     text: aiText || bdrcText,
     compare: {
-      note: aiError
+      note: bdrcError
+        ? "BDRC 初稿不可用，已在左栏显示原因；右栏为 AI Vision 识别结果。"
+        : aiError
         ? "右栏 AI Vision / LLM 未返回可用文本，已显示失败原因；左栏 BDRC 初稿仍可继续人工校对。"
         : "左栏为 BDRC OCR 初稿，右栏为 AI Vision / LLM 识别或复核结果。",
       bdrc: {
         label: "BDRC",
         text: bdrcText,
         lines: bdrcLines,
+        error: Boolean(bdrcError),
       },
       llm: {
         label: "AI Vision / LLM",
@@ -3771,7 +3818,7 @@ async function getCurrentPageImageBlob() {
 
   if (state.pdfFile) {
     try {
-      return await renderPdfPageBlobWithLocalService(state.pageNum, Number(els.dpiInput.value) || 260);
+      return await getRenderedPdfPageBlobWithCache(state.pageNum, Number(els.dpiInput.value) || 260);
     } catch (error) {
       console.warn("Local Poppler OCR render unavailable, falling back to PDF.js", error);
     }
@@ -5636,6 +5683,8 @@ function downloadBlob(blob, fileName) {
 function updateOcrPanelForPage() {
   const result = state.ocrResults.get(state.pageNum);
   const sourceLabel = getResultSourceLabel(result);
+  const sourceCompare = getOcrSourceCompare(result);
+  const hasBdrcError = Boolean(sourceCompare?.bdrc?.error || result?.raw?.bdrc_error);
   if (result?.source === "pdf-text") {
     els.ocrTitle.textContent = `第 ${state.pageNum} 页文本层`;
   } else if (state.sourceType === "word") {
@@ -5646,10 +5695,14 @@ function updateOcrPanelForPage() {
     els.ocrTitle.textContent = state.sourceType === "image" ? "图片 OCR" : `第 ${state.pageNum} 页 OCR`;
   }
   els.ocrText.value = result?.text || "";
-  els.ocrMeta.textContent = result?.text
+  els.ocrMeta.textContent = hasBdrcError
+    ? "BDRC 不可用"
+    : result?.text
     ? (isDirectTextSource(result.source) ? sourceLabel : "已识别")
     : "未识别";
-  els.ocrMeta.style.color = result?.text
+  els.ocrMeta.style.color = hasBdrcError
+    ? "var(--danger)"
+    : result?.text
     ? (isDirectTextSource(result.source) ? "var(--blue)" : "var(--green-deep)")
     : "var(--muted)";
   renderCurrentOcrView();

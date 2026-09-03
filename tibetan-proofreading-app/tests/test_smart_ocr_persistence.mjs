@@ -22,6 +22,16 @@ assert.match(
   /AI Vision 正在识别/,
   "pending AI Vision state must be rendered instead of clearing both OCR panels"
 );
+assert.match(
+  source,
+  /bdrcError/,
+  "smart fallback must preserve a visible BDRC diagnostic row when BDRC is unavailable"
+);
+assert.match(
+  source,
+  /pdfPageRenderCache/,
+  "server-rendered PDF page images must be cached per page and dpi to avoid repeated slow uploads"
+);
 
 const replaceDecisionStart = source.indexOf("function shouldReplaceExistingWithPdfText");
 const replaceDecisionEnd = source.indexOf("function discardCurrentBadPdfTextResult", replaceDecisionStart);
