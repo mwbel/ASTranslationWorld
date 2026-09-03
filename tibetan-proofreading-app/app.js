@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260903-reject-bad-tibetan-pdf-text-61";
+const APP_BUILD_ID = "20260903-reject-mixed-pdf-text-mojibake-62";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
 const FOLDER_PROJECTS_KEY = "tibetan-proofreading-app:folder-projects:v1";
@@ -3174,10 +3174,14 @@ function isUsablePdfDirectText(text) {
   const suspiciousCount = latinExtendedCount + replacementCount + controlCount;
   const tibetanRatio = tibetanCount / visibleChars.length;
   const cjkRatio = cjkCount / visibleChars.length;
+  const latinExtendedRatio = latinExtendedCount / visibleChars.length;
   const suspiciousRatio = suspiciousCount / visibleChars.length;
 
   if (tibetanCount >= 8) {
-    return tibetanRatio >= 0.5 && suspiciousRatio < 0.16;
+    if (latinExtendedCount >= 4 && latinExtendedRatio >= 0.04) {
+      return false;
+    }
+    return tibetanRatio >= 0.65 && suspiciousRatio < 0.08;
   }
 
   if (latinExtendedCount >= 4 && latinExtendedCount > tibetanCount + cjkCount) {

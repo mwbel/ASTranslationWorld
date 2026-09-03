@@ -46,13 +46,18 @@ const pdfTextGuard = source.slice(pdfTextGuardStart, pdfTextGuardEnd);
 assert.notEqual(pdfTextGuardStart, -1, "PDF text-layer quality guard must exist");
 assert.match(
   pdfTextGuard,
-  /tibetanRatio >= 0\.5/,
+  /tibetanRatio >= 0\.65/,
   "Tibetan PDF text layers must be Tibetan-dominant before they are treated as usable text"
 );
 assert.match(
   pdfTextGuard,
   /latinExtendedCount >= 4/,
   "Latin-extended mojibake must cause a Tibetan PDF text layer to be rejected"
+);
+assert.match(
+  pdfTextGuard,
+  /latinExtendedRatio/,
+  "Tibetan PDF text layers must reject mixed Latin-extended font-encoding mojibake by ratio, not only by absolute count"
 );
 
 console.log("smart OCR persistence regression check passed");
