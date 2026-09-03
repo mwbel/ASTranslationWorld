@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
 import sys
-import tempfile
 import urllib.error
 import urllib.request
 import uuid
@@ -90,6 +87,7 @@ def health() -> dict[str, Any]:
         "oss": {"configured": oss_configured, "bucket": OSS_BUCKET, "prefix": OSS_PREFIX},
         "bdrc": {"configured": bool(BDRC_OCR_UPSTREAM_URL), "upstream": BDRC_OCR_UPSTREAM_URL},
         "ai_ocr": {"configured": bool(env("MODEL_AGGREGATOR_BASE_URL") or env("AI_VISION_BASE_URL"))},
+        "pdf_render": {"provider": "pymupdf"},
         "translation": {"provider": env("TRANSLATE_PROVIDER", "model_aggregator")},
     }
 
@@ -172,47 +170,25 @@ async def render_pdf_page(
     page: int = Form(1),
     dpi: int = Form(180),
 ) -> Response:
-    if not shutil.which("pdftoppm"):
-        raise HTTPException(500, "pdftoppm not found in deployment image")
-
     content = await file.read()
     if not content:
         raise HTTPException(400, "上传 PDF 为空")
 
     page_num = max(1, int(page or 1))
     safe_dpi = min(420, max(72, int(dpi or 180)))
-    with tempfile.TemporaryDirectory(prefix="tibetan-pdf-render-") as tmp_dir:
-        tmp_path = Path(tmp_dir)
-        pdf_path = tmp_path / "input.pdf"
-        out_prefix = tmp_path / "page"
-        pdf_path.write_bytes(content)
-        try:
-            subprocess.run(
-                [
-                    "pdftoppm",
-                    "-f",
-                    str(page_num),
-                    "-l",
-                    str(page_num),
-                    "-singlefile",
-                    "-png",
-                    "-r",
-                    str(safe_dpi),
-                    str(pdf_path),
-                    str(out_prefix),
-                ],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-        except subprocess.CalledProcessError as exc:
-            detail = exc.stderr.decode("utf-8", errors="replace").strip() if exc.stderr else str(exc)
-            raise HTTPException(500, detail or "pdftoppm failed") from exc
+    try:
+        import fitz
 
-        output = tmp_path / "page.png"
-        if not output.exists():
-            raise HTTPException(500, "pdftoppm did not produce a PNG page")
-        png_bytes = output.read_bytes()
+        with fitz.open(stream=content, filetype="pdf") as document:
+            if page_num > document.page_count:
+                raise HTTPException(400, f"页码超出范围：{page_num} / {document.page_count}")
+            pdf_page = document.load_page(page_num - 1)
+            pixmap = pdf_page.get_pixmap(dpi=safe_dpi, alpha=False)
+            png_bytes = pixmap.tobytes("png")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, f"PyMuPDF PDF 渲染失败：{exc}") from exc
 
     return Response(content=png_bytes, media_type="image/png")
 
