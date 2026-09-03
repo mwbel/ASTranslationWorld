@@ -29,6 +29,11 @@ assert.match(
 );
 assert.match(
   source,
+  /makeAiOnlyCompareWithBdrcDiagnostic/,
+  "old AI Vision-only cached results must render a BDRC unavailable diagnostic instead of an empty BDRC pane"
+);
+assert.match(
+  source,
   /pdfPageRenderCache/,
   "server-rendered PDF page images must be cached per page and dpi to avoid repeated slow uploads"
 );

@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260903-bdrc-diagnostic-cache-63";
+const APP_BUILD_ID = "20260903-ai-only-bdrc-diagnostic-64";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
 const FOLDER_PROJECTS_KEY = "tibetan-proofreading-app:folder-projects:v1";
@@ -4722,7 +4722,42 @@ function getOcrSourceCompare(result) {
     }
     return storedCompare;
   }
-  return rawCompare;
+  return rawCompare || makeAiOnlyCompareWithBdrcDiagnostic(result);
+}
+
+function makeAiOnlyCompareWithBdrcDiagnostic(result) {
+  if (!result || result.source !== "ai-vision") return null;
+  const aiText = String(result.text || "").trim();
+  const aiLines = result.lines?.length ? result.lines : extractOcrLines(result.raw);
+  if (!aiText && !aiLines.length) return null;
+
+  const bdrcError = isCloudDeployment()
+    ? "Zeabur 线上服务未配置 BDRC_OCR_UPSTREAM_URL，当前只能显示 AI Vision 识别结果。"
+    : "当前页只有 AI Vision 结果；请切换到智能识别并确认 BDRC 服务可用后重新识别。";
+
+  return normalizeOcrCompare({
+    note: "当前页是旧版 AI Vision 单栏结果；BDRC 初稿不可用，已在左栏显示原因。",
+    bdrc: {
+      label: "BDRC",
+      text: "",
+      lines: [{
+        text: `BDRC 当前不可用：${bdrcError}`,
+        bbox: null,
+        index: 0,
+        error: true,
+      }],
+      error: true,
+    },
+    llm: {
+      label: "AI Vision / LLM",
+      text: aiText,
+      lines: aiLines.length ? aiLines : makeOcrLinesFromText(aiText),
+      model: getOcrResponseModel(result.raw),
+      provider: getOcrResponseProvider(result.raw),
+      returnedLineCount: aiLines.length || countTextLines(aiText),
+      expectedLineCount: aiLines.length || countTextLines(aiText),
+    },
+  });
 }
 
 function makeOcrCompareFromRawResult(result) {
