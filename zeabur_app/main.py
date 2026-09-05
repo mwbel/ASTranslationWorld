@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import urllib.error
-import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,7 +31,6 @@ OSS_BUCKET = env("OSS_BUCKET")
 OSS_ACCESS_KEY_ID = env("OSS_ACCESS_KEY_ID")
 OSS_ACCESS_KEY_SECRET = env("OSS_ACCESS_KEY_SECRET")
 OSS_PREFIX = env("OSS_PREFIX", "tibetan-proofreading").strip("/")
-BDRC_OCR_UPSTREAM_URL = env("BDRC_OCR_UPSTREAM_URL")
 MAX_UPLOAD_BYTES = int(env("MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))
 
 
@@ -85,7 +82,7 @@ def health() -> dict[str, Any]:
         "ok": oss_configured,
         "service": "tibetan-proofreading-zeabur",
         "oss": {"configured": oss_configured, "bucket": OSS_BUCKET, "prefix": OSS_PREFIX},
-        "bdrc": {"configured": bool(BDRC_OCR_UPSTREAM_URL), "upstream": BDRC_OCR_UPSTREAM_URL},
+        "bdrc": {"configured": False, "status": "disabled"},
         "ai_ocr": {"configured": bool(env("MODEL_AGGREGATOR_BASE_URL") or env("AI_VISION_BASE_URL"))},
         "pdf_render": {"provider": "pymupdf"},
         "translation": {"provider": env("TRANSLATE_PROVIDER", "model_aggregator")},
@@ -123,6 +120,24 @@ def get_book_state(book_id: str) -> dict[str, Any]:
     return read_json(book_id, "state.json")
 
 
+@app.get("/api/books/{book_id}/source")
+def get_book_source(book_id: str) -> Response:
+    metadata = read_json(book_id, "metadata.json")
+    source_key = str(metadata.get("source_key") or "")
+    if not source_key:
+        raise HTTPException(404, "书籍源文件不存在")
+    try:
+        body = oss_bucket().get_object(source_key).read()
+    except oss2.exceptions.NoSuchKey as exc:
+        raise HTTPException(404, "书籍源文件不存在") from exc
+    safe_name = Path(str(metadata.get("name") or "source.pdf")).name
+    return Response(
+        content=body,
+        media_type=str(metadata.get("content_type") or "application/octet-stream"),
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
+
+
 @app.put("/api/books/{book_id}/state")
 async def put_book_state(book_id: str, request: Request) -> dict[str, Any]:
     payload = await request.json()
@@ -146,22 +161,8 @@ async def save_export(book_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/ocr")
-async def bdrc_ocr(file: UploadFile = File(...)) -> JSONResponse:
-    if not BDRC_OCR_UPSTREAM_URL:
-        raise HTTPException(503, "BDRC_OCR_UPSTREAM_URL 未配置；云端 BDRC 初稿当前不可用")
-    content = await file.read()
-    boundary = uuid.uuid4().hex
-    filename = Path(file.filename or "page.png").name
-    body = (
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
-        f"Content-Type: {file.content_type or 'image/png'}\r\n\r\n"
-    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
-    req = urllib.request.Request(BDRC_OCR_UPSTREAM_URL, data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
-    try:
-        with urllib.request.urlopen(req, timeout=180) as response:
-            return JSONResponse(json.loads(response.read().decode("utf-8")))
-    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-        raise HTTPException(502, f"BDRC OCR 上游调用失败：{exc}") from exc
+async def bdrc_ocr() -> JSONResponse:
+    raise HTTPException(410, "BDRC OCR 已从当前版本停用；请使用 /api/ai-ocr")
 
 
 @app.post("/api/render-pdf-page")

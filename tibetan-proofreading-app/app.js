@@ -1,8 +1,10 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20260903-ai-only-bdrc-diagnostic-64";
+const APP_BUILD_ID = "20260905-ai-only-73";
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
+const SOURCE_DB_NAME = "tibetan-proofreading-app-sources";
+const SOURCE_STORE_NAME = "files";
 const FOLDER_PROJECTS_KEY = "tibetan-proofreading-app:folder-projects:v1";
 const HOME_PROJECT_FILTERS = new Set(["all", "ocr", "translation"]);
 const OCR_FONT_SIZE_KEY = "tibetan-proofreading-app:ocr-font-size";
@@ -122,6 +124,7 @@ const state = {
   pageCount: 0,
   ocrResults: new Map(),
   translationResults: new Map(),
+  ocrQualityReviews: [],
   ocrView: "lines",
   ocrFontSize: 22,
   sourcePreviewScale: 1,
@@ -379,14 +382,7 @@ function wireEvents() {
   els.zoomInput.addEventListener("change", renderCurrentPage);
   els.pageViewport.addEventListener("click", handleSourceViewportClick);
   els.ocrModeSelect.addEventListener("change", () => {
-    const mode = getOcrMode();
-    if (mode === "smart") {
-      setStatus("已切换到智能识别：先用 BDRC 识别，再用 LLM/AI Vision 校正。", "warn");
-    } else if (mode === "ai") {
-      setStatus("已切换到仅 AI Vision：将直接调用 AI OCR 接口。", "warn");
-    } else {
-      setStatus("已切换到仅本地 BDRC：不会调用 AI OCR 接口。", "warn");
-    }
+    setStatus("当前版本仅使用 AI Vision 识别。", "ok");
   });
   bindOptionalClick("checkTranslateButton", checkTranslateService);
   els.ocrButton.addEventListener("click", runOcrForAllPages);
@@ -530,6 +526,7 @@ function showHomeView(options = {}) {
   els.homeView.hidden = false;
   els.workbenchView.hidden = true;
   els.appShell.classList.add("home-mode", "ocr-only-mode");
+  els.appShell.classList.add("ai-only-mode");
   els.appShell.classList.remove("workbench-mode", "translation-workflow");
   els.workspace.classList.add("ocr-only-mode");
   els.workspace.classList.remove("translation-enabled", "translation-workflow");
@@ -553,6 +550,7 @@ function showWorkbenchView(workflow = "ocr", options = {}) {
   els.workbenchView.hidden = false;
   els.appShell.classList.remove("home-mode");
   els.appShell.classList.add("workbench-mode");
+  els.appShell.classList.add("ai-only-mode");
   els.appShell.classList.toggle("ocr-only-mode", !isTranslation);
   els.appShell.classList.toggle("translation-workflow", isTranslation);
   els.workspace.classList.toggle("ocr-only-mode", !isTranslation);
@@ -810,13 +808,107 @@ function continueHomeTask(workflow) {
 }
 
 function requestCachedProjectSource(project, workflow = "ocr") {
+  if (isCloudDeployment() && project.remoteBookId) {
+    resumeRemoteProject(project, workflow);
+    return;
+  }
+  resumeLocalProject(project, workflow);
+}
+
+async function resumeLocalProject(project, workflow = "ocr") {
+  try {
+    const sourceFile = await getStoredSourceFile(project.cacheKey);
+    if (sourceFile) {
+      await loadFile(sourceFile);
+      if (workflow === "ocr") setOcrView("proofread");
+      setStatus(`已恢复“${sourceFile.name}”及本机校对进度。`, "ok");
+      return;
+    }
+  } catch (error) {
+    console.warn("Failed to restore cached source file", error);
+  }
   showWorkbenchView(workflow);
-  setStatus(`请选择源文件“${project.sourceName}”以恢复本机缓存中的项目进度。`, "warn");
+  setStatus(`本机缓存已找到“${project.sourceName}”，但浏览器未保存源文件；请选择原始文件以恢复预览和校对进度。`, "warn");
   window.setTimeout(() => {
     if (!els.fileInput) return;
     els.fileInput.value = "";
     els.fileInput.click();
   }, 0);
+}
+
+function openSourceDatabase() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("当前浏览器不支持本地源文件缓存"));
+      return;
+    }
+    const request = window.indexedDB.open(SOURCE_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(SOURCE_STORE_NAME);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("无法打开本地源文件缓存"));
+  });
+}
+
+async function storeSourceFile(cacheKey, file) {
+  if (!cacheKey || !file || !window.indexedDB) return;
+  const database = await openSourceDatabase();
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction(SOURCE_STORE_NAME, "readwrite");
+    transaction.objectStore(SOURCE_STORE_NAME).put(file, cacheKey);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error || new Error("无法保存源文件"));
+  });
+  database.close();
+}
+
+async function getStoredSourceFile(cacheKey) {
+  if (!cacheKey || !window.indexedDB) return null;
+  const database = await openSourceDatabase();
+  const file = await new Promise((resolve, reject) => {
+    const transaction = database.transaction(SOURCE_STORE_NAME, "readonly");
+    const request = transaction.objectStore(SOURCE_STORE_NAME).get(cacheKey);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error || new Error("无法读取源文件"));
+  });
+  database.close();
+  return file;
+}
+
+async function resumeRemoteProject(project, workflow = "ocr") {
+  showWorkbenchView(workflow);
+  setStatus(`正在恢复云端项目“${project.sourceName}”...`, "warn");
+  try {
+    const baseUrl = window.location.origin;
+    const [sourceResponse, stateResponse] = await Promise.all([
+      fetch(`${baseUrl}/api/books/${encodeURIComponent(project.remoteBookId)}/source`),
+      fetch(`${baseUrl}/api/books/${encodeURIComponent(project.remoteBookId)}/state`),
+    ]);
+    if (!sourceResponse.ok) throw new Error(`源文件 HTTP ${sourceResponse.status}`);
+    const remoteState = await stateResponse.json().catch(() => ({}));
+    if (!stateResponse.ok) throw new Error(remoteState.detail || `状态 HTTP ${stateResponse.status}`);
+    const sourceBlob = await sourceResponse.blob();
+    const sourceName = project.sourceName || remoteState.name || "远程项目.pdf";
+    const sourceFile = new File([sourceBlob], sourceName, {
+      type: sourceBlob.type || project.sourceMime || remoteState.content_type || "application/pdf",
+    });
+    const cacheKey = makeCacheKey(sourceFile);
+    window.localStorage.setItem(cacheKey, JSON.stringify({
+      sourceName,
+      sourceSize: sourceFile.size,
+      sourceMime: sourceFile.type,
+      pageCount: Number(remoteState.page_count || remoteState.pageCount || project.pageCount || 0),
+      updatedAt: remoteState.updated_at || remoteState.updatedAt || new Date().toISOString(),
+      remoteBookId: project.remoteBookId,
+      ocrResults: remoteState.ocr_results || remoteState.ocrResults || {},
+      translationResults: remoteState.translation_results || remoteState.translationResults || {},
+    }));
+    await loadFile(sourceFile, { skipRemoteUpload: true, remoteBookId: project.remoteBookId });
+    setStatus(`已恢复“${sourceName}”及云端校对进度。`, "ok");
+  } catch (error) {
+    setStatus(`云端项目恢复失败：${error.message || error}`, "error");
+  }
 }
 
 function renderHomeDashboard() {
@@ -1066,6 +1158,7 @@ function getActiveHomeProject() {
     sourceName: state.sourceName || "当前项目",
     sourceSize: state.sourceSize,
     sourceMime: state.sourceMime,
+    remoteBookId: state.remoteBookId,
     pageCount: state.pageCount || 0,
     updatedAt: new Date().toISOString(),
     ocrCount: [...state.ocrResults.values()].filter((result) => (result.text || "").trim()).length,
@@ -1089,6 +1182,7 @@ function parseCachedProject(cacheKey) {
       sourceMime: payload.sourceMime || "",
       pageCount,
       updatedAt: payload.updatedAt || "",
+      remoteBookId: payload.remoteBookId || "",
       ocrCount,
       translationCount,
       isActive: false,
@@ -1273,7 +1367,7 @@ function togglePaneCollapsed(pane) {
 function updatePaneCollapseButtons() {
   const labels = {
     viewer: ["原文栏", "panel-left"],
-    ocr: ["BDRC OCR 栏", "panel-left"],
+    ocr: ["AI Vision OCR 栏", "panel-left"],
     ai: ["AI Vision 栏", "panel-right"],
   };
   els.paneCollapseButtons?.forEach((button) => {
@@ -1501,14 +1595,20 @@ async function loadSamplePdf() {
   }
 }
 
-async function loadFile(file) {
+async function loadFile(file, options = {}) {
   resetDocumentState();
   state.sourceName = file.name;
   state.sourceSize = file.size || 0;
   state.sourceMime = file.type || "";
   state.cacheKey = makeCacheKey(file);
+  storeSourceFile(state.cacheKey, file).catch((error) => {
+    console.warn("Failed to store source file locally", error);
+  });
+  if (options.remoteBookId) {
+    state.remoteBookId = options.remoteBookId;
+  }
 
-  if (isCloudDeployment()) {
+  if (isCloudDeployment() && !options.skipRemoteUpload) {
     try {
       await createRemoteBook(file);
     } catch (error) {
@@ -1793,6 +1893,7 @@ function resetDocumentState() {
   state.pageCount = 0;
   state.ocrResults.clear();
   state.translationResults.clear();
+  state.ocrQualityReviews = [];
   state.remoteBookId = "";
   if (state.remoteSaveTimer) {
     window.clearTimeout(state.remoteSaveTimer);
@@ -1842,6 +1943,7 @@ function restoreCachedResults() {
 
     state.ocrResults.clear();
     state.translationResults.clear();
+    state.ocrQualityReviews = normalizeOcrQualityReviews(payload.ocrQualityReviews);
 
     let droppedBadPdfTextCount = 0;
     for (const [page, result] of Object.entries(payload.ocrResults || {})) {
@@ -1893,8 +1995,10 @@ function saveCachedResults() {
       sourceMime: state.sourceMime,
       pageCount: state.pageCount,
       updatedAt: new Date().toISOString(),
+      remoteBookId: state.remoteBookId,
       ocrResults: serializeResultMap(state.ocrResults),
       translationResults: serializeResultMap(state.translationResults),
+      ocrQualityReviews: state.ocrQualityReviews,
     };
     window.localStorage.setItem(state.cacheKey, JSON.stringify(payload));
     scheduleRemoteStateSave(payload);
@@ -2561,14 +2665,8 @@ async function runOcrForAllPages() {
 
   await syncPageInputBeforeAction();
 
-  const endpoint = els.endpointInput.value.trim();
   const aiEndpoint = els.aiOcrEndpointInput.value.trim();
-  const mode = getOcrMode();
-  if ((mode === "bdrc" || mode === "smart") && !endpoint) {
-    setStatus("请填写 BDRC OCR 接口地址。", "warn");
-    return;
-  }
-  if (mode === "ai" && !aiEndpoint) {
+  if (!aiEndpoint) {
     setStatus("请填写 AI Vision OCR 接口地址。", "warn");
     return;
   }
@@ -2607,15 +2705,8 @@ async function runOcrForCurrentPage(options = {}) {
 
   discardCurrentBadPdfTextResult();
 
-  const endpoint = els.endpointInput.value.trim();
   const aiEndpoint = els.aiOcrEndpointInput.value.trim();
-  const mode = getOcrMode();
-
-  if ((mode === "bdrc" || mode === "smart") && !endpoint) {
-    setStatus("请填写 BDRC OCR 接口地址。", "warn");
-    return;
-  }
-  if (mode === "ai" && !aiEndpoint) {
+  if (!aiEndpoint) {
     setStatus("请填写 AI Vision OCR 接口地址。", "warn");
     return;
   }
@@ -2627,118 +2718,16 @@ async function runOcrForCurrentPage(options = {}) {
     setStatus(`正在生成第 ${state.pageNum} 页 OCR 图片...`, "warn");
     const blob = await getCurrentPageImageBlob();
 
-    if (mode === "ai") {
-      setStatus("正在调用 AI Vision OCR 接口...", "warn");
-      const aiParsed = await callOcrEndpoint(aiEndpoint, blob, {
-        engine: "ai_vision",
-        mode: "ai",
-        prompt: buildAiOcrPrompt(""),
-      });
-      saveOcrResultFromParsed(aiParsed, "ai-vision", "第 " + state.pageNum + " 页 AI Vision 识别完成。");
-      return;
-    }
-
-    setStatus("正在调用本地 BDRC OCR 接口...", "warn");
-    let bdrcParsed;
-    try {
-      bdrcParsed = await callOcrEndpoint(endpoint, blob, {
-        engine: "bdrc",
-        mode,
-      });
-    } catch (error) {
-      if (mode !== "smart" || !aiEndpoint) {
-        throw error;
-      }
-      const bdrcError = formatNetworkError(error, endpoint);
-      setStatus(`BDRC 未返回有效结果，正在改用 AI Vision：${bdrcError}`, "warn");
-      let aiParsed;
-      try {
-        aiParsed = await callOcrEndpoint(aiEndpoint, blob, {
-          engine: "ai_vision",
-          mode: "smart-fallback",
-          prompt: buildAiOcrPrompt(""),
-        });
-      } catch (aiError) {
-        throw new Error(`AI Vision 调用失败：${formatNetworkError(aiError, aiEndpoint, "ai-ocr")}`);
-      }
-      saveSmartOcrCompareResult({
-        bdrcParsed: {
-          text: "",
-          raw: { error: bdrcError, source: "bdrc-unavailable" },
-          lines: [{
-            text: `BDRC 当前不可用：${bdrcError}`,
-            bbox: null,
-            index: 0,
-            error: true,
-          }],
-        },
-        aiParsed,
-        bdrcError,
-        statusMessage: `第 ${state.pageNum} 页智能识别完成：BDRC 无有效结果，已使用 AI Vision。`,
-        statusType: "warn",
-      });
-      return;
-    }
-
-    if (mode === "bdrc") {
-      saveOcrResultFromParsed(bdrcParsed, "bdrc", `第 ${state.pageNum} 页 BDRC 识别完成。`);
-      return;
-    }
-
-    const bdrcText = bdrcParsed.text.trim();
-    if (!aiEndpoint) {
-      saveSmartOcrCompareResult({
-        bdrcParsed,
-        aiError: "未填写 AI Vision OCR 接口，未调用智能识别。",
-        statusMessage: `第 ${state.pageNum} 页 BDRC 识别完成；未填写 AI Vision 接口，已跳过 LLM 校正。`,
-        statusType: "warn",
-      });
-      return;
-    }
-
-    saveSmartOcrCompareResult({
-      bdrcParsed,
-      aiPending: true,
-      statusMessage: `第 ${state.pageNum} 页 BDRC 识别完成，正在等待 AI Vision 校正。`,
-      statusType: "warn",
+    setStatus("正在调用 AI Vision OCR 接口...", "warn");
+    const aiParsed = await callOcrEndpoint(aiEndpoint, blob, {
+      engine: "ai_vision",
+      mode: "ai-only",
+      prompt: buildAiOcrPrompt(""),
     });
-
-    try {
-      setStatus("BDRC 完成，正在调用 AI Vision 校正高危藏文字母...", "warn");
-      const aiParsed = await callOcrEndpoint(aiEndpoint, blob, {
-        engine: "ai_vision",
-        mode: "smart",
-        ocr_text: bdrcText,
-        high_risk_clusters: JSON.stringify(getUniqueHighRiskClustersFromText(bdrcText)),
-        prompt: buildAiOcrPrompt(bdrcText),
-      });
-      const aiText = getParsedOcrText(aiParsed);
-      const bdrcLineCount = countTextLines(bdrcText);
-      const aiLineCount = countParsedOcrLines(aiParsed);
-      const aiPartial = Boolean(aiText && bdrcLineCount && aiLineCount < bdrcLineCount);
-      saveSmartOcrCompareResult({
-        bdrcParsed,
-        aiParsed,
-        aiError: aiText ? "" : "AI Vision 接口调用成功，但响应中没有可用文本。",
-        statusMessage: aiText
-          ? aiPartial
-            ? `第 ${state.pageNum} 页智能识别完成，但 AI Vision 仅返回 ${aiLineCount}/${bdrcLineCount} 行，请重新识别或检查模型输出。`
-            : `第 ${state.pageNum} 页智能识别完成：BDRC + LLM 校正。`
-          : `第 ${state.pageNum} 页 BDRC 识别完成；AI Vision 返回为空。`,
-        statusType: aiText && !aiPartial ? "ok" : "warn",
-      });
-    } catch (error) {
-      const reason = formatNetworkError(error, aiEndpoint, "ai-ocr");
-      saveSmartOcrCompareResult({
-        bdrcParsed,
-        aiError: `AI Vision 调用失败：${reason}`,
-        statusMessage: `第 ${state.pageNum} 页 BDRC 识别完成；AI Vision 校正失败：${reason}`,
-        statusType: "warn",
-      });
-    }
+    saveOcrResultFromParsed(aiParsed, "ai-vision", `第 ${state.pageNum} 页 AI Vision 识别完成。`);
   } catch (error) {
     setStatus(
-      `OCR 调用失败：${formatNetworkError(error, mode === "ai" ? aiEndpoint : endpoint, mode === "ai" ? "ai-ocr" : "ocr")}`,
+      `AI Vision OCR 调用失败：${formatNetworkError(error, aiEndpoint, "ai-ocr")}`,
       "error"
     );
     throw error;
@@ -2750,7 +2739,7 @@ async function runOcrForCurrentPage(options = {}) {
 }
 
 function getOcrMode() {
-  return els.ocrModeSelect?.value || "smart";
+  return "ai";
 }
 
 async function callOcrEndpoint(endpoint, blob, fields = {}) {
@@ -2790,14 +2779,18 @@ function saveOcrResultFromParsed(parsed, source, statusMessage, fallbackLines = 
   const text = getParsedOcrText(parsed);
   const rawLines = getParsedOcrLines(parsed);
   const lines = rawLines.length ? rawLines : makeOcrLinesFromText(text, fallbackLines);
+  const recognizedAt = new Date().toISOString();
   const compare = normalizeOcrCompare(parsed.compare);
+  if (compare?.llm && !compare.llm.recognizedAt) {
+    compare.llm.recognizedAt = recognizedAt;
+  }
   state.ocrResults.set(state.pageNum, {
     text,
     raw: parsed.raw,
     compare,
     lines,
     source,
-    updatedAt: new Date().toISOString(),
+    updatedAt: recognizedAt,
   });
   saveCachedResults();
   els.ocrText.value = text;
@@ -2967,6 +2960,10 @@ function normalizeSharedErrorMarks(marks) {
         text: String(mark.text || ""),
         bdrcRanges: normalizeTextRanges(mark.bdrcRanges || mark.bdrc || mark.leftRanges),
         llmRanges: normalizeTextRanges(mark.llmRanges || mark.aiRanges || mark.ai || mark.rightRanges),
+        model: String(mark.model || mark.llmModel || ""),
+        provider: String(mark.provider || mark.llmProvider || ""),
+        requestId: String(mark.requestId || mark.request_id || ""),
+        ocrRunAt: String(mark.ocrRunAt || mark.recognizedAt || ""),
         createdAt: String(mark.createdAt || ""),
       };
       return normalized.bdrcRanges.length || normalized.llmRanges.length ? normalized : null;
@@ -2980,6 +2977,33 @@ function normalizeTextRanges(ranges) {
     start: Number(range?.start),
     end: Number(range?.end),
   })));
+}
+
+function normalizeOcrQualityReviews(reviews) {
+  if (!Array.isArray(reviews)) return [];
+  return reviews
+    .map((review, index) => {
+      if (!review || typeof review !== "object") return null;
+      const pageNum = Number(review.pageNum);
+      const blockIndex = Number(review.blockIndex);
+      const reviewedChars = Number(review.reviewedChars);
+      const errorChars = Number(review.errorChars);
+      if (!Number.isInteger(pageNum) || pageNum < 1 || !Number.isInteger(blockIndex) || blockIndex < 0) return null;
+      if (!Number.isFinite(reviewedChars) || reviewedChars < 0 || !Number.isFinite(errorChars) || errorChars < 0) return null;
+      return {
+        id: String(review.id || `quality-review-${pageNum}-${blockIndex}-${index}`),
+        pageNum,
+        blockIndex,
+        model: String(review.model || "未知模型"),
+        provider: String(review.provider || ""),
+        requestId: String(review.requestId || review.request_id || ""),
+        ocrRunAt: String(review.ocrRunAt || ""),
+        reviewedAt: String(review.reviewedAt || ""),
+        reviewedChars: Math.round(reviewedChars),
+        errorChars: Math.min(Math.round(errorChars), Math.round(reviewedChars)),
+      };
+    })
+    .filter(Boolean);
 }
 
 function normalizeOcrCompareSide(side) {
@@ -3022,6 +3046,7 @@ function normalizeOcrCompareSide(side) {
     pending: Boolean(side.pending || side.isPending),
     model: String(side.model || ""),
     provider: String(side.provider || ""),
+    recognizedAt: String(side.recognizedAt || side.ocrRunAt || ""),
     expectedLineCount: Number(side.expectedLineCount || 0),
     returnedLineCount: Number(side.returnedLineCount || 0),
   };
@@ -3935,7 +3960,7 @@ function setOcrView(view) {
   const showProofread = state.ocrView === "proofread";
   const showText = state.ocrView === "text";
   els.workspace.classList.toggle("proofread-merged-view", showProofread);
-  els.ocrPaneEyebrow.textContent = showProofread ? "OCR 校对结果" : "BDRC OCR 结果";
+  els.ocrPaneEyebrow.textContent = showProofread ? "AI Vision OCR 校对结果" : "AI Vision OCR 结果";
   els.ocrLineCompare.classList.toggle("proofread-block-list", showProofread);
   els.ocrLineCompare.classList.toggle("is-hidden", showText);
   els.ocrText.classList.toggle("is-hidden", !showText);
@@ -4072,7 +4097,7 @@ function renderProofreadMergedView() {
   if (!state.pageCount) {
     const empty = document.createElement("div");
     empty.className = "line-compare-empty";
-    empty.innerHTML = "<strong>等待加载文件</strong><span>加载 PDF 或图片后，这里会按 block 显示原文、BDRC 与 AI Vision 结果。</span>";
+    empty.innerHTML = "<strong>等待加载文件</strong><span>加载 PDF 或图片后，这里会按 block 显示原文和 AI Vision 结果。</span>";
     els.ocrLineCompare.appendChild(empty);
     renderAiOcrPanelForPage();
     return;
@@ -4089,7 +4114,7 @@ function renderProofreadMergedView() {
   if (!rowCount) {
     const empty = document.createElement("div");
     empty.className = "line-compare-empty";
-    empty.innerHTML = "<strong>等待识别</strong><span>点击“识别”后，每个原文 block 下方会出现 BDRC 与 AI Vision 两个可编辑版本。</span>";
+    empty.innerHTML = "<strong>等待识别</strong><span>点击“识别”后，每个原文 block 下方会出现可编辑的 AI Vision 结果。</span>";
     els.ocrLineCompare.appendChild(empty);
     return;
   }
@@ -4208,16 +4233,16 @@ function renderProofreadChoiceSelect(index, savedSide) {
   select.className = "proofread-choice-select";
   select.name = `proofread-choice-${state.pageNum}-${index}`;
   select.setAttribute("aria-label", `第 ${index + 1} 个 block 采用版本`);
-  [
-    ["bdrc", "BDRC"],
-    ["llm", "AI Vision"],
-  ].forEach(([value, text]) => {
+  const choices = document.querySelector(".app-shell")?.classList.contains("ai-only-mode")
+    ? [["llm", "AI Vision"]]
+    : [["bdrc", "BDRC"], ["llm", "AI Vision"]];
+  choices.forEach(([value, text]) => {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = text;
     select.appendChild(option);
   });
-  select.value = savedSide === "llm" ? "llm" : "bdrc";
+  select.value = choices.some(([value]) => value === savedSide) ? savedSide : choices[0][0];
   control.append(label, select);
   return control;
 }
@@ -4238,7 +4263,9 @@ function renderSharedErrorButton(index, card) {
   button.className = "ghost-button compact proofread-shared-error-button";
   button.type = "button";
   button.innerHTML = '<i data-lucide="circle-alert"></i><span>标错</span>';
-  button.title = "标错：将选中字母标记为 BDRC 与 AI Vision 都识别错误";
+  button.title = document.querySelector(".app-shell")?.classList.contains("ai-only-mode")
+    ? "标错：将选中的 AI Vision 字母标记为错误"
+    : "标错：将选中字母标记为 BDRC 与 AI Vision 都识别错误";
   button.setAttribute("aria-label", "标错");
   button.addEventListener("mousedown", (event) => event.preventDefault());
   button.addEventListener("click", () => markSelectedSharedError(index, card));
@@ -4328,8 +4355,10 @@ function createSourceBlockPreviewCanvas(sourceLine) {
   const rawY = bbox.y * sourceHeight;
   const rawWidth = Math.max(1, bbox.width * sourceWidth);
   const rawHeight = Math.max(1, bbox.height * sourceHeight);
-  const padX = 2;
-  const padY = 2;
+  // OCR line boxes can stop before Tibetan stacked marks or the final glyph.
+  // Add a proportional margin for the preview without changing the source bbox.
+  const padX = Math.max(12, rawWidth * 0.18);
+  const padY = Math.max(8, rawHeight * 0.25);
   const sx = clamp(rawX - padX, 0, Math.max(0, sourceWidth - 1));
   const sy = clamp(rawY - padY, 0, Math.max(0, sourceHeight - 1));
   const ex = clamp(rawX + rawWidth + padX, sx + 1, sourceWidth);
@@ -4347,8 +4376,9 @@ function createSourceBlockPreviewCanvas(sourceLine) {
   );
   const maxWidth = 1800 * Math.max(1, previewScale);
   const maxScale = Math.max(1, Math.min(2.25, maxWidth / sw));
-  const minimumScale = previewScale < 1 ? 0.75 : 1.15;
-  const scale = Math.min(maxScale, Math.max(minimumScale, (84 * previewScale) / sh));
+  const heightScale = (84 * previewScale) / sh;
+  const widthScale = (760 * previewScale) / sw;
+  const scale = Math.min(maxScale, Math.max(0.5, heightScale), Math.max(0.5, widthScale));
   canvas.width = Math.max(1, Math.round(sw * scale));
   canvas.height = Math.max(1, Math.round(sh * scale));
   const ctx = canvas.getContext("2d");
@@ -4407,10 +4437,8 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     if (diagnostic) {
       editor.textContent = visibleText;
     } else {
-      const peerText = isDiagnosticOcrLine(peerLine) ? "" : peerLine?.text || "";
       renderOcrLineMarkup(editor, text, {
-        peerText,
-        highlightDiff: Boolean(text.trim() && String(peerText || "").trim()),
+        highlightDiff: false,
         sharedErrorRanges: getSharedErrorRanges(compare, side, index, text),
       });
     }
@@ -4527,15 +4555,13 @@ function updateProofreadCompareLine(side, index, value, line, peerLine) {
 function markSelectedSharedError(index, card) {
   const selection = getSelectedProofreadRange(card);
   if (!selection || selection.index !== index) {
-    setStatus("请先在当前 block 的 BDRC 或 AI Vision 文字中选中需要标记为“错误”的字母。", "warn");
+    setStatus("请先在当前 block 的 AI Vision 文字中选中需要标记为“错误”的字母。", "warn");
     return;
   }
 
   const { result, compare } = ensureProofreadCompareResult();
-  const sideKey = selection.side === "bdrc" ? "bdrc" : "llm";
-  const peerKey = sideKey === "bdrc" ? "llm" : "bdrc";
-  const selectedLine = ensureProofreadLine(compare[sideKey].lines, index, compare[peerKey].lines[index]);
-  const peerLine = ensureProofreadLine(compare[peerKey].lines, index, selectedLine);
+  const sideKey = "llm";
+  const selectedLine = ensureProofreadLine(compare.llm.lines, index);
   const sourceText = String(selectedLine.text || "");
   const start = clamp(selection.start, 0, sourceText.length);
   const end = clamp(selection.end, start, sourceText.length);
@@ -4552,18 +4578,10 @@ function markSelectedSharedError(index, card) {
     text: selectedText,
     bdrcRanges: [],
     llmRanges: [],
+    ...getAiVisionModelMetadata(compare, result),
     createdAt: new Date().toISOString(),
   };
   mark[sideKey === "bdrc" ? "bdrcRanges" : "llmRanges"] = [{ start, end }];
-
-  const peerRange = findPeerSharedErrorRange({
-    selectedText,
-    selectedRange: { start, end },
-    peerText: String(peerLine.text || ""),
-  });
-  if (peerRange) {
-    mark[peerKey === "bdrc" ? "bdrcRanges" : "llmRanges"] = [peerRange];
-  }
 
   compare.sharedErrors = normalizeSharedErrorMarks([...(compare.sharedErrors || []), mark]);
   result.compare = compare;
@@ -4571,12 +4589,7 @@ function markSelectedSharedError(index, card) {
   state.ocrResults.set(state.pageNum, result);
   saveCachedResults();
   renderCurrentOcrView();
-  setStatus(
-    peerRange
-      ? `第 ${index + 1} 个 block 已标记“错误”，BDRC 与 AI Vision 两侧均已标出。`
-      : `第 ${index + 1} 个 block 已标记当前侧；另一侧未找到相同字母，请在另一侧另选后再标记。`,
-    peerRange ? "ok" : "warn"
-  );
+  setStatus(`第 ${index + 1} 个 block 已在 AI Vision 结果中标记“错误”。`, "ok");
 }
 
 function clearSharedErrorMark(index, card) {
@@ -4642,6 +4655,9 @@ function saveProofreadBlockChoice(index, side, card) {
   result.lines = finalLines;
   result.text = finalLines.map((line) => line.text || "").join("\n").trim();
   result.compare = compare;
+  if (sideKey === "llm") {
+    saveOcrQualityReview({ result, compare, pageNum: state.pageNum, blockIndex: index, text: selectedLine.text || "" });
+  }
   result.source = "proofread";
   result.updatedAt = new Date().toISOString();
   state.ocrResults.set(state.pageNum, result);
@@ -4890,12 +4906,11 @@ function renderOcrSourceRows({ lines, peerLines, rowCount, side, compare = null 
   for (let index = 0; index < count; index += 1) {
     const line = lines[index] || { text: "" };
     const peerLine = peerLines[index] || { text: "" };
-    const comparePeerText = isDiagnosticOcrLine(peerLine) ? "" : peerLine.text || "";
     const row = document.createElement("div");
     row.className = "ocr-source-column-row";
     row.dataset.sourceRowIndex = String(index);
     row.dataset.sourceSide = side;
-    row.classList.toggle("has-difference", Boolean(comparePeerText) && normalizeCompareText(line.text) !== normalizeCompareText(comparePeerText));
+    row.classList.remove("has-difference");
     row.classList.toggle("is-empty", !String(line.text || "").trim());
     row.classList.toggle("is-error", Boolean(line.error));
 
@@ -4911,8 +4926,7 @@ function renderOcrSourceRows({ lines, peerLines, rowCount, side, compare = null 
       text.textContent = line.text || "";
     } else {
       renderOcrLineMarkup(text, line.text || "", {
-        peerText: comparePeerText,
-        highlightDiff: Boolean(String(line.text || "").trim() && String(comparePeerText || "").trim()),
+        highlightDiff: false,
         sharedErrorRanges: getSharedErrorRanges(compare, side, index, line.text || ""),
       });
     }
@@ -5298,18 +5312,16 @@ function getCurrentSourceBlockRecords() {
 
   const compare = getOcrSourceCompare(result);
   if (compare) {
-    const bdrcLines = getEffectiveOcrSideLines(compare.bdrc);
-    const aiLines = getEffectiveOcrSideLines(compare.llm, bdrcLines);
-    const count = Math.max(bdrcLines.length, aiLines.length);
+    const aiLines = getEffectiveOcrSideLines(compare.llm);
+    const count = aiLines.length;
     return Array.from({ length: count }, (_, index) => {
-      const bdrcLine = bdrcLines[index] || { text: "" };
       const aiLine = aiLines[index] || { text: "" };
       return makeSourceBlockRecord({
         index,
-        line: getSourceLineForRow(bdrcLine, aiLine),
-        hasBdrc: Boolean(String(bdrcLine.text || "").trim()),
+        line: aiLine,
+        hasBdrc: false,
         hasAi: Boolean(String(aiLine.text || "").trim()),
-        hasDifference: normalizeCompareText(bdrcLine.text) !== normalizeCompareText(aiLine.text),
+        hasDifference: false,
       });
     }).filter(Boolean);
   }
@@ -5643,7 +5655,85 @@ function buildProofreadMarkdown(pages, sourceName) {
       text,
       "",
     ]),
+    ...buildOcrModelQualityMarkdown(state.ocrQualityReviews),
   ].join("\n");
+}
+
+function getAiVisionModelMetadata(compare, result) {
+  const model = String(compare?.llm?.model || getOcrResponseModel(result?.raw) || "未知模型").trim() || "未知模型";
+  const provider = String(compare?.llm?.provider || getOcrResponseProvider(result?.raw) || "").trim();
+  return {
+    model,
+    provider,
+    requestId: getOcrResponseRequestId(result?.raw),
+    ocrRunAt: String(compare?.llm?.recognizedAt || result?.updatedAt || ""),
+  };
+}
+
+function getOcrResponseRequestId(raw) {
+  if (!raw || typeof raw !== "object") return "";
+  return String(raw.requestId || raw.request_id || raw.id || raw.raw?.requestId || raw.raw?.request_id || raw.raw?.id || "").trim();
+}
+
+function countOcrCharacters(text) {
+  return Array.from(String(text || "").replace(/\s+/g, "")).length;
+}
+
+function saveOcrQualityReview({ result, compare, pageNum, blockIndex, text }) {
+  const metadata = getAiVisionModelMetadata(compare, result);
+  const reviewedChars = countOcrCharacters(text);
+  if (!reviewedChars) return;
+  const errorChars = getSharedErrorRanges(compare, "llm", blockIndex, text)
+    .reduce((sum, range) => sum + countOcrCharacters(String(text || "").slice(range.start, range.end)), 0);
+  const matchIndex = state.ocrQualityReviews.findIndex((review) => (
+    review.pageNum === pageNum &&
+    review.blockIndex === blockIndex &&
+    review.model === metadata.model &&
+    review.provider === metadata.provider &&
+    review.ocrRunAt === metadata.ocrRunAt
+  ));
+  const review = {
+    id: matchIndex >= 0 ? state.ocrQualityReviews[matchIndex].id : `quality-review-${pageNum}-${blockIndex}-${Date.now().toString(36)}`,
+    pageNum,
+    blockIndex,
+    ...metadata,
+    reviewedAt: new Date().toISOString(),
+    reviewedChars,
+    errorChars: Math.min(errorChars, reviewedChars),
+  };
+  if (matchIndex >= 0) {
+    state.ocrQualityReviews.splice(matchIndex, 1, review);
+  } else {
+    state.ocrQualityReviews.push(review);
+  }
+}
+
+function buildOcrModelQualityMarkdown(reviews) {
+  if (!reviews.length) {
+    return ["## 模型质检统计", "", "尚无已保存的人工审核 block。", ""];
+  }
+  const stats = new Map();
+  reviews.forEach((review) => {
+    const key = `${review.provider}::${review.model}`;
+    const current = stats.get(key) || { model: review.model, provider: review.provider, reviewedChars: 0, errorChars: 0, blockCount: 0 };
+    current.reviewedChars += review.reviewedChars;
+    current.errorChars += review.errorChars;
+    current.blockCount += 1;
+    stats.set(key, current);
+  });
+  const rows = [...stats.values()]
+    .map((item) => ({ ...item, estimatedAccuracy: item.reviewedChars ? (item.reviewedChars - item.errorChars) / item.reviewedChars : 0 }))
+    .sort((left, right) => right.estimatedAccuracy - left.estimatedAccuracy || right.reviewedChars - left.reviewedChars);
+  return [
+    "## 模型质检统计",
+    "",
+    "仅统计人工标错后并点击“保存”的 AI Vision block；估算准确率 = 1 - 标错字符数 / 已审核字符数。样本量较小时仅供参考。",
+    "",
+    "| 模型 | 服务 | 已审核 block | 已审核字符 | 标错字符 | 估算准确率 |",
+    "| --- | --- | ---: | ---: | ---: | ---: |",
+    ...rows.map((item) => `| ${item.model} | ${item.provider || "-"} | ${item.blockCount} | ${item.reviewedChars} | ${item.errorChars} | ${(item.estimatedAccuracy * 100).toFixed(2)}% |`),
+    "",
+  ];
 }
 
 function stripFileExtension(fileName) {
@@ -5727,11 +5817,11 @@ function updateOcrPanelForPage() {
   } else if (state.sourceType === "markdown" || state.sourceType === "text") {
     els.ocrTitle.textContent = state.sourceType === "text" ? "文本文件" : "Markdown 文本";
   } else {
-    els.ocrTitle.textContent = state.sourceType === "image" ? "图片 OCR" : `第 ${state.pageNum} 页 OCR`;
+    els.ocrTitle.textContent = state.sourceType === "image" ? "图片 AI Vision OCR" : `第 ${state.pageNum} 页 AI Vision OCR`;
   }
   els.ocrText.value = result?.text || "";
   els.ocrMeta.textContent = hasBdrcError
-    ? "BDRC 不可用"
+    ? "调用失败"
     : result?.text
     ? (isDirectTextSource(result.source) ? sourceLabel : "已识别")
     : "未识别";
@@ -5919,7 +6009,7 @@ function formatNetworkError(error, url, service = "ocr") {
     if (resolvedService === "ai-ocr") {
       return `无法连接 ${url}。请先启动本地 AI Vision OCR 服务：python3 tibetan-ocr-core/ai_vision_ocr_server.py；或运行 ./tibetan-proofreading-app/start_services.sh`;
     }
-    return `无法连接 ${url}。请先启动本地 OCR 服务：python3 tibetan-ocr-core/bdrc_ocr_server.py`;
+    return `无法连接 ${url}。请先启动 AI Vision OCR 服务：python3 tibetan-ocr-core/ai_vision_ocr_server.py`;
   }
   return summarizeServiceError(error?.message || String(error));
 }

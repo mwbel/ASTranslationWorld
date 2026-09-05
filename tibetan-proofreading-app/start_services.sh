@@ -17,8 +17,6 @@ done
 
 FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_PORT="${FRONTEND_PORT:-8790}"
-OCR_HOST="${BDRC_OCR_HOST:-127.0.0.1}"
-OCR_PORT="${BDRC_OCR_PORT:-18090}"
 AI_OCR_HOST="${AI_VISION_OCR_HOST:-127.0.0.1}"
 AI_OCR_PORT="${AI_VISION_OCR_PORT:-18092}"
 AI_VISION_PROVIDER="${AI_VISION_PROVIDER:-model_aggregator}"
@@ -38,7 +36,6 @@ TRANSLATE_HOST="${NLLB_TRANSLATE_HOST:-127.0.0.1}"
 TRANSLATE_PORT="${NLLB_TRANSLATE_PORT:-18091}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
-OCR_SCRIPT="$WORKSPACE_ROOT/tibetan-ocr-core/bdrc_ocr_server.py"
 AI_OCR_SCRIPT="$WORKSPACE_ROOT/tibetan-ocr-core/ai_vision_ocr_server.py"
 TRANSLATION_SCRIPT="$WORKSPACE_ROOT/tibetan-translation-services/nllb_translate_server.py"
 FRONTEND_SCRIPT="$SCRIPT_DIR/no_cache_server.py"
@@ -243,11 +240,6 @@ start_service \
   --port "$FRONTEND_PORT" \
   --directory "$WORKSPACE_ROOT" || failed=1
 
-start_service \
-  ocr \
-  "$OCR_PORT" \
-  "$PYTHON_BIN" "$OCR_SCRIPT" || failed=1
-
 start_model_aggregator || failed=1
 
 start_service \
@@ -264,7 +256,6 @@ echo
 FRONTEND_URL="http://${FRONTEND_HOST}:${FRONTEND_PORT}/tibetan-proofreading-app/"
 FRONTEND_OPEN_URL="${FRONTEND_OPEN_URL:-${FRONTEND_URL}?workflow=ocr}"
 check_url "前端" "$FRONTEND_URL"
-check_url "OCR" "http://${OCR_HOST}:${OCR_PORT}/health"
 if uses_model_aggregator; then
   check_url "ModelAggregatorService" "$(model_aggregator_health_url)"
 fi
