@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20261003-ocr-preserve-red-v9";
+const APP_BUILD_ID = "20261003-ocr-preserve-red-v10";
 const SOURCE_LAYOUT_VERSION = 4;
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
@@ -11,7 +11,7 @@ const HOME_PROJECT_FILTERS = new Set(["all", "ocr", "translation"]);
 const OCR_FONT_SIZE_KEY = "tibetan-proofreading-app:ocr-font-size";
 const SOURCE_PREVIEW_SCALE_KEY = "tibetan-proofreading-app:source-preview-scale";
 const SOURCE_PAGE_ZOOM_MIN = 0.75;
-const SOURCE_PAGE_ZOOM_MAX = 3;
+const SOURCE_PAGE_ZOOM_MAX = 4;
 const SOURCE_PAGE_ZOOM_STEP = 0.25;
 const LEGACY_WORKSPACE_LAYOUT_KEYS = [
   "tibetan-proofreading-app:workspace-layout",
@@ -178,7 +178,7 @@ const state = {
   ocrView: "lines",
   ocrFontSize: 22,
   sourcePreviewScale: 1,
-  sourcePageZoom: 1,
+  sourcePageZoom: 1.25,
   activeOcrLine: -1,
   renderToken: 0,
   thumbnailToken: 0,
@@ -2652,11 +2652,11 @@ async function renderCurrentPage() {
   const token = ++state.renderToken;
   if (await renderCurrentPdfPageWithLocalService(token)) {
     syncPageControls(true);
-    await hydrateCurrentPageSourceCoordinates();
     renderActiveSourceHighlight();
     updateOcrPanelForPage();
     updateTranslationPanelForPage();
     updateThumbnailState();
+    deferCurrentPageSourceHydration(state.pageNum, token);
     return;
   }
 
@@ -2690,11 +2690,19 @@ async function renderCurrentPage() {
   els.imagePage.style.display = "none";
   els.emptyState.style.display = "none";
   syncPageControls(true);
-  await hydrateCurrentPageSourceCoordinates();
   renderActiveSourceHighlight();
   updateOcrPanelForPage();
   updateTranslationPanelForPage();
   updateThumbnailState();
+  deferCurrentPageSourceHydration(state.pageNum, token);
+}
+
+function deferCurrentPageSourceHydration(pageNum, renderToken = state.renderToken) {
+  scheduleIdleWork(() => hydrateCurrentPageSourceCoordinates().then(() => {
+    if (pageNum !== state.pageNum || renderToken !== state.renderToken) return;
+    renderActiveSourceHighlight();
+    updateOcrPanelForPage();
+  }));
 }
 
 async function renderCurrentPdfPageWithLocalService(token) {
@@ -2761,11 +2769,11 @@ async function renderImagePage() {
   els.emptyState.style.display = "none";
   applySourcePageZoom();
   syncPageControls(true);
-  await hydrateCurrentPageSourceCoordinates();
   renderActiveSourceHighlight();
   updateOcrPanelForPage();
   updateTranslationPanelForPage();
   updateThumbnailState();
+  deferCurrentPageSourceHydration(state.pageNum);
 }
 
 function renderTextDocumentPage() {
@@ -2884,7 +2892,7 @@ async function goToPage(pageNum) {
   state.pageNum = nextPage;
   clearSourceLineHighlight();
   await renderCurrentPage();
-  await primeCurrentPageDirectText("page");
+  scheduleIdleWork(() => primeCurrentPageDirectText("page"));
   refreshControls();
 }
 
