@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import test from 'node:test';
+
+function context() {
+  const ctx = vm.createContext({window: {addEventListener() {}}, document: {
+    querySelector: () => ({classList: {contains: () => true}}),
+  }, console});
+  vm.runInContext(readFileSync(new URL('../app.js', import.meta.url), 'utf8'), ctx);
+  vm.runInContext(`state.pageNum = 1; state.pageCount = 2;
+    state.ocrResults.set(1, {source: 'bdrc', text: 'བོད་\\n〔红字待人工转录〕', lines: [
+      {text: 'བོད་', bbox: {x:.2,y:.3,width:.4,height:.05}, regionLabel:'中间'},
+      {text: '〔红字待人工转录〕', missing:true, bbox:{x:.4,y:.6,width:.2,height:.04}, regionLabel:'中间'}
+    ]});`, ctx);
+  return ctx;
+}
+
+test('entering proofread retains original BDRC coordinates and text', () => {
+  const ctx=context();
+  const before=vm.runInContext('JSON.stringify(state.ocrResults.get(1).lines)',ctx);
+  const after=vm.runInContext('JSON.stringify(ensureProofreadCompareResult().compare.bdrc.lines.map(({text,bbox,regionLabel})=>({text,bbox,regionLabel})))',ctx);
+  const expected=JSON.parse(before).map(({text,bbox,regionLabel})=>({text,bbox,regionLabel}));
+  assert.deepEqual(JSON.parse(after),expected);
+});
+
+test('single-pane display retains BDRC rows after visiting proofread, even with a partial AI review', () => {
+  const ctx=context();
+  vm.runInContext(`const c=ensureProofreadCompareResult().compare;
+    c.llm.lines=[{text:''},{text:'དམར་',bbox:c.bdrc.lines[1].bbox}]; c.llm.text='དམར་';`,ctx);
+  const before=vm.runInContext('JSON.stringify(state.ocrResults.get(1))',ctx);
+  const display=JSON.parse(vm.runInContext('JSON.stringify(getPrimaryOcrDisplay(getCurrentOcrCompareOrEmpty()))',ctx));
+  assert.equal(display.side.lines[0].text,'བོད་');
+  assert.equal(display.side.lines[1].text,'དམར་');
+  assert.deepEqual(display.side.lines[1].bbox,{x:.4,y:.6,width:.2,height:.04});
+  assert.equal(vm.runInContext('JSON.stringify(state.ocrResults.get(1))',ctx),before,'display must not mutate stored results');
+});

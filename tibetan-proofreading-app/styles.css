@@ -297,6 +297,40 @@ button {
   overflow-wrap: anywhere;
 }
 
+.home-project-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.home-project-title-row h4 {
+  flex: 1;
+}
+
+.home-project-delete {
+  flex: 0 0 auto;
+}
+
+.home-project-delete-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid #e1bbb6;
+  border-radius: 6px;
+  background: #fff7f5;
+  color: #7f2f28;
+  font-size: 13px;
+}
+
+.home-project-delete-confirm[hidden] {
+  display: none;
+}
+
 .home-project-meta,
 .home-project-progress {
   display: flex;
@@ -363,6 +397,33 @@ button {
 .pane-toolbar,
 .ocr-toolbar {
   flex-wrap: wrap;
+}
+
+.ocr-profile-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ocr-profile-control select {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ocr-profile-control select:focus {
+  outline: 2px solid rgba(52, 121, 91, 0.25);
+  outline-offset: 2px;
 }
 
 #fileInput,
@@ -672,11 +733,6 @@ button:disabled {
   display: none !important;
 }
 
-.app-shell.ai-only-mode .proofread-editor-group.is-bdrc,
-.app-shell.ai-only-mode .proofread-choice-select option[value="bdrc"] {
-  display: none !important;
-}
-
 .viewer-pane,
 .ocr-pane,
 .ai-ocr-pane,
@@ -949,6 +1005,7 @@ body.is-resizing-panes * {
   width: 68px;
   height: 30px;
   padding: 0 8px;
+  font-size: 14px;
   border: 1px solid #cddbeb;
   border-radius: 7px;
   color: var(--ink);
@@ -1411,6 +1468,27 @@ body.is-resizing-panes * {
   border-bottom: 1px solid #e0e7e3;
 }
 
+.ocr-source-column-row.has-line-review {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+}
+
+.ocr-source-line-actions {
+  padding: 8px;
+  display: flex;
+  align-items: flex-start;
+  border-left: 1px solid #e0e7e3;
+  background: #fff;
+}
+
+.ocr-source-line-actions .proofread-ai-review-button {
+  min-height: 30px;
+  padding: 0 8px;
+  color: #245989;
+  border-color: #c9dff2;
+  background: #f5faff;
+  font-size: 11px;
+}
+
 .ocr-source-column-row:last-child {
   border-bottom: 0;
 }
@@ -1702,7 +1780,7 @@ body.is-resizing-panes * {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: hidden;
   border: 0;
   border-top: 1px solid #e5ece8;
@@ -1712,8 +1790,8 @@ body.is-resizing-panes * {
 
 .proofread-source-preview canvas {
   width: auto;
-  max-width: 100%;
-  max-height: var(--source-preview-max-height, 116px);
+  max-width: none;
+  max-height: none;
   height: auto;
   min-width: 0;
   flex: 0 1 auto;
