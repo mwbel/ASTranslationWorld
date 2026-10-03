@@ -21,12 +21,12 @@ assert.match(
 );
 assert.match(
   app,
-  /APP_BUILD_ID = "20261003-ocr-preserve-red-v10"/,
+  /APP_BUILD_ID = "20261003-ocr-preserve-red-v11"/,
   "the new line structure must invalidate stale browser OCR state"
 );
 assert.match(
   html,
-  /app\.js\?v=20261003-ocr-preserve-red-v10/,
+  /app\.js\?v=20261003-ocr-preserve-red-v11/,
   "the browser must request the new app script instead of its cached version"
 );
 

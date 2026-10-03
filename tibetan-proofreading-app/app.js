@@ -1,9 +1,10 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20261003-ocr-preserve-red-v10";
+const APP_BUILD_ID = "20261003-ocr-preserve-red-v11";
 const SOURCE_LAYOUT_VERSION = 4;
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
+const ACTIVE_PROJECT_KEY = "tibetan-proofreading-app:active-project";
 const SOURCE_DB_NAME = "tibetan-proofreading-app-sources";
 const SOURCE_STORE_NAME = "files";
 const FOLDER_PROJECTS_KEY = "tibetan-proofreading-app:folder-projects:v1";
@@ -197,6 +198,7 @@ const state = {
   remoteBookId: "",
   remoteSaveTimer: null,
   layoutHydrationInFlight: new Map(),
+  activeProjectRestoreInFlight: false,
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -214,7 +216,7 @@ window.addEventListener("DOMContentLoaded", () => {
   refreshControls();
   updateSummary();
   updateTranslationSummary();
-  restoreRouteFromLocation();
+  void restoreRouteFromLocation();
   window.addEventListener("popstate", restoreRouteFromLocation);
   warnIfFileProtocol();
   if (window.lucide) {
@@ -562,13 +564,39 @@ function getWorkflowFromLocation() {
   return workflow === "ocr" || workflow === "translation" ? workflow : "home";
 }
 
-function restoreRouteFromLocation() {
+async function restoreRouteFromLocation() {
   const workflow = getWorkflowFromLocation();
   if (workflow === "ocr" || workflow === "translation") {
     showWorkbenchView(workflow, { updateRoute: false });
+    await restoreActiveProjectForRoute(workflow);
     return;
   }
   showHomeView({ silent: true, updateRoute: false });
+}
+
+async function restoreActiveProjectForRoute(workflow) {
+  if (hasActiveDocument() || state.activeProjectRestoreInFlight) return;
+  const cacheKey = window.localStorage.getItem(ACTIVE_PROJECT_KEY);
+  if (!cacheKey || !cacheKey.startsWith(CACHE_PREFIX)) return;
+  const project = parseCachedProject(cacheKey);
+  if (!project) return;
+
+  state.activeProjectRestoreInFlight = true;
+  try {
+    const sourceFile = await getStoredSourceFile(cacheKey);
+    if (!sourceFile) {
+      setStatus(`已找到“${project.sourceName}”的 OCR 缓存，但源文件缓存已丢失；请重新加载原始文件。`, "warn");
+      return;
+    }
+    await loadFile(sourceFile);
+    if (workflow === "ocr") setOcrView("proofread");
+    setStatus(`已自动恢复“${sourceFile.name}”及已有 OCR/译文结果。`, "ok");
+  } catch (error) {
+    console.warn("Failed to auto-restore active OCR project", error);
+    setStatus(`自动恢复项目失败：${error.message || error}。可从项目列表手动继续。`, "warn");
+  } finally {
+    state.activeProjectRestoreInFlight = false;
+  }
 }
 
 function updateRouteForWorkflow(workflow, options = {}) {
@@ -1146,6 +1174,9 @@ async function deleteHomeProject(project) {
     } else {
       window.localStorage.removeItem(project.cacheKey);
       await removeStoredSourceFile(project.cacheKey);
+      if (window.localStorage.getItem(ACTIVE_PROJECT_KEY) === project.cacheKey) {
+        window.localStorage.removeItem(ACTIVE_PROJECT_KEY);
+      }
       if (project.isActive || state.cacheKey === project.cacheKey) {
         resetDocumentState();
       }
@@ -1771,6 +1802,7 @@ async function loadFile(file, options = {}) {
   state.sourceSize = file.size || 0;
   state.sourceMime = file.type || "";
   state.cacheKey = makeCacheKey(file);
+  window.localStorage.setItem(ACTIVE_PROJECT_KEY, state.cacheKey);
   storeSourceFile(state.cacheKey, file).catch((error) => {
     console.warn("Failed to store source file locally", error);
   });
@@ -1843,6 +1875,7 @@ function newProject() {
     }
   }
 
+  window.localStorage.removeItem(ACTIVE_PROJECT_KEY);
   resetDocumentState();
   setStatus("已新建空白项目。请点击“加载文件”开始。", "ok");
   renderHomeDashboard();
@@ -1872,6 +1905,9 @@ function deleteCurrentProject() {
 
   if (cacheKey) {
     window.localStorage.removeItem(cacheKey);
+    if (window.localStorage.getItem(ACTIVE_PROJECT_KEY) === cacheKey) {
+      window.localStorage.removeItem(ACTIVE_PROJECT_KEY);
+    }
   }
   resetDocumentState();
   setStatus(`已删除“${projectName}”的本地项目缓存。源文件未删除。`, "ok");
@@ -4923,7 +4959,7 @@ function createSourceBlockPreviewCanvas(sourceLine) {
   // OCR line boxes can stop before Tibetan stacked marks or the final glyph.
   // Add a proportional margin for the preview without changing the source bbox.
   const padX = Math.max(12, rawWidth * 0.18);
-  const padY = Math.max(8, rawHeight * 0.25);
+  const padY = Math.max(16, rawHeight * 0.75);
   const sx = clamp(rawX - padX, 0, Math.max(0, sourceWidth - 1));
   const sy = clamp(rawY - padY, 0, Math.max(0, sourceHeight - 1));
   const ex = clamp(rawX + rawWidth + padX, sx + 1, sourceWidth);
@@ -4942,7 +4978,7 @@ function createSourceBlockPreviewCanvas(sourceLine) {
   // Size each preview from the detected line height. Long lines may exceed
   // the panel width, so the wrapper scrolls horizontally instead of shrinking
   // the text until it becomes unreadable.
-  const targetHeight = 112 * previewScale;
+  const targetHeight = clamp(96 + rawHeight * 0.35, 112, 180) * previewScale;
   const scale = clamp(targetHeight / sh, 0.75, 3.5);
   canvas.width = Math.max(1, Math.round(sw * scale));
   canvas.height = Math.max(1, Math.round(sh * scale));

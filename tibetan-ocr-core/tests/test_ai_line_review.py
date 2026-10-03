@@ -15,7 +15,8 @@ def test_red_rubric_crop_excludes_long_frame_and_blank_tail():
     tiles, meta = prepare_line_review_images(encoded.tobytes(),
         {'x': .2, 'y': .33, 'width': .7, 'height': .23})
     assert meta['crop_pixels']['width'] < 400, 'blank space and frame must not become 12 image tiles'
-    assert meta['crop_pixels']['y'] + meta['crop_pixels']['height'] < 175
+    assert meta['crop_pixels']['height'] >= 80, 'vertical padding must preserve Tibetan stacked marks'
+    assert meta['crop_pixels']['y'] + meta['crop_pixels']['height'] <= 260
     assert len(tiles) <= 3
 
 

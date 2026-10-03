@@ -212,11 +212,13 @@ def prepare_line_review_images(
                             kept.append((cx, cy, cx + cw, cy + ch))
                     if kept:
                         tx0 = max(0, min(b[0] for b in kept) - 8)
-                        ty0 = max(0, min(b[1] for b in kept) - 5)
                         tx1 = min(crop.width, max(b[2] for b in kept) + 8)
-                        ty1 = min(crop.height, max(b[3] for b in kept) + 5)
-                        crop = crop.crop((tx0, ty0, tx1, ty1))
-                        x0, y0, x1, y1 = int(x0 + tx0), int(y0 + ty0), int(x0 + tx1), int(y0 + ty1)
+                        # Keep the full vertically padded bbox. Red/black
+                        # connected components often capture only the middle
+                        # stroke of Tibetan stacks; trimming their y bounds
+                        # cuts off upper/lower marks and final punctuation.
+                        crop = crop.crop((tx0, 0, tx1, crop.height))
+                        x0, x1 = int(x0 + tx0), int(x0 + tx1)
             crop_width, crop_height = crop.size
             target_height = max(480, LINE_REVIEW_TARGET_HEIGHT)
             scale = target_height / max(1, crop_height)
