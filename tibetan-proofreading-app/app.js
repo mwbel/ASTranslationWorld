@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20261003-ocr-preserve-red-v11";
+const APP_BUILD_ID = "20261003-ocr-preserve-red-v12";
 const SOURCE_LAYOUT_VERSION = 4;
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
@@ -4858,9 +4858,7 @@ function renderSharedErrorButton(index, card) {
   button.className = "ghost-button compact proofread-shared-error-button";
   button.type = "button";
   button.innerHTML = '<i data-lucide="circle-alert"></i><span>标错</span>';
-  button.title = document.querySelector(".app-shell")?.classList.contains("ai-only-mode")
-    ? "标错：将选中的 AI Vision 字母标记为错误"
-    : "标错：将选中字母标记为 BDRC 与 AI Vision 都识别错误";
+  button.title = "标错：将当前选中的 BDRC 或 AI Vision 字母标记为错误";
   button.setAttribute("aria-label", "标错");
   button.addEventListener("mousedown", (event) => event.preventDefault());
   button.addEventListener("click", () => markSelectedSharedError(index, card));
@@ -5158,13 +5156,14 @@ function updateProofreadCompareLine(side, index, value, line, peerLine) {
 function markSelectedSharedError(index, card) {
   const selection = getSelectedProofreadRange(card);
   if (!selection || selection.index !== index) {
-    setStatus("请先在当前 block 的 AI Vision 文字中选中需要标记为“错误”的字母。", "warn");
+    setStatus("请先在当前 block 的 BDRC 或 AI Vision 文字中选中需要标记为“错误”的字母。", "warn");
     return;
   }
 
   const { result, compare } = ensureProofreadCompareResult();
-  const sideKey = "llm";
-  const selectedLine = ensureProofreadLine(compare.llm.lines, index);
+  const sideKey = selection.side === "bdrc" ? "bdrc" : "llm";
+  const sourceLabel = sideKey === "bdrc" ? "BDRC" : "AI Vision";
+  const selectedLine = ensureProofreadLine(compare[sideKey].lines, index);
   const sourceText = String(selectedLine.text || "");
   const start = clamp(selection.start, 0, sourceText.length);
   const end = clamp(selection.end, start, sourceText.length);
@@ -5181,7 +5180,9 @@ function markSelectedSharedError(index, card) {
     text: selectedText,
     bdrcRanges: [],
     llmRanges: [],
-    ...getAiVisionModelMetadata(compare, result),
+    ...(sideKey === "bdrc"
+      ? { model: compare.bdrc.model || result.ocrProfile || "BDRC", provider: "bdrc" }
+      : getAiVisionModelMetadata(compare, result)),
     createdAt: new Date().toISOString(),
   };
   mark[sideKey === "bdrc" ? "bdrcRanges" : "llmRanges"] = [{ start, end }];
@@ -5192,7 +5193,7 @@ function markSelectedSharedError(index, card) {
   state.ocrResults.set(state.pageNum, result);
   saveCachedResults();
   renderCurrentOcrView();
-  setStatus(`第 ${index + 1} 个 block 已在 AI Vision 结果中标记“错误”。`, "ok");
+  setStatus(`第 ${index + 1} 个 block 已在 ${sourceLabel} 结果中标记“错误”。`, "ok");
 }
 
 function clearSharedErrorMark(index, card) {

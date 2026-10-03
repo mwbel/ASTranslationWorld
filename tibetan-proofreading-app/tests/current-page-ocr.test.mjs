@@ -29,7 +29,7 @@ assert.match(source, /预览（合并定位）/, "grouped layout coordinates mus
 assert.match(source, /Array\.isArray\(parsed\?\.lines\)/, "OCR parsing must preserve normalized top-level lines with bbox data");
 assert.match(source, /targetHeight = clamp\(96 \+ rawHeight \* 0\.35, 112, 180\) \* previewScale/, "source previews must scale from detected line height");
 assert.doesNotMatch(source, /getSingleLinePreviewCrop\(source, sx, sy, sw, sh\)/, "source previews must not split Tibetan stacked glyphs with an unreliable pixel crop");
-assert.match(source, /APP_BUILD_ID = "20261003-ocr-preserve-red-v11"/, "the browser must request the corrected OCR view");
+assert.match(source, /APP_BUILD_ID = "20261003-ocr-preserve-red-v12"/, "the browser must request the corrected OCR view");
 assert.match(source, /SOURCE_LAYOUT_VERSION = 4/, "cached source coordinates must have an explicit layout version");
 assert.match(source, /layoutVersion: SOURCE_LAYOUT_VERSION/, "new OCR results must record the source layout version");
 assert.match(source, /function hydrateCurrentPageSourceCoordinates\(\)/, "existing OCR rows without coordinates must be hydrated on page load");
