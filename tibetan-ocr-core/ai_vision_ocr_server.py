@@ -55,6 +55,12 @@ MAX_IMAGE_SIDE = int(os.environ.get("AI_VISION_MAX_IMAGE_SIDE", "1800"))
 IMAGE_JPEG_QUALITY = int(os.environ.get("AI_VISION_IMAGE_JPEG_QUALITY", "88"))
 LINE_REVIEW_TARGET_HEIGHT = int(os.environ.get("AI_VISION_LINE_REVIEW_TARGET_HEIGHT", "640"))
 LINE_REVIEW_TILE_WIDTH = int(os.environ.get("AI_VISION_LINE_REVIEW_TILE_WIDTH", "1500"))
+OPENAI_REVIEW_MODEL = os.environ.get("OPENAI_REVIEW_MODEL", "").strip()
+OPENAI_REVIEW_API_KEY = os.environ.get("OPENAI_REVIEW_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+QWEN_REVIEW_API_KEY = os.environ.get("QWEN_REVIEW_API_KEY", "") or os.environ.get("DASHSCOPE_API_KEY", "")
+QWEN_REVIEW_BASE_URL = os.environ.get("QWEN_REVIEW_BASE_URL", "").rstrip("/")
+QWEN_REVIEW_MODELS = [item.strip() for item in os.environ.get("QWEN_REVIEW_MODELS", "qwen3.5-ocr,qwen3.8-max,qwen3.7-plus").split(",") if item.strip()]
+GEMINI_REVIEW_MODELS = [item.strip() for item in os.environ.get("GEMINI_REVIEW_MODELS", "gemini-2.5-flash,gemini-3.1-flash-lite").split(",") if item.strip()]
 AGGREGATOR_ALLOW_FALLBACK = os.environ.get("AI_VISION_ALLOW_FALLBACK", "0").strip().lower() not in {
     "0",
     "false",
@@ -923,14 +929,18 @@ def compact_upstream_error(text: str) -> str:
 
 def redact_sensitive(text: str) -> str:
     redacted = text
+    for credential in (API_KEY, AGGREGATOR_API_KEY, OPENAI_REVIEW_API_KEY, QWEN_REVIEW_API_KEY):
+        if credential:
+            redacted = redacted.replace(credential, "***REDACTED***")
     redacted = re.sub(r"([?&]key=)[^&\s)]+", r"\1***REDACTED***", redacted)
     redacted = re.sub(r"(Authorization:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1***REDACTED***", redacted)
     redacted = re.sub(r"AIza[0-9A-Za-z_-]{20,}", "***REDACTED***", redacted)
+    redacted = re.sub(r"sk-[A-Za-z0-9._-]{8,}", "***REDACTED***", redacted)
     return redacted
 
 
 def call_model_aggregator_images(
-    images: list[tuple[bytes, str]], prompt: str, *, preserve_size: bool = False
+    images: list[tuple[bytes, str]], prompt: str, *, preserve_size: bool = False, model_override: str = ""
 ) -> dict[str, Any]:
     """Send one or more ordered image attachments in a single vision request."""
     attachment_ids: list[str] = []
@@ -962,11 +972,13 @@ def call_model_aggregator_images(
     request_body: dict[str, Any] = {
         "attachmentIds": attachment_ids,
         "prompt": prompt,
-        "allowFallback": AGGREGATOR_ALLOW_FALLBACK,
+        "allowFallback": False if model_override else AGGREGATOR_ALLOW_FALLBACK,
         "maxTokens": MAX_TOKENS,
         "temperature": TEMPERATURE,
     }
-    if AGGREGATOR_MODELS:
+    if model_override:
+        request_body["models"] = [model_override]
+    elif AGGREGATOR_MODELS:
         request_body["models"] = AGGREGATOR_MODELS
     else:
         request_body["model"] = MODEL
@@ -983,7 +995,9 @@ def call_model_aggregator_images(
             detail = f"{detail}；{attempts}"
         raise RuntimeError(f"ModelAggregator image OCR failed: {redact_sensitive(detail)}")
 
-    resolved_model = str(raw.get("modelRef") or raw.get("model") or MODEL).strip()
+    resolved_model = str(raw.get("modelRef") or raw.get("model") or model_override or MODEL).strip()
+    if model_override and resolved_model != model_override:
+        raise RuntimeError("Gemini 复核响应模型与所选模型不一致，结果未采用。")
     resolved_provider = str(raw.get("provider") or "").strip().lower()
     if resolved_provider == "mathpix" or "mathpix" in resolved_model.lower():
         attempts = summarize_attempts(raw.get("attempts"))
@@ -1060,10 +1074,36 @@ def call_openai_compatible(image_bytes: bytes, filename: str, prompt: str) -> di
     return call_openai_compatible_images([(image_bytes, filename)], prompt)
 
 
+def call_openai_line_review(image_bytes: bytes, filename: str, bbox: dict[str, float]) -> dict[str, Any]:
+    """Use the official OpenAI API independently of the existing AI provider."""
+    if not OPENAI_REVIEW_API_KEY or not OPENAI_REVIEW_MODEL:
+        raise RuntimeError("OpenAI 复核未配置：请在本地后端设置 OPENAI_REVIEW_API_KEY（或 OPENAI_API_KEY）和 OPENAI_REVIEW_MODEL；Codex 套餐不能作为 API key。")
+    tiles, metadata = prepare_line_review_images(image_bytes, bbox)
+    prompt = "图片按从左到右构成同一行藏文。请独立逐字转录，包括红字、叠字和标点。忽略边框及邻行，不按语义补写。无法确认的字以〔?〕标记。只输出本行转录文本。"
+    content = [{"type": "input_text", "text": prompt}]
+    content.extend({"type": "input_image", "image_url": image_data_url(tile, "line.png"), "detail": "high"} for tile in tiles)
+    raw = post_json("https://api.openai.com/v1/responses", {
+        "model": OPENAI_REVIEW_MODEL,
+        "store": False,
+        "max_output_tokens": MAX_TOKENS,
+        "input": [{"role": "user", "content": content}],
+    }, OPENAI_REVIEW_API_KEY)
+    text = "".join(part.get("text", "") for item in raw.get("output", []) if item.get("type") == "message" for part in item.get("content", []) if part.get("type") == "output_text").strip()
+    if not text or raw.get("status") == "incomplete":
+        raise RuntimeError("OpenAI 未返回完整的单行转录，请重试或检查模型配置。")
+    return {"text": text, "lines": [{"text": text, "bbox": bbox}], "provider": "openai", "model": raw.get("model", OPENAI_REVIEW_MODEL), "line_review": True, "review_image": metadata}
+
+
 def call_line_review_vision(
-    image_bytes: bytes, filename: str, bbox: dict[str, float], draft_text: str = ""
+    image_bytes: bytes, filename: str, bbox: dict[str, float], draft_text: str = "", model: str = ""
 ) -> dict[str, Any]:
     """Review exactly one source row with enlarged, ordered image tiles."""
+    if model:
+        model = model.removeprefix("gemini:")
+        if model not in GEMINI_REVIEW_MODELS:
+            raise RuntimeError("Gemini 复核模型不在允许列表中，请刷新模型列表。")
+        if not USE_MODEL_AGGREGATOR:
+            raise RuntimeError("Gemini Vision 复核需要本地 Gemini 聚合服务；不会转发到其他提供商。")
     tiles, review_image = prepare_line_review_images(image_bytes, bbox)
     stem = os.path.splitext(filename or "page.png")[0] or "page"
     images = [(tile, f"{stem}-line-review-{index + 1}.png") for index, tile in enumerate(tiles)]
@@ -1075,7 +1115,7 @@ def call_line_review_vision(
         f"现有 OCR 草稿（仅供比对，不可照抄）：{draft_text}" if draft_text else "",
     ]).strip()
     if USE_MODEL_AGGREGATOR:
-        result = call_model_aggregator_images(images, prompt, preserve_size=True)
+        result = call_model_aggregator_images(images, prompt, preserve_size=True, model_override=f"gemini:{model}" if model else "")
     else:
         result = call_openai_compatible_images(images, prompt)
     text = "".join(part.strip() for part in str(result.get("text") or "").splitlines() if part.strip())
@@ -1086,6 +1126,50 @@ def call_line_review_vision(
         "line_review": True,
         "review_image": review_image,
     }
+
+
+def validate_qwen_transcript(value: str) -> str:
+    text = value.strip()
+    text = re.sub(r"^```[^\n]*\n([\s\S]*?)\n```$", r"\1", text).strip()
+    if (not text or text.startswith(("{", "[")) or
+            (not re.search(r"[\u0f00-\u0fff]", text) and
+             not re.fullmatch(r"[0-9０-９\s.,:;()/-]+", text))):
+        raise RuntimeError("千问返回非藏文转录（无关 JSON 或说明），请换模型复核。")
+    return text
+
+
+def call_qwen_line_review(image_bytes: bytes, filename: str, bbox: dict[str, float], model: str) -> dict[str, Any]:
+    if model not in QWEN_REVIEW_MODELS:
+        raise RuntimeError("千问复核模型不在允许列表中，请刷新模型列表。")
+    if not QWEN_REVIEW_API_KEY or not QWEN_REVIEW_BASE_URL:
+        raise RuntimeError("千问复核未配置：请在后端配置 QWEN_REVIEW_API_KEY（或 DASHSCOPE_API_KEY）和对应地域/平台的 QWEN_REVIEW_BASE_URL。")
+    # Credentials may only be sent to an explicitly configured official endpoint.
+    from urllib.parse import urlparse
+    upstream = urlparse(QWEN_REVIEW_BASE_URL)
+    host = upstream.hostname or ""
+    if upstream.scheme != "https" or not (host.endswith(".aliyuncs.com") or host.endswith(".qianwenai.com")) or upstream.username or upstream.password or upstream.query or upstream.fragment:
+        raise RuntimeError("千问接口必须是官方 HTTPS 地址，且不能在地址中包含凭据。")
+    tiles, metadata = prepare_line_review_images(image_bytes, bbox)
+    prompt = "图片按从左到右构成同一行藏文。独立逐字转录红字、叠字与标点；忽略边框及邻行，不按语义补写。无法确认的字标记〔?〕。只输出这一行的原文，不解释、不翻译。"
+    content = [{"type": "text", "text": prompt}]
+    content.extend({"type": "image_url", "image_url": {"url": image_data_url(tile, "line.png")}, "max_pixels": 8388608} for tile in tiles)
+    url = QWEN_REVIEW_BASE_URL if QWEN_REVIEW_BASE_URL.endswith("/chat/completions") else QWEN_REVIEW_BASE_URL + "/chat/completions"
+    body = {"model": model, "messages": [{"role": "user", "content": content}], "temperature": 0, "max_tokens": MAX_TOKENS}
+    if model in {"qwen3.8-max", "qwen3.7-plus"}:
+        body["enable_thinking"] = False
+    raw = post_json(url, body, QWEN_REVIEW_API_KEY)
+    choices = raw.get("choices") or []
+    text = parse_model_text(raw).strip()
+    if not text or not choices or choices[0].get("finish_reason") not in {None, "stop"}:
+        raise RuntimeError("千问未返回完整的单行文字，请检查模型权限或重试。")
+    text = validate_qwen_transcript(text)
+    return {"text": text, "lines": [{"text": text, "bbox": bbox}], "model": raw.get("model", model), "provider": "qwen", "line_review": True, "review_image": metadata}
+
+
+def review_models_payload() -> dict[str, Any]:
+    return {"qwen": {"models": QWEN_REVIEW_MODELS, "configured": bool(QWEN_REVIEW_API_KEY and QWEN_REVIEW_BASE_URL)},
+            "gemini": {"models": GEMINI_REVIEW_MODELS, "configured": USE_MODEL_AGGREGATOR,
+                       "billing_note": "免费层级与剩余额度请以 AI Studio 为准；模型列表不代表额度承诺。"}}
 
 
 def call_vision_model(
@@ -1145,6 +1229,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
+        if self.path.rstrip("/") == "/review-models":
+            self.send_json(review_models_payload())
+            return
         if self.path.rstrip("/") == "/health":
             payload = health_payload()
             self.send_json(payload, status=200 if payload.get("ok") else 503)
@@ -1153,7 +1240,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.rstrip("/")
-        if path not in {"/ocr", "/layout", "/line-review"}:
+        if path not in {"/ocr", "/layout", "/line-review", "/openai-line-review", "/qwen-line-review"}:
             self.send_json({"error": "Not found"}, status=404)
             return
 
@@ -1210,6 +1297,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(payload)
                 return
 
+            if path == "/openai-line-review":
+                payload = call_openai_line_review(image_bytes, filename, parse_normalized_bbox(field_value(form, "bbox")))
+                self.send_json(payload)
+                return
+
+            if path == "/qwen-line-review":
+                payload = call_qwen_line_review(image_bytes, filename, parse_normalized_bbox(field_value(form, "bbox")), field_value(form, "model"))
+                self.send_json(payload)
+                return
+
             if path == "/line-review":
                 bbox = parse_normalized_bbox(field_value(form, "bbox"))
                 payload = call_line_review_vision(
@@ -1217,6 +1314,7 @@ class Handler(BaseHTTPRequestHandler):
                     filename,
                     bbox,
                     field_value(form, "ocr_text"),
+                    field_value(form, "model"),
                 )
                 self.send_json(payload)
                 return

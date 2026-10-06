@@ -25,6 +25,12 @@ AI_VISION_MODELS="${AI_VISION_MODELS:-gemini:gemini-2.5-flash,gemini:gemini-3.1-
 AI_VISION_ALLOW_FALLBACK="${AI_VISION_ALLOW_FALLBACK:-0}"
 AI_VISION_TIMEOUT="${AI_VISION_TIMEOUT:-180}"
 AI_VISION_MAX_IMAGE_SIDE="${AI_VISION_MAX_IMAGE_SIDE:-1800}"
+BDRC_OCR_HOST="${BDRC_OCR_HOST:-127.0.0.1}"
+BDRC_OCR_PORT="${BDRC_OCR_PORT:-18090}"
+BDRC_MODEL="${BDRC_MODEL:-Modern}"
+BDRC_LINE_MODE="${BDRC_LINE_MODE:-line}"
+BDRC_SOURCE_DIR="${BDRC_SOURCE_DIR:-$WORKSPACE_ROOT/tmp/tibetan-ocr-app}"
+BDRC_MODELS_DIR="${BDRC_MODELS_DIR:-/Applications/BDRC Tibetan OCR.app/Contents/MacOS/OCRModels}"
 MODEL_AGGREGATOR_AUTO_START="${MODEL_AGGREGATOR_AUTO_START:-1}"
 MODEL_AGGREGATOR_PORT="${MODEL_AGGREGATOR_PORT:-${AGGREGATOR_PORT:-8890}}"
 MODEL_AGGREGATOR_DIR="${MODEL_AGGREGATOR_DIR:-$WORKSPACE_ROOT/../ModelAggregatorService}"
@@ -37,10 +43,12 @@ TRANSLATE_PORT="${NLLB_TRANSLATE_PORT:-18091}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 AI_OCR_SCRIPT="$WORKSPACE_ROOT/tibetan-ocr-core/ai_vision_ocr_server.py"
+BDRC_OCR_SCRIPT="$WORKSPACE_ROOT/tibetan-ocr-core/bdrc_ocr_server.py"
 TRANSLATION_SCRIPT="$WORKSPACE_ROOT/tibetan-translation-services/nllb_translate_server.py"
 FRONTEND_SCRIPT="$SCRIPT_DIR/no_cache_server.py"
 
 export AI_VISION_PROVIDER AI_VISION_MODEL AI_VISION_MODELS AI_VISION_ALLOW_FALLBACK AI_VISION_TIMEOUT AI_VISION_MAX_IMAGE_SIDE
+export BDRC_OCR_HOST BDRC_OCR_PORT BDRC_MODEL BDRC_LINE_MODE BDRC_SOURCE_DIR BDRC_MODELS_DIR
 export OCR_CORRECTION_TIMEOUT_SECONDS IMAGE_MARKDOWN_GEMINI_TIMEOUT_SECONDS IMAGE_MARKDOWN_YUNWU_TIMEOUT_SECONDS
 
 mkdir -p "$RUNTIME_DIR"
@@ -243,6 +251,11 @@ start_service \
 start_model_aggregator || failed=1
 
 start_service \
+  bdrc \
+  "$BDRC_OCR_PORT" \
+  "$PYTHON_BIN" "$BDRC_OCR_SCRIPT" || failed=1
+
+start_service \
   ai_ocr \
   "$AI_OCR_PORT" \
   "$PYTHON_BIN" "$AI_OCR_SCRIPT" || failed=1
@@ -259,6 +272,7 @@ check_url "前端" "$FRONTEND_URL"
 if uses_model_aggregator; then
   check_url "ModelAggregatorService" "$(model_aggregator_health_url)"
 fi
+check_url "BDRC OCR" "http://${BDRC_OCR_HOST}:${BDRC_OCR_PORT}/health"
 check_url "AI OCR" "http://${AI_OCR_HOST}:${AI_OCR_PORT}/health"
 check_url "翻译" "http://${TRANSLATE_HOST}:${TRANSLATE_PORT}/health"
 
@@ -267,7 +281,7 @@ echo "前端地址：$FRONTEND_URL"
 echo "默认打开：$FRONTEND_OPEN_URL"
 echo "日志目录：$RUNTIME_DIR"
 echo "停止服务：$SCRIPT_DIR/stop_services.sh"
-echo "说明：AI OCR 默认转发到 ModelAggregatorService，可用 AI_VISION_* 环境变量切换模型；翻译模型首次启动需要下载并加载。"
+echo "说明：BDRC OCR 会按前端资料类型选择模型；AI OCR 默认转发到 ModelAggregatorService，可用 AI_VISION_* 环境变量切换模型；翻译模型首次启动需要下载并加载。"
 
 if [ "${OPEN_BROWSER:-1}" != "0" ] && command -v open >/dev/null 2>&1; then
   open "$FRONTEND_OPEN_URL"

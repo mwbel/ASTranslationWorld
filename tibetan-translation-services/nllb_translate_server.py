@@ -62,6 +62,26 @@ _model_status: dict[str, Any] = {
     "ready_at": None,
 }
 _preload_thread: threading.Thread | None = None
+_torchvision_compat_library: Any = None
+
+
+def prepare_torchvision_compat(torch_module: Any) -> None:
+    """Register the text-model-only torchvision operator before Transformers imports it."""
+    global _torchvision_compat_library
+    if _torchvision_compat_library is not None:
+        return
+
+    library_api = getattr(torch_module, "library", None)
+    if library_api is None:
+        return
+
+    try:
+        library = library_api.Library("torchvision", "DEF")
+        library.define("nms(Tensor dets, Tensor scores, float iou_threshold) -> Tensor")
+        _torchvision_compat_library = library
+    except RuntimeError:
+        # A working torchvision build may already define this operator.
+        _torchvision_compat_library = True
 
 
 def choose_device(torch_module: Any) -> str:
@@ -92,6 +112,7 @@ def get_model_bundle() -> dict[str, Any]:
 
         try:
             import torch
+            prepare_torchvision_compat(torch)
             from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
         except ImportError as exc:
             raise RuntimeError(

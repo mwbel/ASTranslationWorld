@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>藏文典籍 OCR 对照工作台</title>
-    <link rel="stylesheet" href="./styles.css?v=20261003-ocr-preserve-red-v12" />
+    <link rel="stylesheet" href="./styles.css?v=20261006-openai-dialog-v21" />
     <script src="./vendor/pdf.min.js" defer></script>
     <script src="./vendor/lucide.min.js" defer></script>
-    <script src="./app.js?v=20261003-ocr-preserve-red-v12" defer></script>
+    <script src="./app.js?v=20261006-openai-dialog-v21" defer></script>
   </head>
   <body>
     <main class="app-shell ocr-only-mode ai-only-mode">
@@ -42,7 +42,7 @@
           <label for="ocrModeSelect">识别引擎</label>
           <select id="ocrModeSelect">
             <option value="bdrc" selected>BDRC</option>
-            <option value="ai">AI Vision</option>
+            <option value="ai">Gemini Vision</option>
           </select>
         </div>
         <div class="control-group wide">
@@ -50,7 +50,7 @@
           <input id="endpointInput" type="url" value="http://127.0.0.1:18090/ocr" spellcheck="false" />
         </div>
         <div class="control-group wide">
-          <label for="aiOcrEndpointInput">AI Vision OCR 接口</label>
+          <label for="aiOcrEndpointInput">Gemini Vision OCR 接口</label>
           <input id="aiOcrEndpointInput" type="url" value="http://127.0.0.1:18092/ocr" spellcheck="false" />
         </div>
         <div class="control-group wide translation-feature">
@@ -110,7 +110,7 @@
             <div class="home-entry-body">
               <span class="eyebrow">OCR Proofreading</span>
               <h3>藏文 OCR 识别和校对</h3>
-              <p>分页面查看原文，对照 BDRC 与 AI Vision 识别结果，逐 block 标错、选择并保存最终 OCR 文本。</p>
+              <p>分页面查看原文，对照 BDRC 与 Gemini Vision 识别结果，逐 block 标错、选择并保存最终 OCR 文本。</p>
             </div>
             <div class="home-entry-actions">
               <button id="homeNewOcrProjectButton" class="primary-button compact" type="button">
@@ -245,14 +245,14 @@
 
         <div class="pane-resizer" data-resizer="viewer-ocr" aria-hidden="true"></div>
 
-        <section class="ocr-pane" aria-label="AI Vision OCR 结果">
+        <section class="ocr-pane" aria-label="Gemini Vision OCR 结果">
           <div class="pane-header">
             <div>
-              <span id="ocrPaneEyebrow" class="eyebrow">AI Vision OCR 结果</span>
+              <span id="ocrPaneEyebrow" class="eyebrow">Gemini Vision OCR 结果</span>
               <h2 id="ocrTitle">等待识别</h2>
             </div>
             <div id="ocrMeta" class="meta-pill">未识别</div>
-            <button class="pane-collapse-button" type="button" data-collapse-pane="ocr" aria-label="折叠 AI Vision OCR 栏" title="折叠 AI Vision OCR 栏">
+            <button class="pane-collapse-button" type="button" data-collapse-pane="ocr" aria-label="折叠 Gemini Vision OCR 栏" title="折叠 Gemini Vision OCR 栏">
               <i data-lucide="panel-left-close"></i>
             </button>
           </div>
@@ -308,7 +308,7 @@
             </div>
           </div>
 
-          <div id="ocrLineCompare" class="ocr-line-compare" aria-label="AI Vision OCR 逐行校对"></div>
+          <div id="ocrLineCompare" class="ocr-line-compare" aria-label="Gemini Vision OCR 逐行校对"></div>
 
           <textarea
             id="ocrText"
@@ -331,30 +331,30 @@
 
         <div class="pane-resizer" data-resizer="ocr-ai" aria-hidden="true"></div>
 
-        <section class="ai-ocr-pane" aria-label="AI Vision OCR 结果">
+        <section class="ai-ocr-pane" aria-label="Gemini Vision OCR 结果">
           <div class="pane-header">
             <div>
-              <span class="eyebrow">AI Vision OCR 结果</span>
+              <span class="eyebrow">Gemini Vision OCR 结果</span>
               <h2 id="aiOcrTitle">等待智能识别</h2>
             </div>
             <div id="aiOcrMeta" class="meta-pill">未返回</div>
-            <button class="pane-collapse-button" type="button" data-collapse-pane="ai" aria-label="折叠 AI Vision 栏" title="折叠 AI Vision 栏">
+            <button class="pane-collapse-button" type="button" data-collapse-pane="ai" aria-label="折叠 Gemini Vision 栏" title="折叠 Gemini Vision 栏">
               <i data-lucide="panel-left-close"></i>
             </button>
           </div>
 
           <div class="ocr-toolbar">
-            <button id="copyAiButton" class="ghost-button compact quiet-action" type="button" aria-label="复制 AI Vision OCR 文本" title="复制 AI Vision OCR 文本">
+            <button id="copyAiButton" class="ghost-button compact quiet-action" type="button" aria-label="复制 Gemini Vision OCR 文本" title="复制 Gemini Vision OCR 文本">
               <i data-lucide="copy"></i>
               <span>复制</span>
             </button>
-            <button id="downloadAiTextButton" class="ghost-button compact quiet-action" type="button" aria-label="导出全部 AI Vision OCR 文本" title="导出全部 AI Vision OCR 文本">
+            <button id="downloadAiTextButton" class="ghost-button compact quiet-action" type="button" aria-label="导出全部 Gemini Vision OCR 文本" title="导出全部 Gemini Vision OCR 文本">
               <i data-lucide="download"></i>
               <span>导出全部</span>
             </button>
           </div>
 
-          <div id="aiOcrLineCompare" class="ocr-line-compare ai-ocr-line-compare" aria-label="AI Vision OCR 逐行结果"></div>
+          <div id="aiOcrLineCompare" class="ocr-line-compare ai-ocr-line-compare" aria-label="Gemini Vision OCR 逐行结果"></div>
 
           <div class="result-summary">
             <div>

@@ -38,6 +38,7 @@ stop_service() {
 
 stop_service frontend
 stop_service ocr
+stop_service bdrc
 stop_service ai_ocr
 stop_service translate
 

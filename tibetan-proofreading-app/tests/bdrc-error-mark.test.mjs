@@ -37,7 +37,7 @@ for (const side of ['bdrc', 'llm']) {
     assert.deepEqual(mark[key], [{start:0, end:2}]);
     assert.deepEqual(mark[peer], []);
     assert.equal(mark.text, (side === 'bdrc' ? 'བོད་' : 'different AI text').slice(0, 2));
-    assert.match(ctx.window.lastStatus, side === 'bdrc' ? /BDRC/ : /AI Vision/);
+    assert.match(ctx.window.lastStatus, side === 'bdrc' ? /BDRC/ : /Gemini Vision/);
     vm.runInContext('state.ocrResults.clear(); restoreCachedResults()', ctx);
     const restored = JSON.parse(vm.runInContext(`JSON.stringify(getSharedErrorRanges(state.ocrResults.get(1).compare, '${side}', 0, '${side === 'bdrc' ? 'བོད་' : 'different AI text'}'))`, ctx));
     assert.deepEqual(restored, [{start:0, end:2}]);
