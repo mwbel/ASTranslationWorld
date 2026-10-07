@@ -164,6 +164,34 @@ def parse_normalized_bbox(value: str) -> dict[str, float]:
     return bbox
 
 
+def split_enlarged_line(enlarged, tile_width):
+    """Prefer whitespace near the width limit so a Tibetan stack is not split."""
+    ranges = []
+    left = 0
+    ink_columns = None
+    if cv2 is not None and np is not None:
+        rgb = np.asarray(enlarged)
+        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        ink = (gray < 100) | ((hsv[:, :, 1] >= 110) & ((hsv[:, :, 0] <= 18) | (hsv[:, :, 0] >= 170)))
+        ink_columns = ink.sum(axis=0)
+    while left < enlarged.width:
+        right = min(enlarged.width, left + tile_width)
+        if right < enlarged.width and ink_columns is not None:
+            start = max(left + 480, right - 160)
+            spaces = np.flatnonzero(ink_columns[start:right] <= 1)
+            if spaces.size:
+                right = start + int(spaces[-1])
+        ranges.append([left, right])
+        left = right
+    tiles = []
+    for left, right in ranges:
+        output = BytesIO()
+        enlarged.crop((left, 0, right, enlarged.height)).save(output, format="PNG", optimize=True)
+        tiles.append(output.getvalue())
+    return tiles, ranges
+
+
 def prepare_line_review_images(
     image_bytes: bytes, bbox: dict[str, float]
 ) -> tuple[list[bytes], dict[str, Any]]:
@@ -192,12 +220,17 @@ def prepare_line_review_images(
             y0 = max(0, int(round(raw_y - pad_y)))
             x1 = min(page_width, int(round(raw_x + raw_width + pad_x)))
             y1 = min(page_height, int(round(raw_y + raw_height + pad_y)))
+            x0 = max(x0, round(bbox.get("clip_left", 0) * page_width))
+            x1 = min(x1, round(bbox.get("clip_right", 1) * page_width))
+            y0 = max(y0, round(bbox.get("clip_top", 0) * page_height))
+            y1 = min(y1, round(bbox.get("clip_bottom", 1) * page_height))
             if x1 <= x0 or y1 <= y0:
                 raise RuntimeError("bbox crop is empty")
             crop = image.crop((x0, y0, x1, y1))
             # A BDRC rubric band may include a long red rule and blank paper.
             # Locate saturated red glyph components before enlargement so a
             # short inscription is not split into a dozen mostly-empty tiles.
+            red_dominant = False
             if cv2 is not None and np is not None:
                 rgb = np.asarray(crop)
                 hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
@@ -205,28 +238,61 @@ def prepare_line_review_images(
                        (hsv[:, :, 1] >= 110)).astype(np.uint8)
                 gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
                 dark = (gray < 90) & (red == 0)
-                if red.sum() >= 40 and red.sum() > dark.sum() * 3:
-                    count, labels, stats, _ = cv2.connectedComponentsWithStats(red, 8)
+                if red.sum() >= 40 or dark.sum() >= 40:
+                    red_dominant = red.sum() > dark.sum() * 3
+                    glyph_mask = red if red_dominant else (((gray < 90) & (hsv[:, :, 1] < 110)) | (red > 0)).astype(np.uint8)
+                    count, labels, stats, _ = cv2.connectedComponentsWithStats(glyph_mask, 8)
                     kept = []
                     for component in range(1, count):
                         cx, cy, cw, ch, area = stats[component]
                         if area < 5 or cw > red.shape[1] * .65 or (cw > ch * 12) or (ch > cw * 4 and ch >= red.shape[0] * .85):
                             continue
+                        # Slanted/broken red side rules can survive run filtering.
+                        near_edge = cx < 24 or cx + cw > crop.width - 24
+                        component_hsv = hsv[cy:cy + ch, cx:cx + cw]
+                        component_red = int(((component_hsv[:, :, 1] >= 60) & ((component_hsv[:, :, 0] <= 22) | (component_hsv[:, :, 0] >= 165))).sum())
+                        if "clip_left" in bbox and near_edge and ch > cw * 2 and component_red > area * .6:
+                            continue
                         # Ignore nearby-row components outside the requested band.
                         center_y = cy + ch / 2 + y0
-                        if raw_y <= center_y <= raw_y + raw_height:
+                        if raw_y - raw_height * .35 <= center_y <= raw_y + raw_height * 1.35:
                             kept.append((cx, cy, cx + cw, cy + ch))
+                    if kept and "clip_left" in bbox:
+                        # Remove only tiny isolated edge groups: residual frame
+                        # fragments must not keep a title's blank margin alive.
+                        groups = []
+                        for component in sorted(kept, key=lambda item: item[0]):
+                            if groups and component[0] - max(item[2] for item in groups[-1]) <= max(24, raw_height * 1.5):
+                                groups[-1].append(component)
+                            else:
+                                groups.append([component])
+                        largest = max(sum((b[2] - b[0]) * (b[3] - b[1]) for b in group) for group in groups)
+                        retained = []
+                        for group in groups:
+                            gx0 = min(b[0] for b in group); gx1 = max(b[2] for b in group)
+                            area = sum((b[2] - b[0]) * (b[3] - b[1]) for b in group)
+                            edge = gx0 < max(32, raw_height * 1.2) or gx1 > crop.width - max(32, raw_height * 1.2)
+                            if not (edge and gx1 - gx0 < raw_height and area < largest * .1):
+                                retained.extend(group)
+                        kept = retained or kept
                     if kept:
                         tx0 = max(0, min(b[0] for b in kept) - 8)
                         tx1 = min(crop.width, max(b[2] for b in kept) + 8)
-                        # Keep the full vertically padded bbox. Red/black
-                        # connected components often capture only the middle
-                        # stroke of Tibetan stacks; trimming their y bounds
-                        # cuts off upper/lower marks and final punctuation.
-                        crop = crop.crop((tx0, 0, tx1, crop.height))
+                        # Keep the full vertically padded bbox for ordinary rows. For a
+                        # bounded red row, use complete component extents plus
+                        # a margin to reduce nearby black descenders.
+                        ty0, ty1 = 0, crop.height
+                        if red_dominant and "clip_top" in bbox:
+                            ty0 = max(0, min(b[1] for b in kept) - 6)
+                            ty1 = min(crop.height, max(b[3] for b in kept) + 6)
+                        crop = crop.crop((tx0, ty0, tx1, ty1))
                         x0, x1 = int(x0 + tx0), int(x0 + tx1)
+                        y0, y1 = int(y0 + ty0), int(y0 + ty1)
             crop_width, crop_height = crop.size
             target_height = max(480, LINE_REVIEW_TARGET_HEIGHT)
+            if "clip_top" in bbox:
+                # Keep glyphs legible without turning a short note into many tiles.
+                target_height = min(target_height, max(160, crop_height * 3))
             scale = target_height / max(1, crop_height)
             resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
             enlarged = crop.resize(
@@ -234,18 +300,15 @@ def prepare_line_review_images(
                 resampling,
             )
             tile_width = max(480, min(LINE_REVIEW_TILE_WIDTH, max(480, MAX_IMAGE_SIDE)))
-            tiles: list[bytes] = []
-            for left in range(0, enlarged.width, tile_width):
-                right = min(enlarged.width, left + tile_width)
-                tile = enlarged.crop((left, 0, right, enlarged.height))
-                output = BytesIO()
-                tile.save(output, format="PNG", optimize=True)
-                tiles.append(output.getvalue())
+            tiles, tile_ranges = split_enlarged_line(enlarged, tile_width)
             return tiles, {
                 "source_bbox": bbox,
+                "ink_color": "red" if red_dominant else "mixed",
+                "source_size": {"width": page_width, "height": page_height},
                 "crop_pixels": {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0},
                 "review_size": {"width": enlarged.width, "height": enlarged.height},
                 "tile_count": len(tiles),
+                "tile_ranges": tile_ranges,
             }
     except RuntimeError:
         raise
@@ -727,73 +790,101 @@ def crop_image_to_bbox(image_bytes: bytes, bbox: dict[str, float]) -> bytes:
         return output.getvalue()
 
 
-def call_traditional_region_ocr(
-    image_bytes: bytes, filename: str, prompt: str, regions: list[dict[str, float]]
-) -> dict[str, Any]:
-    """OCR the three traditional-page columns separately.
+def merge_physical_row_fragments(boxes):
+    """Match BDRC's physical-row merging without importing its model runtime."""
+    merged = []
+    for raw in sorted(boxes, key=lambda box: box["y"]):
+        box = dict(raw)
+        if merged and box["y"] - (merged[-1]["y"] + merged[-1]["height"]) <= 0.02:
+            previous = merged[-1]
+            right = max(previous["x"] + previous["width"], box["x"] + box["width"])
+            bottom = max(previous["y"] + previous["height"], box["y"] + box["height"])
+            previous["x"] = min(previous["x"], box["x"])
+            previous["width"] = right - previous["x"]
+            previous["height"] = bottom - previous["y"]
+        else:
+            merged.append(box)
+    return merged
 
-    A full-page prompt makes a vision model flatten the narrow side strips into
-    the central rows. Cropping each detected column keeps the three physical
-    regions independent and lets the UI show exactly three editable blocks.
-    """
-    region_results: list[dict[str, Any]] = []
+
+def detect_sparse_side_bbox(crop):
+    """Find dark side glyphs, excluding coloured rules and empty paper."""
+    image = cv2.imdecode(np.frombuffer(crop, dtype=np.uint8), cv2.IMREAD_COLOR)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = ((gray < 140) & (hsv[:, :, 1] < 110)).astype(np.uint8)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    kept = [stat for stat in stats[1:] if stat[4] >= 5 and stat[2] < image.shape[1] * .7 and stat[3] < image.shape[0] * .7]
+    if not kept:
+        return []
+    x0 = min(stat[0] for stat in kept); y0 = min(stat[1] for stat in kept)
+    x1 = max(stat[0] + stat[2] for stat in kept); y1 = max(stat[1] + stat[3] for stat in kept)
+    return [{"x": x0 / image.shape[1], "y": y0 / image.shape[0],
+             "width": (x1 - x0) / image.shape[1], "height": (y1 - y0) / image.shape[0]}]
+
+
+def call_traditional_region_ocr(
+    image_bytes: bytes, filename: str, prompt: str, regions: list[dict[str, float]], layout_only: bool = False
+) -> dict[str, Any]:
+    """Locate physical rows first; only enlarged row images reach Gemini."""
+    blocks = []
+    models = []
     for region in regions:
         crop = crop_image_to_bbox(image_bytes, region)
-        region_prompt = "\n\n".join([
-            "这是传统藏文经书版式内框中的一个文字区域。",
-            "区域的固定页面顺序是：左侧（left）→中间（center）→右侧（right）；不得交换区域身份。",
-            f"当前区域：{region['label']}（{region['id']}）。只识别这个裁剪区域中的藏文，不要补写区域外内容。",
-            "中间区域按页面从上到下输出正文行；左侧和右侧区域按该侧实际视觉顺序从上到下输出边注、页码或边栏文字。",
-            "保留当前区域内部的换行；只输出纯藏文文本，不要编号、解释或 Markdown。",
-            prompt,
-            "最后再次确认：当前图片是单独裁剪的一个区域，只输出这个区域实际看见的藏文；看不清时输出空文本，不要输出‘无法辨认’等说明。",
-        ])
-        result = call_model_aggregator(crop, f"{region['id']}-{filename}", region_prompt) if USE_MODEL_AGGREGATOR else call_openai_compatible(crop, f"{region['id']}-{filename}", region_prompt)
-        region_results.append({
-            "id": region["id"],
-            "label": region["label"],
-            "role": region.get("role", "side"),
-            "direction": region.get("direction", "vertical"),
-            "text_orientation": region.get("text_orientation", "vertical"),
-            "region_type": region.get("region_type", "margin"),
-            "text": str(result.get("text") or "").strip(),
-            "bbox": region,
-            "lines": [
-                {"text": line, "bbox": region, "bbox_approximate": True}
-                for line in str(result.get("text") or "").splitlines()
-                if line.strip()
-            ],
-            "line_count": len([line for line in str(result.get("text") or "").splitlines() if line.strip()]),
-            "empty": not bool(str(result.get("text") or "").strip()),
-            "model": result.get("model", ""),
-        })
-
-    text = "\n\n".join(region["text"] for region in region_results if region["text"])
-    blocks = [
-        {
-            "text": region["text"],
-            "bbox": region,
-            "bbox_approximate": False,
-            "region_id": region["id"],
-            "region_label": region["label"],
-            "region_role": region.get("role", "side"),
-            "region_direction": region.get("direction", "vertical"),
-            "line_count": region.get("line_count", 0),
-        }
-        for region in region_results
-    ]
-    resolved_models = [str(region["model"]) for region in region_results if region.get("model")]
-    return {
-        "text": text,
-        "lines": blocks,
-        "regions": region_results,
-        "region_order": ["left", "center", "right"],
-        "layout_bboxes": regions,
-        "layout_bbox_source": "traditional-columns",
-        "region_ocr": True,
-        "model": resolved_models[0] if resolved_models else MODEL,
-        "provider": "model_aggregator" if USE_MODEL_AGGREGATOR else "openai-compatible",
-    }
+        local_boxes = merge_physical_row_fragments(detect_text_line_bboxes(crop)) if region["id"] == "center" else detect_sparse_side_bbox(crop)
+        boxes = [{
+                "x": region["x"] + box["x"] * region["width"],
+                "y": region["y"] + box["y"] * region["height"],
+                "width": box["width"] * region["width"],
+                "height": box["height"] * region["height"],
+            } for box in local_boxes]
+        if region["id"] == "center" and len(local_boxes) == 1 and local_boxes[0]["height"] > .65:
+            raise RuntimeError("中间区域没有可靠分行，请调整定位后重试。")
+        if not boxes and region["id"] != "center":
+            continue
+        if not boxes:
+            raise RuntimeError(f"{region['label']}未定位到文字行，请调整定位后重试；不会退回整页识别。")
+        for index, box in enumerate(boxes):
+            # Limit vertical padding at neighbouring row midpoints.
+            if region["id"] == "center":
+                box = dict(box)
+                box["clip_left"] = region["x"] + region["width"] * .008
+                box["clip_right"] = region["x"] + region["width"] * .992
+                box["clip_top"] = (boxes[index - 1]["y"] + boxes[index - 1]["height"] + box["y"]) / 2 if index else region["y"]
+                box["clip_bottom"] = (box["y"] + box["height"] + boxes[index + 1]["y"]) / 2 if index + 1 < len(boxes) else region["y"] + region["height"]
+            try:
+                if layout_only:
+                    _, metadata = prepare_line_review_images(image_bytes, box)
+                    result = {"text": "", "review_image": metadata}
+                else:
+                    result = call_line_review_vision(image_bytes, filename, box, model=MODEL.removeprefix("gemini:") if USE_MODEL_AGGREGATOR else "", allow_page_numbers=region["id"] != "center")
+                text = str(result.get("text") or "").strip()
+                model = result.get("model", "")
+                models.append(model)
+                block = {"text": text or ("〔尚未识别〕" if layout_only else "〔本行未返回文字，待重新识别〕"), "review_image": result.get("review_image"), "missing": not bool(text)}
+            except Exception as exc:
+                try:
+                    _, review_image = prepare_line_review_images(image_bytes, box)
+                except RuntimeError:
+                    review_image = None
+                block = {"text": "〔本行识别失败，待重新识别〕", "error": True, "missing": True, "review_image": review_image,
+                         "recognition_error": redact_sensitive(str(exc))}
+            metadata = block.get("review_image") or {}
+            pixels, source_size = metadata.get("crop_pixels"), metadata.get("source_size")
+            display_bbox = {key: box[key] for key in ("x", "y", "width", "height")}
+            if pixels and source_size:
+                display_bbox = {"x": pixels["x"] / source_size["width"], "y": pixels["y"] / source_size["height"],
+                                "width": pixels["width"] / source_size["width"], "height": pixels["height"] / source_size["height"]}
+            blocks.append({**block, "bbox": display_bbox,
+                           "region_id": region["id"], "region_label": region["label"],
+                           "region_direction": region.get("direction", "horizontal"), "region_line_index": index, "line_count": 1,
+                           "bbox_approximate": False})
+    return {"text": "\n".join(block["text"] for block in blocks), "lines": blocks,
+            "region_order": ["left", "center", "right"], "layout_bboxes": regions,
+            "layout_bbox_source": "traditional-physical-lines", "line_ocr": True,
+            "failed_line_count": sum(bool(block.get("error") or block.get("missing")) for block in blocks),
+            "layout_only": layout_only,
+            "model": next((model for model in models if model), MODEL), "provider": "gemini"}
 
 
 def split_layout_bboxes(
@@ -860,7 +951,7 @@ def parse_model_text(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def post_json(url: str, body: dict[str, Any], api_key: str = "") -> dict[str, Any]:
+def post_json(url: str, body: dict[str, Any], api_key: str = "", timeout: float | None = None) -> dict[str, Any]:
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -872,7 +963,7 @@ def post_json(url: str, body: dict[str, Any], api_key: str = "") -> dict[str, An
         request.add_header("Authorization", f"Bearer {api_key}")
 
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=TIMEOUT if timeout is None else timeout) as response:
             response_body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -940,7 +1031,7 @@ def redact_sensitive(text: str) -> str:
 
 
 def call_model_aggregator_images(
-    images: list[tuple[bytes, str]], prompt: str, *, preserve_size: bool = False, model_override: str = ""
+    images: list[tuple[bytes, str]], prompt: str, *, preserve_size: bool = False, model_override: str = "", request_timeout: float | None = None
 ) -> dict[str, Any]:
     """Send one or more ordered image attachments in a single vision request."""
     attachment_ids: list[str] = []
@@ -987,6 +1078,7 @@ def call_model_aggregator_images(
         aggregator_url("/api/aggregate/image-to-markdown"),
         request_body,
         AGGREGATOR_API_KEY,
+        **({"timeout": request_timeout} if request_timeout is not None else {}),
     )
     if not raw.get("ok"):
         attempts = summarize_attempts(raw.get("attempts"))
@@ -1095,7 +1187,7 @@ def call_openai_line_review(image_bytes: bytes, filename: str, bbox: dict[str, f
 
 
 def call_line_review_vision(
-    image_bytes: bytes, filename: str, bbox: dict[str, float], draft_text: str = "", model: str = ""
+    image_bytes: bytes, filename: str, bbox: dict[str, float], draft_text: str = "", model: str = "", allow_page_numbers: bool = False, request_timeout: float | None = None
 ) -> dict[str, Any]:
     """Review exactly one source row with enlarged, ordered image tiles."""
     if model:
@@ -1109,13 +1201,14 @@ def call_line_review_vision(
     images = [(tile, f"{stem}-line-review-{index + 1}.png") for index, tile in enumerate(tiles)]
     prompt = "\n\n".join([
         "这是单行藏文 OCR 复核。图片按从左到右的视觉顺序排列；它们共同构成同一行文字。",
-        "只转录图片中可见的这一行藏文。保留朱色文字；不要识别边框、邻行、页码或区域外内容。",
-        "必须只输出一行纯藏文文本，不要解释、编号、Markdown 或‘无法辨认’。",
+        "这是侧栏文字块，按原图实际方向读取边注和页码，保留可见数字；不要识别边框或区域外内容。" if allow_page_numbers else "只转录图片中可见的这一行藏文。保留朱色文字；不要识别边框、邻行、页码或区域外内容。",
+        "只输出一行转录文字，可以包含页码数字，不要解释或 Markdown。" if allow_page_numbers else "必须只输出一行纯藏文文本，不要解释、编号、Markdown 或‘无法辨认’。",
+        "本行目标是红色小字，只转录红色文字，忽略上方可能残留的黑色笔画。" if review_image.get("ink_color") == "red" else "",
         "如果个别字无法确认，保留可见部分，不要按语义补写。",
         f"现有 OCR 草稿（仅供比对，不可照抄）：{draft_text}" if draft_text else "",
     ]).strip()
     if USE_MODEL_AGGREGATOR:
-        result = call_model_aggregator_images(images, prompt, preserve_size=True, model_override=f"gemini:{model}" if model else "")
+        result = call_model_aggregator_images(images, prompt, preserve_size=True, model_override=f"gemini:{model}" if model else "", **({"request_timeout": request_timeout} if request_timeout is not None else {}))
     else:
         result = call_openai_compatible_images(images, prompt)
     text = "".join(part.strip() for part in str(result.get("text") or "").splitlines() if part.strip())
@@ -1179,6 +1272,7 @@ def call_vision_model(
         regions = detect_traditional_column_bboxes(image_bytes)
         if len(regions) == 3:
             return call_traditional_region_ocr(image_bytes, filename, prompt, regions)
+        raise RuntimeError("传统经书三栏定位失败，请调整定位后重试；不会退回整页识别。")
     if USE_MODEL_AGGREGATOR:
         return call_model_aggregator(image_bytes, filename, prompt)
     return call_openai_compatible(image_bytes, filename, prompt)
@@ -1240,7 +1334,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.rstrip("/")
-        if path not in {"/ocr", "/layout", "/line-review", "/openai-line-review", "/qwen-line-review"}:
+        if path not in {"/ocr", "/layout", "/line-review", "/openai-line-review", "/qwen-line-review", "/line-preview", "/line-layout"}:
             self.send_json({"error": "Not found"}, status=404)
             return
 
@@ -1297,6 +1391,39 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(payload)
                 return
 
+            if path == "/line-layout":
+                regions = detect_traditional_column_bboxes(image_bytes)
+                if len(regions) != 3:
+                    raise RuntimeError("传统经书三栏定位失败，请调整定位后重试。")
+                self.send_json(call_traditional_region_ocr(image_bytes, filename, "", regions, layout_only=True))
+                return
+
+            if path == "/line-preview":
+                bbox = parse_normalized_bbox(field_value(form, "bbox"))
+                metadata = json.loads(field_value(form, "review_image") or "{}")
+                # Reproduce the exact saved crop, including neighbour limits.
+                source_size = metadata.get("source_size", {})
+                crop_pixels = metadata.get("crop_pixels", {})
+                exact_match = False
+                with Image.open(BytesIO(image_bytes)) as image:
+                    if source_size == {"width": image.width, "height": image.height} and crop_pixels:
+                        exact_match = True
+                        x, y = crop_pixels["x"], crop_pixels["y"]
+                        cropped = image.convert("RGB").crop((x, y, x + crop_pixels["width"], y + crop_pixels["height"]))
+                        size = metadata["review_size"]
+                        enlarged = cropped.resize((size["width"], size["height"]), Image.Resampling.LANCZOS)
+                        tiles = []
+                        tile_width = max(480, min(LINE_REVIEW_TILE_WIDTH, max(480, MAX_IMAGE_SIDE)))
+                        ranges = metadata.get("tile_ranges") or [[left, min(enlarged.width, left + tile_width)] for left in range(0, enlarged.width, tile_width)]
+                        for left, right in ranges:
+                            output = BytesIO()
+                            enlarged.crop((left, 0, right, enlarged.height)).save(output, format="PNG")
+                            tiles.append(output.getvalue())
+                    else:
+                        tiles, metadata = prepare_line_review_images(image_bytes, bbox)
+                self.send_json({"images": ["data:image/png;base64," + base64.b64encode(tile).decode("ascii") for tile in tiles], "review_image": metadata, "exact_match": exact_match})
+                return
+
             if path == "/openai-line-review":
                 payload = call_openai_line_review(image_bytes, filename, parse_normalized_bbox(field_value(form, "bbox")))
                 self.send_json(payload)
@@ -1309,12 +1436,22 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/line-review":
                 bbox = parse_normalized_bbox(field_value(form, "bbox"))
+                metadata = json.loads(field_value(form, "review_image") or "{}")
+                saved_bbox = metadata.get("source_bbox", {})
+                with Image.open(BytesIO(image_bytes)) as image:
+                    if saved_bbox and metadata.get("source_size") == {"width": image.width, "height": image.height}:
+                        bbox = parse_normalized_bbox(json.dumps(saved_bbox))
+                for key in ("clip_left", "clip_right", "clip_top", "clip_bottom"):
+                    if key in saved_bbox:
+                        bbox[key] = max(0.0, min(1.0, float(saved_bbox[key])))
                 payload = call_line_review_vision(
                     image_bytes,
                     filename,
                     bbox,
                     field_value(form, "ocr_text"),
-                    field_value(form, "model"),
+                    field_value(form, "model") or (MODEL.removeprefix("gemini:") if USE_MODEL_AGGREGATOR else ""),
+                    allow_page_numbers=field_value(form, "region_id") in {"left", "right"},
+                    request_timeout=min(TIMEOUT, 60) if field_value(form, "primary_line") == "1" else None,
                 )
                 self.send_json(payload)
                 return

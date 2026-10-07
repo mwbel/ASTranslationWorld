@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>藏文典籍 OCR 对照工作台</title>
-    <link rel="stylesheet" href="./styles.css?v=20261007-batch-ocr-v23" />
+    <link rel="stylesheet" href="./styles.css?v=20261007-line-crop-v24" />
     <script src="./vendor/pdf.min.js" defer></script>
     <script src="./vendor/lucide.min.js" defer></script>
-    <script src="./app.js?v=20261007-batch-ocr-v23" defer></script>
+    <script src="./app.js?v=20261007-line-crop-v24" defer></script>
   </head>
   <body>
     <main class="app-shell ocr-only-mode ai-only-mode">
@@ -38,13 +38,6 @@
       </header>
 
       <section class="control-band hidden-config-band" aria-label="OCR 和分页控制" hidden>
-        <div class="control-group">
-          <label for="ocrModeSelect">识别引擎</label>
-          <select id="ocrModeSelect">
-            <option value="bdrc" selected>BDRC</option>
-            <option value="ai">Gemini Vision</option>
-          </select>
-        </div>
         <div class="control-group wide">
           <label for="endpointInput">BDRC OCR 接口</label>
           <input id="endpointInput" type="url" value="http://127.0.0.1:18090/ocr" spellcheck="false" />
@@ -262,6 +255,13 @@
               <i data-lucide="scan-text"></i>
               <span>识别</span>
             </button>
+            <label class="ocr-profile-control" for="ocrModeSelect">
+              <span>引擎</span>
+              <select id="ocrModeSelect" aria-label="OCR 识别引擎">
+                <option value="bdrc" selected>BDRC</option>
+                <option value="ai">Gemini Vision（逐行）</option>
+              </select>
+            </label>
             <button id="batchOcrButton" class="ghost-button compact" type="button" disabled>批量识别剩余页</button>
             <button id="cancelBatchOcrButton" class="ghost-button compact" type="button" hidden>停止批量</button>
             <label class="ocr-profile-control" for="ocrProfileSelect">
