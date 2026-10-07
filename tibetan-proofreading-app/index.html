@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>藏文典籍 OCR 对照工作台</title>
-    <link rel="stylesheet" href="./styles.css?v=20261006-openai-dialog-v21" />
+    <link rel="stylesheet" href="./styles.css?v=20261007-batch-ocr-v23" />
     <script src="./vendor/pdf.min.js" defer></script>
     <script src="./vendor/lucide.min.js" defer></script>
-    <script src="./app.js?v=20261006-openai-dialog-v21" defer></script>
+    <script src="./app.js?v=20261007-batch-ocr-v23" defer></script>
   </head>
   <body>
     <main class="app-shell ocr-only-mode ai-only-mode">
@@ -262,6 +262,8 @@
               <i data-lucide="scan-text"></i>
               <span>识别</span>
             </button>
+            <button id="batchOcrButton" class="ghost-button compact" type="button" disabled>批量识别剩余页</button>
+            <button id="cancelBatchOcrButton" class="ghost-button compact" type="button" hidden>停止批量</button>
             <label class="ocr-profile-control" for="ocrProfileSelect">
               <span>资料类型</span>
               <select id="ocrProfileSelect" aria-label="藏文资料类型">
@@ -308,6 +310,7 @@
             </div>
           </div>
 
+          <div id="batchOcrProgress" class="review-feedback" role="status" aria-live="polite"></div>
           <div id="ocrLineCompare" class="ocr-line-compare" aria-label="Gemini Vision OCR 逐行校对"></div>
 
           <textarea

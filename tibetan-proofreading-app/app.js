@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20261006-openai-dialog-v21";
+const APP_BUILD_ID = "20261007-batch-ocr-v23";
 const REVIEW_MODEL_DEFAULTS = { qwen: ["qwen3.5-ocr", "qwen3.8-max", "qwen3.7-plus"], gemini: ["gemini-2.5-flash", "gemini-3.1-flash-lite"] };
 const reviewCatalogRequests = new Map();
 const SOURCE_LAYOUT_VERSION = 4;
@@ -196,6 +196,7 @@ const state = {
   pendingFolderProjectId: "",
   activeFolderProjectId: "",
   isOcrBusy: false,
+  batchOcr: null,
   isTranslateBusy: false,
   remoteBookId: "",
   remoteSaveTimer: null,
@@ -279,6 +280,9 @@ function cacheElements() {
     "emptyState",
     "ocrPaneEyebrow",
     "ocrTitle",
+    "batchOcrButton",
+    "cancelBatchOcrButton",
+    "batchOcrProgress",
     "ocrMeta",
     "copyButton",
     "downloadTextButton",
@@ -456,6 +460,13 @@ function wireEvents() {
   });
   bindOptionalClick("checkTranslateButton", checkTranslateService);
   els.ocrButton.addEventListener("click", runOcrForCurrentPage);
+  els.batchOcrButton.addEventListener("click", runOcrForRemainingPages);
+  els.cancelBatchOcrButton.addEventListener("click", () => {
+    if (state.batchOcr?.running) {
+      state.batchOcr.cancelled = true;
+      updateBatchOcrProgress();
+    }
+  });
   els.copyButton.addEventListener("click", copyCurrentText);
   els.downloadTextButton.addEventListener("click", downloadAllOcrText);
   els.copyAiButton.addEventListener("click", copyCurrentAiText);
@@ -598,6 +609,7 @@ async function restoreActiveProjectForRoute(workflow) {
     setStatus(`自动恢复项目失败：${error.message || error}。可从项目列表手动继续。`, "warn");
   } finally {
     state.activeProjectRestoreInFlight = false;
+    refreshControls();
   }
 }
 
@@ -1794,6 +1806,7 @@ async function loadSamplePdf() {
 }
 
 async function loadFile(file, options = {}) {
+  if (state.batchOcr?.running) throw new Error("请先停止批量识别，再加载其他文件。");
   if (!isSupportedSourceFile(file)) {
     throw new Error("只支持 PDF、图片、Markdown、TXT 或 DOCX 文件。");
   }
@@ -2077,6 +2090,7 @@ async function loadWord(file) {
 }
 
 function resetDocumentState() {
+  state.batchOcr = null;
   state.thumbnailToken += 1;
   clearSourceBlockOverlay();
 
@@ -2249,7 +2263,7 @@ function restoreCachedResults() {
   }
 }
 
-function saveCachedResults() {
+function saveCachedResults(options = {}) {
   if (!state.cacheKey || !state.pageCount) return;
 
   try {
@@ -2266,8 +2280,9 @@ function saveCachedResults() {
       ocrQualityReviews: state.ocrQualityReviews,
     };
     window.localStorage.setItem(state.cacheKey, JSON.stringify(payload));
-    scheduleRemoteStateSave(payload);
+    const remoteSave = scheduleRemoteStateSave(payload, options.immediateRemote);
     renderHomeDashboard();
+    return remoteSave;
   } catch (error) {
     console.warn("Failed to save cached OCR state", error);
   }
@@ -2287,11 +2302,11 @@ async function createRemoteBook(file) {
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
-function scheduleRemoteStateSave(payload) {
+function scheduleRemoteStateSave(payload, immediate = false) {
   if (!isCloudDeployment() || !state.remoteBookId) return;
   if (state.remoteSaveTimer) window.clearTimeout(state.remoteSaveTimer);
   const bookId = state.remoteBookId;
-  state.remoteSaveTimer = window.setTimeout(async () => {
+  const save = async () => {
     state.remoteSaveTimer = null;
     try {
       const response = await fetch(`${window.location.origin}/api/books/${encodeURIComponent(bookId)}/state`, {
@@ -2312,7 +2327,9 @@ function scheduleRemoteStateSave(payload) {
       console.warn("Failed to save remote OCR state", error);
       setStatus(`本地已保存，但云端校对状态同步失败：${error.message || error}`, "warn");
     }
-  }, 500);
+  };
+  if (immediate) return save();
+  state.remoteSaveTimer = window.setTimeout(save, 500);
 }
 
 function serializeResultMap(map) {
@@ -2778,12 +2795,23 @@ function makePdfPageRenderCacheKey(pageNum, dpi) {
 }
 
 async function getRenderedPdfPageBlobWithCache(pageNum, dpi) {
+  if (state.batchOcr?.running && state.pdfDoc) {
+    const page = await state.pdfDoc.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 1 });
+    dpi = getBatchPdfRenderDpi(viewport.width, viewport.height, dpi);
+  }
   const cacheKey = makePdfPageRenderCacheKey(pageNum, dpi);
   const cached = state.pdfPageRenderCache.get(cacheKey);
   if (cached?.blob) return cached.blob;
   const blob = await renderPdfPageBlobWithLocalService(pageNum, dpi);
   state.pdfPageRenderCache.set(cacheKey, { blob, url: "" });
   return blob;
+}
+
+function getBatchPdfRenderDpi(width, height, requestedDpi) {
+  // Oversized scan page metadata must not inflate the OCR input to 14k pixels.
+  // For ordinary PDF pages, retain the user's requested resolution.
+  return Math.min(requestedDpi, Math.max(72, Math.floor(4200 * 72 / Math.max(width, height, 1))));
 }
 
 async function renderPdfPageBlobWithLocalService(pageNum, dpi) {
@@ -2921,7 +2949,8 @@ function buildTextThumbnail(label) {
   els.thumbnailList.appendChild(button);
 }
 
-async function goToPage(pageNum) {
+async function goToPage(pageNum, options = {}) {
+  if (state.batchOcr?.running && !options.batch) return;
   if (!state.pageCount) return;
   const nextPage = clamp(Math.trunc(pageNum), 1, state.pageCount);
   if (nextPage === state.pageNum) {
@@ -2943,6 +2972,7 @@ async function syncPageInputBeforeAction() {
 }
 
 async function runOcrForCurrentPage(options = {}) {
+  if (state.isOcrBusy && !options.skipBusy) return;
   if (!state.pageCount) {
     setStatus("请先上传 PDF 或图片。", "warn");
     return;
@@ -2954,7 +2984,7 @@ async function runOcrForCurrentPage(options = {}) {
 
   discardCurrentBadPdfTextResult();
 
-  const mode = getOcrMode();
+  const mode = options.mode || getOcrMode();
   const profile = getSelectedOcrProfile();
   const endpoint = mode === "ai" ? els.aiOcrEndpointInput.value.trim() : els.endpointInput.value.trim();
   const engineLabel = mode === "ai" ? "Gemini Vision" : `BDRC ${profile.model}`;
@@ -3005,6 +3035,86 @@ async function runOcrForCurrentPage(options = {}) {
     if (!options.skipBusy) {
       setBusy(false);
     }
+  }
+}
+
+function hasValidPageOcr(result) {
+  if (!String(result?.text || "").trim()) return false;
+  if (isDirectTextSource(result.source)) return true;
+  const lines = getExistingResultLines(result);
+  return lines.some((line) => !line.error && !line.diagnostic && !isMissingOcrTranscription(line)
+    && /[\u0f00-\u0fff0-9]/.test(String(line.text || "")));
+}
+
+function updateBatchOcrProgress() {
+  if (!els.batchOcrProgress) return;
+  const progressKey = state.cacheKey ? `tibetan-ocr-batch:${state.cacheKey}` : "";
+  if (!state.batchOcr && progressKey) {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(progressKey) || "null");
+      if (saved?.total === state.pageCount && Array.isArray(saved.pages)
+        && Array.isArray(saved.success) && Array.isArray(saved.failed)) {
+        state.batchOcr = { ...saved, running: false, cancelled: saved.cancelled || saved.running };
+      }
+    } catch (error) { console.warn("Failed to restore batch progress", error); }
+  }
+  const job = state.batchOcr;
+  els.cancelBatchOcrButton.hidden = !job?.running;
+  els.cancelBatchOcrButton.disabled = Boolean(job?.cancelled);
+  els.batchOcrButton.disabled = !state.pageCount || state.isOcrBusy || state.activeProjectRestoreInFlight || state.sourceType !== "pdf";
+  if (!job) {
+    els.batchOcrProgress.textContent = "";
+    return;
+  }
+  const remaining = job.pages.length - job.success.length - job.failed.length;
+  const label = job.running ? (job.cancelled ? "正在停止，等待当前页保存" : `正在处理第 ${job.currentPage} 页`)
+    : job.cancelled ? "批量已停止" : "批量已结束";
+  els.batchOcrProgress.textContent = `${label} · 共 ${job.total} 页 · 已有 ${job.skipped} 页 · 本次成功 ${job.success.length} 页 · 失败 ${job.failed.length} 页 · 剩余 ${remaining} 页${job.failed.length ? `；失败页：${job.failed.map((item) => item.page).join("、")}` : ""}`;
+  els.batchOcrProgress.title = job.failed.map((item) => `第 ${item.page} 页：${item.error}`).join("\n");
+  if (progressKey) {
+    try { window.localStorage.setItem(progressKey, JSON.stringify(job)); }
+    catch (error) { console.warn("Failed to save batch progress", error); }
+  }
+}
+
+async function runOcrForRemainingPages() {
+  if (state.isOcrBusy || state.activeProjectRestoreInFlight || state.sourceType !== "pdf" || !state.pageCount) return;
+  const originalPage = state.pageNum;
+  const sourceKey = state.cacheKey;
+  const pages = Array.from({ length: state.pageCount }, (_, index) => index + 1)
+    .filter((page) => !hasValidPageOcr(state.ocrResults.get(page)));
+  const job = { running: true, cancelled: false, currentPage: 0, total: state.pageCount,
+    pages, skipped: state.pageCount - pages.length, success: [], failed: [] };
+  state.batchOcr = job;
+  setBusy(true);
+  refreshControls();
+  try {
+    for (const page of pages) {
+      if (job.cancelled || sourceKey !== state.cacheKey) { job.cancelled = true; break; }
+      job.currentPage = page;
+      updateBatchOcrProgress();
+      try {
+        await goToPage(page, { batch: true });
+        await runOcrForCurrentPage({ skipBusy: true, skipPageSync: true, mode: "bdrc" });
+        if (!hasValidPageOcr(state.ocrResults.get(page))) throw new Error("未返回有效 OCR 文字");
+        await saveCachedResults({ immediateRemote: true });
+        job.success.push(page);
+      } catch (error) {
+        job.failed.push({ page, error: String(error.message || error) });
+      }
+      updateBatchOcrProgress();
+    }
+  } finally {
+    job.running = false;
+    setBusy(false);
+    try {
+      if (sourceKey === state.cacheKey) await goToPage(originalPage, { batch: true });
+    } catch (error) {
+      setStatus(`结果已保存，但原页面恢复失败：${error.message || error}`, "warn");
+    }
+    refreshControls();
+    updateBatchOcrProgress();
+    setStatus(`批量${job.cancelled ? "已停止" : "完成"}：成功 ${job.success.length} 页，失败 ${job.failed.length} 页。已完成结果已保存。`, job.failed.length ? "warn" : "ok");
   }
 }
 
@@ -4998,13 +5108,17 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
     text.dataset.reviewProvider = provider;
     text.dataset.sourceRowIndex = String(index);
     renderOcrLineMarkup(text, candidate.text, {sharedErrorRanges: candidate.errorRanges || [], sharedErrorTitle: `${label} 候选：人工标记的错误，需核对原图`});
-    text.title = `${label} · ${candidate.model || ""}`;
-    const metadata = document.createElement("small");
-    metadata.textContent = `${label} 候选 · ${candidate.model || "未知模型"}${candidate.note ? ` · ${candidate.note}` : ""}`;
-    group.append(metadata, text);
+    text.title = candidate.note
+      ? `${label} · ${candidate.model || "未知模型"} · ${candidate.note}`
+      : `${label} · ${candidate.model || "未知模型"}`;
+    group.append(text);
   }
   button.addEventListener("click", async (event) => {
     event.stopPropagation();
+    if (state.batchOcr?.running) {
+      feedback.textContent = "请先停止批量识别，再复核单个 block。";
+      return;
+    }
     const pageNum = state.pageNum;
     const sourceKey = state.cacheKey;
     const original = state.ocrResults.get(pageNum);
@@ -5466,6 +5580,10 @@ function clearSharedErrorMark(index, card) {
 }
 
 async function reviewOcrLineWithAiVision(index, card, sourceLine, bdrcLine, aiLine) {
+  if (state.batchOcr?.running && card) {
+    setStatus("请先停止批量识别，再复核单个 block。", "warn");
+    return;
+  }
   const pageNum = state.pageNum;
   const originalResult = state.ocrResults.get(pageNum);
   const sourceKey = state.cacheKey;
@@ -6962,6 +7080,18 @@ function refreshControls() {
   els.copyTranslationButton.disabled = !hasDocument;
   els.clearTranslationButton.disabled = !hasDocument;
   els.downloadTranslationButton.disabled = !hasDocument;
+  if (state.batchOcr?.running) {
+    [els.prevButton, els.nextButton, els.viewerFirstPageButton, els.viewerPrevPageButton,
+      els.viewerNextPageButton, els.viewerLastPageButton, els.pageInput, els.viewerPageInput,
+      els.ocrProfileSelect, els.ocrModeSelect, els.fileInput, els.folderInput].forEach((element) => {
+      if (element) element.disabled = true;
+    });
+  } else {
+    [els.ocrProfileSelect, els.ocrModeSelect, els.fileInput, els.folderInput].forEach((element) => {
+      if (element) element.disabled = false;
+    });
+  }
+  updateBatchOcrProgress();
 }
 
 function syncPageControls(hasDocument = state.pageCount > 0) {
@@ -6969,7 +7099,7 @@ function syncPageControls(hasDocument = state.pageCount > 0) {
   const max = String(state.pageCount || 1);
   [els.pageInput, els.viewerPageInput].forEach((input) => {
     if (!input) return;
-    input.disabled = !hasDocument;
+    input.disabled = !hasDocument || Boolean(state.batchOcr?.running);
     input.max = max;
     input.value = current;
   });
