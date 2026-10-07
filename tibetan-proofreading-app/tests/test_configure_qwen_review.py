@@ -19,6 +19,32 @@ class ConfigureTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.validate_inputs(base, 'sk- ***')
 
+    def test_persistent_environment_is_private_and_loaded_by_startup(self):
+        import os
+        import re
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            app = root / 'tibetan-proofreading-app'; app.mkdir()
+            path = app / '.qwen-review.env'
+            key = 'sk-test-only-12345678'
+            base = 'https://example.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+            module.save_config(base, key, path)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(module.load_saved_config(path),
+                             {'QWEN_REVIEW_API_KEY': key, 'QWEN_REVIEW_BASE_URL': base})
+            script = (Path(__file__).resolve().parents[1] / 'start_services.sh').read_text()
+            loop = re.search(r'for env_file .*?\ndone', script, re.S).group()
+            env = {**os.environ, 'WORKSPACE_ROOT': str(root), 'SCRIPT_DIR': str(app),
+                   'EXPECTED_TEST_KEY': key, 'EXPECTED_TEST_BASE': base}
+            env.pop('QWEN_REVIEW_API_KEY', None)
+            env.pop('QWEN_REVIEW_BASE_URL', None)
+            result = subprocess.run(['bash', '-c', loop +
+                '\n[ "$QWEN_REVIEW_API_KEY" = "$EXPECTED_TEST_KEY" ] && [ "$QWEN_REVIEW_BASE_URL" = "$EXPECTED_TEST_BASE" ]'],
+                env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertNotIn(key, result.stdout + result.stderr)
+
     def test_unknown_listener_is_never_stopped(self):
         with tempfile.TemporaryDirectory() as folder:
             with patch.object(module.subprocess, 'run') as run, patch.object(module.os, 'kill') as kill:

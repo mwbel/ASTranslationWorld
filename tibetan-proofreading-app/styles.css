@@ -2398,3 +2398,17 @@ body.is-resizing-panes * {
 .proofread-editor-label { flex-wrap: wrap; }
 .proofread-editor-label .review-in-heading { margin-left: auto; font-weight: 400; }
 .proofread-editor-label .review-in-heading .review-feedback:empty { display: none; }
+
+/* Hide the source pane completely in OCR, retaining its DOM and page state. */
+.workspace.ocr-only-mode.viewer-collapsed .viewer-pane,
+.workspace.ocr-only-mode.viewer-collapsed .pane-resizer[data-resizer="viewer-ocr"] {
+  display: none;
+}
+.app-shell.ai-only-mode .workspace.ocr-only-mode.viewer-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+.viewer-visibility-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

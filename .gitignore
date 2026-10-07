@@ -60,3 +60,7 @@ sutra-image-package-*/.env
 # Keep example config files trackable
 !as-yilin-model-adapter/.env.example
 !sutra-image-package-*/.env.example
+
+# Local Qwen environment credentials (never commit)
+tibetan-proofreading-app/.qwen-review.env
+tibetan-proofreading-app/.qwen-review-*

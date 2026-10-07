@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>藏文典籍 OCR 对照工作台</title>
-    <link rel="stylesheet" href="./styles.css?v=20261007-row-bound-v25" />
+    <link rel="stylesheet" href="./styles.css?v=20261007-viewer-hide-v26" />
     <script src="./vendor/pdf.min.js" defer></script>
     <script src="./vendor/lucide.min.js" defer></script>
-    <script src="./app.js?v=20261007-row-bound-v25" defer></script>
+    <script src="./app.js?v=20261007-viewer-hide-v26" defer></script>
   </head>
   <body>
     <main class="app-shell ocr-only-mode ai-only-mode">
@@ -251,6 +251,9 @@
           </div>
 
           <div class="ocr-toolbar">
+            <button class="compact viewer-visibility-button" type="button" data-collapse-pane="viewer" aria-label="隐藏原文栏" title="隐藏原文栏">
+              <i data-lucide="panel-left-close"></i><span data-viewer-toggle-label>隐藏原文栏</span>
+            </button>
             <button id="ocrButton" class="primary-button compact" type="button">
               <i data-lucide="scan-text"></i>
               <span>识别</span>

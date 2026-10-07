@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Prompt locally for Qwen credentials; restart only this workspace's AI service.
 
-The key is never saved to disk or passed on the command line. Configuration
-lasts for the AI process lifetime; run this helper again after a later restart.
+By default, save shell environment assignments in a Git-ignored, owner-only
+local file. --session-only retains the previous process-lifetime behaviour.
+The key is never printed or passed on the command line.
 """
 import argparse
 import getpass
@@ -10,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
+import tempfile
 import subprocess
 import sys
 import time
@@ -18,6 +21,7 @@ from urllib.request import urlopen
 
 WORKSPACE = Path(__file__).resolve().parent.parent
 SERVER = WORKSPACE / 'tibetan-ocr-core' / 'ai_vision_ocr_server.py'
+CONFIG_PATH = WORKSPACE / 'tibetan-proofreading-app' / '.qwen-review.env'
 
 
 def validate_inputs(base_url, key):
@@ -29,6 +33,36 @@ def validate_inputs(base_url, key):
     if not key.startswith('sk-') or any(char.isspace() for char in key) or len(key) < 16:
         raise ValueError('key 格式不正确，请粘贴完整 key；不会显示或保存它。')
     return base_url.rstrip('/'), key
+
+
+def load_saved_config(path=None):
+    path = Path(path) if path is not None else CONFIG_PATH
+    if not path.exists():
+        return {}
+    values = {}
+    for line in path.read_text().splitlines():
+        name, sep, value = line.partition('=')
+        if sep and name in {'QWEN_REVIEW_API_KEY', 'QWEN_REVIEW_BASE_URL'}:
+            tokens = shlex.split(value)
+            if len(tokens) == 1:
+                values[name] = tokens[0]
+    return values
+
+
+def save_config(base_url, key, path=None):
+    base_url, key = validate_inputs(base_url, key)
+    path = Path(path) if path is not None else CONFIG_PATH
+    # Atomic owner-only creation; never expose a partially written credential.
+    descriptor, temporary = tempfile.mkstemp(prefix='.qwen-review-', dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'w') as output:
+            output.write('QWEN_REVIEW_API_KEY=' + shlex.quote(key) + '\n')
+            output.write('QWEN_REVIEW_BASE_URL=' + shlex.quote(base_url) + '\n')
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def stop_workspace_ai(runtime, port):
@@ -86,11 +120,17 @@ def configure(base_url, key):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base-url', default=os.environ.get('QWEN_REVIEW_BASE_URL', ''))
+    parser.add_argument('--session-only', action='store_true', help='只配置当前服务进程，不保存')
     args = parser.parse_args()
-    print('仅配置本地千问复核，不调用外部模型，不写入密钥文件。')
-    base_url = args.base_url or input('粘贴百炼 API Key 页的按量付费 Base URL：').strip()
-    key = getpass.getpass('千问 API key（输入不显示，粘贴后按回车）：').strip()
+    print('仅配置本地千问复核，不调用外部模型；API key 隐藏输入。')
     try:
+        saved = {} if args.session_only else load_saved_config()
+        base_url = args.base_url or saved.get('QWEN_REVIEW_BASE_URL') or input('粘贴百炼 API Key 页的按量付费 Base URL：').strip()
+        key = (os.environ.get('QWEN_REVIEW_API_KEY') or os.environ.get('DASHSCOPE_API_KEY')
+               or saved.get('QWEN_REVIEW_API_KEY') or getpass.getpass('千问 API key（输入不显示，粘贴后按回车）：').strip())
+        base_url, key = validate_inputs(base_url, key)
+        if not args.session_only:
+            save_config(base_url, key)
         configure(base_url, key)
     except (ValueError, RuntimeError) as error:
         print(f'配置未完成：{error}')
@@ -100,7 +140,7 @@ def main():
         return 1
     print('千问后端已配置。刷新工作台后点击“千问复核”即可。')
     print('http://127.0.0.1:8790/tibetan-proofreading-app/?workflow=ocr')
-    print('本次配置仅在 AI 服务运行期间有效；之后重启请重新运行此助手。')
+    print('本次仅配置当前进程；重启后需重新输入。' if args.session_only else '已持久保存本地环境变量（权限600，Git忽略）；启动脚本重启时自动加载。')
     return 0
 
 

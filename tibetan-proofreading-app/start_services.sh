@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNTIME_DIR="${BDRC_RUNTIME_DIR:-${TMPDIR:-/tmp}/tibetan-proofreading-app-services-${UID}}"
 
-for env_file in "$WORKSPACE_ROOT/.env" "$SCRIPT_DIR/.env" "$WORKSPACE_ROOT/tibetan-translation-services/.env"; do
+for env_file in "$WORKSPACE_ROOT/.env" "$SCRIPT_DIR/.env" "$WORKSPACE_ROOT/tibetan-translation-services/.env" "$SCRIPT_DIR/.qwen-review.env"; do
   if [ -f "$env_file" ]; then
     set -a
     # shellcheck disable=SC1090

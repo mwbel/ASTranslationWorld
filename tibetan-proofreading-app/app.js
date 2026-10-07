@@ -1561,8 +1561,12 @@ function updatePaneCollapseButtons() {
     const pane = button.dataset.collapsePane;
     const collapsed = Boolean(state.layout.collapsed[pane]);
     const [label, iconBase] = labels[pane] || ["边栏", "panel-left"];
-    button.setAttribute("aria-label", `${collapsed ? "展开" : "折叠"}${label}`);
-    button.setAttribute("title", `${collapsed ? "展开" : "折叠"}${label}`);
+    const action = pane === "viewer" && isOcrOnlyWorkspace()
+      ? (collapsed ? "显示" : "隐藏") : (collapsed ? "展开" : "折叠");
+    button.setAttribute("aria-label", `${action}${label}`);
+    button.setAttribute("title", `${action}${label}`);
+    const toggleLabel = button.querySelector("[data-viewer-toggle-label]");
+    if (toggleLabel) toggleLabel.textContent = `${action}${label}`;
     button.setAttribute("aria-expanded", String(!collapsed));
     const icon = button.querySelector("[data-lucide]");
     if (icon) {
