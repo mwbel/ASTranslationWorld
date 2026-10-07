@@ -8,6 +8,46 @@ import ai_vision_ocr_server as server
 
 
 class ProviderReviewTests(unittest.TestCase):
+    def test_transient_upstream_http_status_reaches_frontend(self):
+        for code in (502, 503, 504):
+            payload, status = server.ocr_error_response(RuntimeError(
+                f'ModelAggregator image OCR failed: gemini: error (HTTP {code} high demand)'))
+            self.assertEqual(status, code)
+            self.assertTrue(payload['retryable'])
+        for message in ('千问复核未配置', 'HTTP 401 invalid key', 'HTTP 429 quota',
+                        'HTTP 503 unavailable; HTTP 403 permission denied',
+                        'HTTP 503 high demand; 额度或频率限制', 'model mismatch'):
+            payload, status = server.ocr_error_response(RuntimeError(message))
+            self.assertEqual(status, 500)
+            self.assertFalse(payload['retryable'])
+
+    def test_line_review_http_route_preserves_503(self):
+        from io import BytesIO
+        from PIL import Image
+        from threading import Thread
+        from http.server import ThreadingHTTPServer
+        import urllib.request
+        import urllib.error
+        import json
+        out = BytesIO(); Image.new('RGB', (20, 20), 'white').save(out, format='PNG')
+        boundary = 'test-row-boundary'
+        content = ('--' + boundary + '\r\nContent-Disposition: form-data; name="bbox"\r\n\r\n'
+                   '{"x":0.1,"y":0.1,"width":0.8,"height":0.8}\r\n--' + boundary +
+                   '\r\nContent-Disposition: form-data; name="file"; filename="sample.png"\r\nContent-Type: image/png\r\n\r\n').encode()
+        content += out.getvalue() + ('\r\n--' + boundary + '--\r\n').encode()
+        http = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
+        thread = Thread(target=http.serve_forever, daemon=True); thread.start()
+        try:
+            with patch.object(server, 'call_line_review_vision', side_effect=RuntimeError('HTTP 503 high demand')):
+                req = urllib.request.Request(f'http://127.0.0.1:{http.server_port}/line-review', data=content,
+                       headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(req, timeout=3)
+                self.assertEqual(caught.exception.code, 503)
+                self.assertTrue(json.load(caught.exception)['retryable'])
+        finally:
+            http.shutdown(); http.server_close(); thread.join()
+
     def test_qwen_preserves_selected_model_and_crop(self):
         raw = {'model': 'qwen3.7-plus', 'choices': [{'finish_reason': 'stop', 'message': {'content': 'བོད་'}}]}
         with patch.object(server, 'QWEN_REVIEW_API_KEY', 'test-only'), patch.object(server, 'QWEN_REVIEW_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'), patch.object(server, 'prepare_line_review_images', return_value=([b'png'], {'crop': 'tight'})), patch.object(server, 'post_json', return_value=raw) as request:

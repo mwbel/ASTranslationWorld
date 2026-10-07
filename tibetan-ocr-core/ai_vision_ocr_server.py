@@ -1504,7 +1504,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = call_vision_model(image_bytes, filename, prompt, ocr_profile)
             self.send_json(payload)
         except Exception as exc:
-            self.send_json({"error": redact_sensitive(str(exc))}, status=500)
+            payload, status = ocr_error_response(exc)
+            self.send_json(payload, status=status)
 
     def send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1522,6 +1523,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args))
+
+
+def ocr_error_response(error):
+    """Preserve retryable upstream statuses instead of hiding them in HTTP 500.
+
+    Authentication/quota errors stay non-retryable, even if a different attempt
+    also failed temporarily. Only explicit HTTP codes trigger automatic retry.
+    """
+    message = redact_sensitive(str(error))
+    codes = [int(code) for code in re.findall(r"\bHTTP\s+(\d{3})\b", message, re.I)]
+    permanent = any(marker in message.lower() for marker in
+                    ("额度", "频率限制", "quota", "resource_exhausted", "invalid key", "permission denied"))
+    retryable = bool(codes) and not permanent and all(code in {502, 503, 504} for code in codes)
+    status = codes[-1] if retryable else 500
+    return {"error": message, "retryable": retryable}, status
 
 
 def field_value(form: cgi.FieldStorage, name: str) -> str:
