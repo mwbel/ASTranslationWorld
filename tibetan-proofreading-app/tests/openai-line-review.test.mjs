@@ -18,6 +18,9 @@ vm.runInContext(`
     bdrc:{text:'BDRC',lines:[{text:'BDRC'},{text:''},{text:'红字',bbox:{x:0,y:0,width:1,height:1}}]},llm:{text:'Gemini',lines:[{text:'Gemini'}]}}});
   getAiVisionLineReviewEndpoint=()=> 'http://localhost/line-review';
   getCurrentPageImageBlob=async()=>({});
+  makeLineCropContext=()=>({cacheKey:state.cacheKey,pageNum:state.pageNum});
+  getCachedLineCrop=async()=>({payload:{review_image:{crop_version:2}}});
+  saveModelInputCrop=async()=>{};
   callAiVisionLineReviewEndpoint=async(endpoint,blob,bbox,draft)=> {
     if(!endpoint.endsWith('/openai-line-review') || draft!=='') throw Error('bad routing');
     return {text:'བོད་',raw:{model:'test-openai'}};

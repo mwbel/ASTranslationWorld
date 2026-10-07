@@ -48,6 +48,17 @@ class ProviderReviewTests(unittest.TestCase):
         finally:
             http.shutdown(); http.server_close(); thread.join()
 
+    def test_saved_crop_bounds_are_shared_and_rejected_on_another_page_size(self):
+        from PIL import Image
+        from io import BytesIO
+        out = BytesIO(); Image.new('RGB', (100, 30), 'white').save(out, format='PNG')
+        current = {'x': .1, 'y': .1, 'width': .8, 'height': .2}
+        original = {'x': .2, 'y': .2, 'width': .6, 'height': .1, 'clip_top': .15, 'clip_bottom': .4}
+        metadata = {'source_bbox': original, 'source_size': {'width': 100, 'height': 30}}
+        self.assertEqual(server.resolve_saved_review_bbox(out.getvalue(), current, metadata), original)
+        metadata['source_size']['height'] = 31
+        self.assertEqual(server.resolve_saved_review_bbox(out.getvalue(), current, metadata), current)
+
     def test_qwen_preserves_selected_model_and_crop(self):
         raw = {'model': 'qwen3.7-plus', 'choices': [{'finish_reason': 'stop', 'message': {'content': 'བོད་'}}]}
         with patch.object(server, 'QWEN_REVIEW_API_KEY', 'test-only'), patch.object(server, 'QWEN_REVIEW_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'), patch.object(server, 'prepare_line_review_images', return_value=([b'png'], {'crop': 'tight'})), patch.object(server, 'post_json', return_value=raw) as request:

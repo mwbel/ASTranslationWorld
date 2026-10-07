@@ -259,6 +259,7 @@ function cacheElements() {
     "viewerFirstPageButton",
     "viewerPrevPageButton",
     "viewerPageInput",
+    "ocrFirstPageButton", "ocrPrevPageButton", "ocrPageInput", "ocrNextPageButton", "ocrLastPageButton", "ocrPageTotal",
     "viewerNextPageButton",
     "viewerLastPageButton",
     "viewerZoomOutButton",
@@ -426,6 +427,14 @@ function wireEvents() {
   els.viewerPrevPageButton.addEventListener("click", () => goToPage(state.pageNum - 1));
   els.viewerNextPageButton.addEventListener("click", () => goToPage(state.pageNum + 1));
   els.viewerLastPageButton.addEventListener("click", () => goToPage(state.pageCount));
+  els.ocrFirstPageButton.addEventListener("click", () => goToPage(1));
+  els.ocrPrevPageButton.addEventListener("click", () => goToPage(state.pageNum - 1));
+  els.ocrNextPageButton.addEventListener("click", () => goToPage(state.pageNum + 1));
+  els.ocrLastPageButton.addEventListener("click", () => goToPage(state.pageCount));
+  els.ocrPageInput.addEventListener("change", () => goToPage(Number(els.ocrPageInput.value)));
+  els.ocrPageInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") goToPage(Number(els.ocrPageInput.value));
+  });
   els.viewerZoomOutButton.addEventListener("click", () => setSourcePageZoom(state.sourcePageZoom - SOURCE_PAGE_ZOOM_STEP));
   els.viewerZoomInButton.addEventListener("click", () => setSourcePageZoom(state.sourcePageZoom + SOURCE_PAGE_ZOOM_STEP));
 
@@ -3105,6 +3114,8 @@ async function runTraditionalGeminiLines(endpoint, blob) {
       if (!text) throw new Error("模型未返回文字");
       Object.assign(line, { text, error: false, missing: false, reviewImage: parsed.raw?.review_image || line.reviewImage,
         model: getOcrResponseModel(parsed.raw), provider: "gemini" });
+      try { await saveModelInputCrop(line, index, line.reviewImage, makeLineCropContext(), "gemini", line.model, blob); }
+      catch (error) { console.warn("Model input crop cache failed", error.message); }
     } catch (error) {
       if (state.pageNum !== pageNum || state.cacheKey !== sourceKey) throw error;
       Object.assign(line, { text: "〔本行识别失败，待重新识别〕", error: true, missing: true });
@@ -5021,7 +5032,7 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
   const reviewHeader = stack.querySelector(".proofread-editor-group.is-ai .proofread-editor-label");
   const geminiReview = renderAiVisionLineReviewButton(index, card, sourceLine, bdrcLine, aiLine);
   geminiReview.classList.add("review-in-heading");
-  reviewHeader.appendChild(geminiReview);
+  reviewHeader.insertBefore(geminiReview, reviewHeader.querySelector(".proofread-editor-status"));
 
   const activate = () => {
     if (!hasPreciseSourceLine) return;
@@ -5242,7 +5253,9 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
       if (select?.dataset.reviewConfigured === "false") throw new Error("千问后端尚未配置 API key 和对应平台的接口地址。");
       const blob = await getCurrentPageImageBlob();
       if (state.pageNum !== pageNum || state.cacheKey !== sourceKey) throw new Error("页面已切换，请返回原页面重试。");
-      const parsed = await callAiVisionLineReviewEndpoint(endpoint, blob, sourceLine.bbox, "", selectedModel);
+      const cropContext = makeLineCropContext();
+      const cropEntry = await getCachedLineCrop(sourceLine, index, aiLine?.reviewImage || sourceLine.reviewImage, cropContext, blob);
+      const parsed = await callAiVisionLineReviewEndpoint(endpoint, blob, sourceLine.bbox, "", selectedModel, cropEntry.payload.review_image, sourceLine.regionId || "");
       const text = validateIndependentReviewText(getParsedOcrText(parsed));
       const result = state.ocrResults.get(pageNum);
       if (state.cacheKey !== sourceKey || result !== original) throw new Error("原文或结果已更换，请重新复核。");
@@ -5250,8 +5263,11 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
       const reviews = compare[reviewKey] || [];
       compare[reviewKey] = [...reviews.filter((review) => review.index !== index), {
         index, text, bbox: sourceLine.bbox, model: getOcrResponseModel(parsed.raw) || selectedModel, provider, reviewedAt: new Date().toISOString(),
+        reviewImage: parsed.raw?.review_image || null,
       }];
       result.compare = compare;
+      try { await saveModelInputCrop(sourceLine, index, parsed.raw?.review_image, cropContext, provider, getOcrResponseModel(parsed.raw), blob); }
+      catch (error) { feedback.textContent = `识别成功，但模型输入图片缓存失败：${error.message}`; }
       saveCachedResults();
       if (state.pageNum === pageNum) updateOcrPanelForPage();
     } catch (error) {
@@ -5377,6 +5393,101 @@ function renderSourcePreviewScaleButton(action, icon, label) {
   return button;
 }
 
+const lineCropRequests = new Map();
+const lineCropModelWrites = new Map();
+
+function makeLineCropContext() {
+  return { cacheKey: state.cacheKey, pageNum: state.pageNum,
+    dpi: Number(els.dpiInput.value) || 260, profile: getSelectedOcrProfile(), endpoint: getAiVisionLineReviewEndpoint() };
+}
+
+function makeLineCropCacheKey(sourceLine, index, context) {
+  return JSON.stringify([context.cacheKey, context.pageNum, index, context.dpi,
+    context.profile, context.endpoint, normalizeBbox(sourceLine.bbox), "row-crop-v2"]);
+}
+
+function sameLineCropMetadata(a, b) {
+  if (!a || !b) return false;
+  return ["crop_version", "source_size", "crop_pixels", "review_size", "tile_ranges"]
+    .every((name) => JSON.stringify(a[name]) === JSON.stringify(b[name]));
+}
+
+function openLineCropDatabase() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error("浏览器不支持裁剪缓存"));
+    const request = window.indexedDB.open("tibetan-proofreading-line-crops", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("crops");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("裁剪缓存打开失败"));
+  });
+}
+
+async function accessLineCropCache(key, value) {
+  const database = await openLineCropDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction("crops", value ? "readwrite" : "readonly");
+      const request = value ? transaction.objectStore("crops").put(value, key)
+        : transaction.objectStore("crops").get(key);
+      let result = null;
+      request.onsuccess = () => { result = request.result; };
+      transaction.oncomplete = () => resolve(value || result || null);
+      transaction.onerror = () => reject(transaction.error || new Error("裁剪缓存读写失败"));
+      transaction.onabort = () => reject(transaction.error || new Error("裁剪缓存写入被取消"));
+    });
+  } finally { database.close(); }
+}
+
+async function getCachedLineCrop(sourceLine, index, metadata, context, blob = null) {
+  const key = makeLineCropCacheKey(sourceLine, index, context);
+  let cached = null;
+  try { cached = await accessLineCropCache(key); } catch { /* Preview can still render. */ }
+  const currentInput = metadata?.crop_version === 2;
+  if (cached?.payload?.images?.length && (!currentInput || sameLineCropMetadata(metadata, cached.payload.review_image))) {
+    return cached;
+  }
+  if (lineCropRequests.has(key)) return lineCropRequests.get(key);
+  const pending = (async () => {
+    if (state.cacheKey !== context.cacheKey || state.pageNum !== context.pageNum) throw new Error("页面已切换");
+    const image = blob || await getCurrentPageImageBlob();
+    const data = new FormData();
+    data.append("file", image, makePageImageName());
+    data.append("bbox", JSON.stringify(sourceLine.bbox));
+    if (metadata) data.append("review_image", JSON.stringify(metadata));
+    const endpoint = getAiVisionLineReviewEndpoint().replace(/line-review$/, "line-preview");
+    const response = await fetch(endpoint, { method: "POST", body: data });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    const entry = { payload, savedAt: new Date().toISOString(), context, modelInputs: cached?.modelInputs || {}, ...(cached?.modelInput ? { modelInput: cached.modelInput } : {}) };
+    try { await accessLineCropCache(key, entry); }
+    catch (error) { entry.cacheError = error.message; }
+    return entry;
+  })();
+  lineCropRequests.set(key, pending);
+  try { return await pending; } finally { lineCropRequests.delete(key); }
+}
+
+async function saveModelInputCrop(sourceLine, index, metadata, context, provider, model, blob) {
+  if (!metadata) return;
+  const entry = await getCachedLineCrop(sourceLine, index, metadata, context, blob);
+  // Keep preview and successful model input separate; failed calls do not promote it.
+  if (!sameLineCropMetadata(entry.payload.review_image, metadata)) throw new Error("裁剪记录与模型输入不一致");
+  const key = makeLineCropCacheKey(sourceLine, index, context);
+  const snapshot = { provider, model, reviewImage: metadata, images: entry.payload.images,
+    savedAt: new Date().toISOString() };
+  // Concurrent provider reviews must not erase each other's successful input.
+  const previous = lineCropModelWrites.get(key) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(async () => {
+    const latest = await accessLineCropCache(key) || entry;
+    latest.modelInputs = { ...(entry.modelInputs || {}), ...(latest.modelInputs || {}), [provider]: snapshot };
+    latest.modelInput = snapshot;
+    await accessLineCropCache(key, latest);
+  });
+  lineCropModelWrites.set(key, pending);
+  try { await pending; }
+  finally { if (lineCropModelWrites.get(key) === pending) lineCropModelWrites.delete(key); }
+}
+
 function createModelInputPreview(sourceLine, index) {
   if (!normalizeBbox(sourceLine?.bbox)) return null;
   const wrapper = document.createElement("div");
@@ -5391,20 +5502,18 @@ function createModelInputPreview(sourceLine, index) {
       const result = state.ocrResults.get(pageNum);
       const compare = getOcrSourceCompare(result);
       const metadata = compare?.llm?.lines?.[index]?.reviewImage || sourceLine.reviewImage;
-      const blob = await getCurrentPageImageBlob();
-      if (pageNum !== state.pageNum || sourceKey !== state.cacheKey) return;
-      const data = new FormData();
-      data.append("file", blob, makePageImageName());
-      data.append("bbox", JSON.stringify(sourceLine.bbox));
-      if (metadata) data.append("review_image", JSON.stringify(metadata));
-      const endpoint = getAiVisionLineReviewEndpoint().replace(/line-review$/, "line-preview");
-      const response = await fetch(endpoint, { method: "POST", body: data });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const entry = await getCachedLineCrop(sourceLine, index, metadata, makeLineCropContext());
+      const payload = entry.payload;
       if (!wrapper.isConnected || pageNum !== state.pageNum || sourceKey !== state.cacheKey) return;
       wrapper.replaceChildren();
       const note = document.createElement("small");
-      note.textContent = payload.exact_match ? "识别用单行裁剪（按左→右排列）" : "优化后单行裁剪预览（重新识别后保存为模型输入）";
+      const recognizedLine = compare?.llm?.lines?.[index];
+      const usedByModel = sameLineCropMetadata(entry.modelInput?.reviewImage, payload.review_image) || (recognizedLine && !recognizedLine.error && !recognizedLine.missing
+        && !isDiagnosticOcrLine(recognizedLine) && sameLineCropMetadata(metadata, payload.review_image));
+      note.textContent = usedByModel
+        ? "已缓存 · 模型输入单行裁剪（按左→右排列）"
+        : "已缓存 · 单行裁剪预览（重新识别后保存为模型输入）";
+      if (entry.cacheError) note.textContent = `裁剪未能缓存：${entry.cacheError}`;
       wrapper.appendChild(note);
       const strip = document.createElement("div");
       strip.style.display = "flex";
@@ -5785,7 +5894,10 @@ async function reviewOcrLineWithAiVision(index, card, sourceLine, bdrcLine, aiLi
       ? String(bdrcLine?.text || "")
       : String(aiLine?.text || bdrcLine?.text || "");
     if (state.pageNum !== pageNum || state.cacheKey !== sourceKey) throw new Error("页面已切换，请返回原页面重试。");
-    const reviewImage = aiLine?.reviewImage || sourceLine?.reviewImage || bdrcLine?.reviewImage || null;
+    const oldImage = aiLine?.reviewImage || sourceLine?.reviewImage || bdrcLine?.reviewImage || null;
+    const cropContext = makeLineCropContext();
+    const cropEntry = await getCachedLineCrop({ ...sourceLine, bbox }, index, oldImage, cropContext, blob);
+    const reviewImage = cropEntry.payload.review_image;
     const parsed = await callAiVisionLineReviewEndpoint(endpoint, blob, bbox, draftText, selectedModel, reviewImage, sourceLine?.regionId || "");
     const reviewedText = getParsedOcrText(parsed);
     if (!reviewedText) {
@@ -5800,6 +5912,11 @@ async function reviewOcrLineWithAiVision(index, card, sourceLine, bdrcLine, aiLi
     const targetLine = ensureProofreadLine(compare.llm.lines, index, sourceLine || bdrcLine);
     targetLine.text = reviewedText;
     targetLine.reviewImage = parsed.raw?.review_image || null;
+    try {
+      await saveModelInputCrop({ ...sourceLine, bbox }, index, targetLine.reviewImage, cropContext, "gemini", getOcrResponseModel(parsed.raw), blob);
+    } catch (error) {
+      setStatus(`识别成功，但模型输入图片缓存失败：${error.message}`, "warn");
+    }
     targetLine.bbox = bbox;
     targetLine.bboxApproximate = false;
     targetLine.error = false;
@@ -7246,6 +7363,10 @@ function refreshControls() {
   els.viewerPrevPageButton.disabled = !hasDocument || state.pageNum <= 1;
   els.viewerNextPageButton.disabled = !hasDocument || state.pageNum >= state.pageCount;
   els.viewerLastPageButton.disabled = !hasDocument || state.pageNum >= state.pageCount;
+  setOptionalDisabled("ocrFirstPageButton", !hasDocument || state.pageNum <= 1 || Boolean(state.batchOcr?.running));
+  setOptionalDisabled("ocrPrevPageButton", !hasDocument || state.pageNum <= 1 || Boolean(state.batchOcr?.running));
+  setOptionalDisabled("ocrNextPageButton", !hasDocument || state.pageNum >= state.pageCount || Boolean(state.batchOcr?.running));
+  setOptionalDisabled("ocrLastPageButton", !hasDocument || state.pageNum >= state.pageCount || Boolean(state.batchOcr?.running));
   els.ocrButton.disabled = !hasDocument || state.isOcrBusy;
   setOptionalDisabled("downloadPageButton", !hasDocument);
   els.copyButton.disabled = !hasDocument;
@@ -7274,7 +7395,7 @@ function refreshControls() {
 function syncPageControls(hasDocument = state.pageCount > 0) {
   const current = String(state.pageNum || 1);
   const max = String(state.pageCount || 1);
-  [els.pageInput, els.viewerPageInput].forEach((input) => {
+  [els.pageInput, els.viewerPageInput, els.ocrPageInput].forEach((input) => {
     if (!input) return;
     input.disabled = !hasDocument || Boolean(state.batchOcr?.running);
     input.max = max;
@@ -7286,6 +7407,7 @@ function syncPageControls(hasDocument = state.pageCount > 0) {
   if (els.renderMeta) {
     els.renderMeta.textContent = `/ ${state.pageCount || 0}`;
   }
+  if (els.ocrPageTotal) els.ocrPageTotal.textContent = `/ ${state.pageCount || 0}`;
 }
 
 function setBusy(isBusy) {

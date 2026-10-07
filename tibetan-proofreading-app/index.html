@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>藏文典籍 OCR 对照工作台</title>
-    <link rel="stylesheet" href="./styles.css?v=20261007-viewer-toggle-v27" />
+    <link rel="stylesheet" href="./styles.css?v=20261007-crop-cache-nav-v29" />
     <script src="./vendor/pdf.min.js" defer></script>
     <script src="./vendor/lucide.min.js" defer></script>
-    <script src="./app.js?v=20261007-viewer-toggle-v27" defer></script>
+    <script src="./app.js?v=20261007-crop-cache-nav-v29" defer></script>
   </head>
   <body>
     <main class="app-shell ocr-only-mode ai-only-mode">
@@ -254,6 +254,14 @@
             <button class="compact viewer-visibility-button" type="button" data-collapse-pane="viewer" aria-label="隐藏原文栏" title="隐藏原文栏">
               <i data-lucide="panel-left-close"></i><span data-viewer-toggle-label>隐藏原文栏</span>
             </button>
+            <div class="viewer-page-stepper ocr-page-navigation" aria-label="OCR 结果页面导航">
+              <button id="ocrFirstPageButton" class="icon-button compact page-jump-button" type="button" aria-label="右栏第一页" title="第一页"><i data-lucide="skip-back"></i></button>
+              <button id="ocrPrevPageButton" class="icon-button compact page-jump-button" type="button" aria-label="右栏上一页" title="上一页"><i data-lucide="chevron-left"></i></button>
+              <input id="ocrPageInput" class="viewer-page-input" type="number" min="1" value="1" aria-label="右栏当前页码" />
+              <span id="ocrPageTotal" class="viewer-page-total">/ 0</span>
+              <button id="ocrNextPageButton" class="icon-button compact page-jump-button" type="button" aria-label="右栏下一页" title="下一页"><i data-lucide="chevron-right"></i></button>
+              <button id="ocrLastPageButton" class="icon-button compact page-jump-button" type="button" aria-label="右栏最后一页" title="最后一页"><i data-lucide="skip-forward"></i></button>
+            </div>
             <button id="ocrButton" class="primary-button compact" type="button">
               <i data-lucide="scan-text"></i>
               <span>识别</span>

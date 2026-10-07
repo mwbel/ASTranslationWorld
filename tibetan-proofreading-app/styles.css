@@ -2396,7 +2396,7 @@ body.is-resizing-panes * {
 
 /* Keep per-block Gemini review beside the recognition heading. */
 .proofread-editor-label { flex-wrap: wrap; }
-.proofread-editor-label .review-in-heading { margin-left: auto; font-weight: 400; }
+.proofread-editor-label .review-in-heading { margin-left: 0; font-weight: 400; }
 .proofread-editor-label .review-in-heading .review-feedback:empty { display: none; }
 
 /* Hide the source pane completely in OCR, retaining its DOM and page state. */
@@ -2436,3 +2436,5 @@ body.is-resizing-panes * {
 .workspace.viewer-collapsed .viewer-pane-header > .pane-collapse-button {
   position: static;
 }
+
+.ocr-page-navigation { flex-wrap: wrap; justify-content: flex-start; }

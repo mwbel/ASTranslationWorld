@@ -1467,25 +1467,19 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             if path == "/openai-line-review":
-                payload = call_openai_line_review(image_bytes, filename, parse_normalized_bbox(field_value(form, "bbox")))
+                payload = call_openai_line_review(image_bytes, filename, resolve_saved_review_bbox(image_bytes, parse_normalized_bbox(field_value(form, "bbox")), json.loads(field_value(form, "review_image") or "{}")))
                 self.send_json(payload)
                 return
 
             if path == "/qwen-line-review":
-                payload = call_qwen_line_review(image_bytes, filename, parse_normalized_bbox(field_value(form, "bbox")), field_value(form, "model"))
+                payload = call_qwen_line_review(image_bytes, filename, resolve_saved_review_bbox(image_bytes, parse_normalized_bbox(field_value(form, "bbox")), json.loads(field_value(form, "review_image") or "{}")), field_value(form, "model"))
                 self.send_json(payload)
                 return
 
             if path == "/line-review":
                 bbox = parse_normalized_bbox(field_value(form, "bbox"))
                 metadata = json.loads(field_value(form, "review_image") or "{}")
-                saved_bbox = metadata.get("source_bbox", {})
-                with Image.open(BytesIO(image_bytes)) as image:
-                    if saved_bbox and metadata.get("source_size") == {"width": image.width, "height": image.height}:
-                        bbox = parse_normalized_bbox(json.dumps(saved_bbox))
-                for key in ("clip_left", "clip_right", "clip_top", "clip_bottom"):
-                    if key in saved_bbox:
-                        bbox[key] = max(0.0, min(1.0, float(saved_bbox[key])))
+                bbox = resolve_saved_review_bbox(image_bytes, bbox, metadata)
                 payload = call_line_review_vision(
                     image_bytes,
                     filename,
@@ -1523,6 +1517,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args))
+
+
+def resolve_saved_review_bbox(image_bytes, bbox, metadata):
+    saved_bbox = metadata.get("source_bbox", {})
+    with Image.open(BytesIO(image_bytes)) as image:
+        if saved_bbox and metadata.get("source_size") == {"width": image.width, "height": image.height}:
+            bbox = parse_normalized_bbox(json.dumps(saved_bbox))
+            for key in ("clip_left", "clip_right", "clip_top", "clip_bottom"):
+                if key in saved_bbox:
+                    bbox[key] = max(0.0, min(1.0, float(saved_bbox[key])))
+    return bbox
 
 
 def ocr_error_response(error):

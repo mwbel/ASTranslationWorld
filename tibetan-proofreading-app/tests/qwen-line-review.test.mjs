@@ -22,6 +22,9 @@ vm.runInContext(`
     openaiReviews:[{index:0,text:'OpenAI',model:'test-openai'}]}});
   getAiVisionLineReviewEndpoint=()=> 'http://localhost/line-review';
   getCurrentPageImageBlob=async()=>({});
+  makeLineCropContext=()=>({cacheKey:state.cacheKey,pageNum:state.pageNum});
+  getCachedLineCrop=async()=>({payload:{review_image:{crop_version:2}}});
+  saveModelInputCrop=async()=>{};
   callAiVisionLineReviewEndpoint=async(endpoint,blob,bbox,draft,model)=> {
     if(!endpoint.endsWith('/qwen-line-review') || draft!=='' || model!=='qwen3.7-plus') throw Error('bad provider/model routing');
     return {text:'བོད་',raw:{model:'qwen3.7-plus'}};
