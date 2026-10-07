@@ -192,6 +192,43 @@ def split_enlarged_line(enlarged, tile_width):
     return tiles, ranges
 
 
+LINE_CROP_VERSION = 2
+
+
+def bound_legacy_line_crop(image_bytes, bbox):
+    """Recover physical-row limits for old cached horizontal blocks.
+
+    Sparse vertical side inscriptions must retain their native full height.
+    Detection is local and does not call an OCR/model API.
+    """
+    bbox = dict(bbox)
+    if cv2 is None or np is None or "clip_top" in bbox or bbox["height"] > bbox["width"]:
+        return bbox
+    regions = detect_traditional_column_bboxes(image_bytes)
+    center = next((region for region in regions if region["id"] == "center"), None)
+    if not center:
+        return bbox
+    mid_x = bbox["x"] + bbox["width"] / 2
+    mid_y = bbox["y"] + bbox["height"] / 2
+    if not (center["x"] <= mid_x <= center["x"] + center["width"] and
+            center["y"] <= mid_y <= center["y"] + center["height"]):
+        return bbox
+    local = merge_physical_row_fragments(detect_text_line_bboxes(crop_image_to_bbox(image_bytes, center)))
+    rows = [{"y": center["y"] + row["y"] * center["height"],
+             "height": row["height"] * center["height"]} for row in local]
+    if not rows or (len(rows) == 1 and local[0]["height"] > .65):
+        return bbox
+    index = min(range(len(rows)), key=lambda i: abs(rows[i]["y"] + rows[i]["height"] / 2 - mid_y))
+    row = rows[index]
+    if abs(row["y"] + row["height"] / 2 - mid_y) > max(row["height"], bbox["height"]):
+        return bbox
+    bbox["clip_left"] = center["x"] + center["width"] * .008
+    bbox["clip_right"] = center["x"] + center["width"] * .992
+    bbox["clip_top"] = (rows[index - 1]["y"] + rows[index - 1]["height"] + row["y"]) / 2 if index else center["y"]
+    bbox["clip_bottom"] = (row["y"] + row["height"] + rows[index + 1]["y"]) / 2 if index + 1 < len(rows) else center["y"] + center["height"]
+    return bbox
+
+
 def prepare_line_review_images(
     image_bytes: bytes, bbox: dict[str, float]
 ) -> tuple[list[bytes], dict[str, Any]]:
@@ -208,6 +245,7 @@ def prepare_line_review_images(
             source.load()
             image = source.convert("RGB")
             page_width, page_height = image.size
+            bbox = bound_legacy_line_crop(image_bytes, bbox)
             raw_x = bbox["x"] * page_width
             raw_y = bbox["y"] * page_height
             raw_width = max(1.0, bbox["width"] * page_width)
@@ -278,11 +316,11 @@ def prepare_line_review_images(
                     if kept:
                         tx0 = max(0, min(b[0] for b in kept) - 8)
                         tx1 = min(crop.width, max(b[2] for b in kept) + 8)
-                        # Keep the full vertically padded bbox for ordinary rows. For a
-                        # bounded red row, use complete component extents plus
-                        # a margin to reduce nearby black descenders.
+                        # Keep the full vertically padded bbox only when physical-row
+                        # limits are unavailable. Bounded rows of either colour use
+                        # complete component extents, preserving detached stack marks.
                         ty0, ty1 = 0, crop.height
-                        if red_dominant and "clip_top" in bbox:
+                        if "clip_top" in bbox:
                             ty0 = max(0, min(b[1] for b in kept) - 6)
                             ty1 = min(crop.height, max(b[3] for b in kept) + 6)
                         crop = crop.crop((tx0, ty0, tx1, ty1))
@@ -302,6 +340,7 @@ def prepare_line_review_images(
             tile_width = max(480, min(LINE_REVIEW_TILE_WIDTH, max(480, MAX_IMAGE_SIDE)))
             tiles, tile_ranges = split_enlarged_line(enlarged, tile_width)
             return tiles, {
+                "crop_version": LINE_CROP_VERSION,
                 "source_bbox": bbox,
                 "ink_color": "red" if red_dominant else "mixed",
                 "source_size": {"width": page_width, "height": page_height},
@@ -1406,7 +1445,7 @@ class Handler(BaseHTTPRequestHandler):
                 crop_pixels = metadata.get("crop_pixels", {})
                 exact_match = False
                 with Image.open(BytesIO(image_bytes)) as image:
-                    if source_size == {"width": image.width, "height": image.height} and crop_pixels:
+                    if source_size == {"width": image.width, "height": image.height} and crop_pixels and metadata.get("crop_version") == LINE_CROP_VERSION:
                         exact_match = True
                         x, y = crop_pixels["x"], crop_pixels["y"]
                         cropped = image.convert("RGB").crop((x, y, x + crop_pixels["width"], y + crop_pixels["height"]))
@@ -1420,6 +1459,9 @@ class Handler(BaseHTTPRequestHandler):
                             enlarged.crop((left, 0, right, enlarged.height)).save(output, format="PNG")
                             tiles.append(output.getvalue())
                     else:
+                        saved_bbox = metadata.get("source_bbox")
+                        if saved_bbox and source_size == {"width": image.width, "height": image.height}:
+                            bbox = saved_bbox
                         tiles, metadata = prepare_line_review_images(image_bytes, bbox)
                 self.send_json({"images": ["data:image/png;base64," + base64.b64encode(tile).decode("ascii") for tile in tiles], "review_image": metadata, "exact_match": exact_match})
                 return

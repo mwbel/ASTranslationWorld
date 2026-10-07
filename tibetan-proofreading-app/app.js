@@ -5400,7 +5400,7 @@ function createModelInputPreview(sourceLine, index) {
       if (!wrapper.isConnected || pageNum !== state.pageNum || sourceKey !== state.cacheKey) return;
       wrapper.replaceChildren();
       const note = document.createElement("small");
-      note.textContent = payload.exact_match ? "识别用单行裁剪（按左→右排列）" : "单行裁剪预览（尚未保存模型输入记录）";
+      note.textContent = payload.exact_match ? "识别用单行裁剪（按左→右排列）" : "优化后单行裁剪预览（重新识别后保存为模型输入）";
       wrapper.appendChild(note);
       const strip = document.createElement("div");
       strip.style.display = "flex";
