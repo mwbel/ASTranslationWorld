@@ -2412,3 +2412,27 @@ body.is-resizing-panes * {
   align-items: center;
   gap: 6px;
 }
+
+/* Reserve the source toggle independently of navigation's intrinsic width. */
+.viewer-pane-header {
+  position: relative;
+  flex-wrap: wrap;
+  padding-right: 66px;
+}
+.viewer-pane-header > .pane-collapse-button {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+}
+.viewer-pane-header .viewer-title-block {
+  min-width: 0;
+  max-width: 100%;
+}
+.viewer-header-actions,
+.viewer-header-actions .viewer-page-stepper {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.workspace.viewer-collapsed .viewer-pane-header > .pane-collapse-button {
+  position: static;
+}
