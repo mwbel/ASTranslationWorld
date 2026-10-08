@@ -2092,6 +2092,13 @@ body.is-resizing-panes * {
   font-weight: 900;
 }
 
+.ocr-manual-edit-inline {
+  outline: 2px solid #16803c;
+  outline-offset: 1px;
+  border-radius: 5px;
+  background-color: #ecfdf3;
+}
+
 .ocr-diff-inline {
   padding: 0 2px 1px;
   border-bottom: 3px solid #f79009;

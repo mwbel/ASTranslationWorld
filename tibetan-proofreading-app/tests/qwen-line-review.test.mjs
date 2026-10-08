@@ -76,8 +76,15 @@ for (const handler of candidateEditor.handlers.input || []) handler({});
 assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].text', ctx), 'བོད་ཡིག་');
 assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].manuallyEdited', ctx), true);
 assert.ok(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].manualErrorChars', ctx) > 0);
-assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].errorRanges.length', ctx), 1);
+assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].manualEditRanges.length', ctx), 1);
+assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].errorRanges.length', ctx), 0,
+  'manual edits must stay separate from explicitly marked error ranges');
+candidateEditor.handlers.blur[0]({});
+assert.ok(candidateEditor.children.some(node => node.className?.includes('ocr-manual-edit-inline')),
+  'edited candidate characters must render with the green manual-edit outline');
 vm.runInContext("updateIndependentReviewText('qwen',0,'བོད་')", ctx);
+assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].manualEditRanges.length', ctx), 0,
+  'restoring the original text clears the green outline range');
 console.log('Qwen candidate is directly editable and persists manual changes');
 vm.runInContext(`
   const candidateMarkup = document.createElement('div');

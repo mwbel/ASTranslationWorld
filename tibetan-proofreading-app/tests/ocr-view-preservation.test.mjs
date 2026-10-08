@@ -54,3 +54,39 @@ test('manual BDRC edits update the displayed line quality count immediately', ()
   assert.equal(vm.runInContext("getEffectiveOcrSideLines(getOcrSourceCompare(state.ocrResults.get(1)).bdrc)[0].manualErrorChars",ctx),1,
     'manual edit count must survive rebuilding normalized display rows');
 });
+
+test('manual edits persist their changed character range and render a green box', () => {
+  const ctx=context();
+  ctx.document.createElement = () => ({children: [], appendChild(node) { this.children.push(node); }});
+  ctx.document.createTextNode = (text) => ({textContent: text});
+  vm.runInContext(`
+    state.ocrResults.set(1, {source:'proofread', text:'བོད་', lines:[], compare:{
+      bdrc:{text:'བོད་', lines:[{text:'བོད་'}]},
+      llm:{text:'', lines:[]}, sharedErrors:[]
+    }});
+    updateAiOcrPanelMeta = () => {};
+    const displayedLine = getEffectiveOcrSideLines(getOcrSourceCompare(state.ocrResults.get(1)).bdrc)[0];
+    updateProofreadCompareLine('bdrc', 0, 'བོན་', displayedLine, null);
+    globalThis.manualRange = getEffectiveOcrSideLines(getOcrSourceCompare(state.ocrResults.get(1)).bdrc)[0].manualEditRanges;
+    globalThis.serializedRange = serializeResultMap(state.ocrResults)[1].compare.bdrc.lines[0].manualEditRanges;
+    globalThis.legacyRange = getManualEditRanges({manualBaselineText:'བོད་',text:'བོན་',manuallyEdited:true});
+    globalThis.legacyMarkup = document.createElement('div');
+    renderOcrLineMarkup(legacyMarkup, 'བོན་', {manualEditRanges:legacyRange});
+    globalThis.manualMarkup = document.createElement('div');
+    renderOcrLineMarkup(manualMarkup, 'བོན་', {
+      manualEditRanges: manualRange,
+      sharedErrorRanges: [{start:2,end:3}],
+    });
+  `,ctx);
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(manualRange)',ctx)),[{start:2,end:3}],
+    'the changed character range must survive rebuilding display rows');
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(serializedRange)',ctx)),[{start:2,end:3}],
+    'the changed character range must be included in saved OCR results');
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(legacyRange)',ctx)),[{start:2,end:3}],
+    'older manual edits should derive their range from the stored baseline');
+  assert.ok(vm.runInContext('legacyMarkup.children.some(node=>node.className?.includes("ocr-manual-edit-inline"))',ctx),
+    'older baseline-only edits should also render with a green box');
+  const classes=vm.runInContext('manualMarkup.children.map(node=>node.className || "")',ctx);
+  assert.ok(classes.some(value=>value.includes('ocr-manual-edit-inline')),'edited characters should receive the green manual-edit class');
+  assert.ok(classes.some(value=>value.includes('ocr-shared-error-inline')),'manual edit highlight must coexist with a red error mark');
+});

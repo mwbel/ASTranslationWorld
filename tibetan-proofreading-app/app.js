@@ -2368,6 +2368,10 @@ function serializeResultMap(map) {
           regionLineIndex: Number(line?.regionLineIndex ?? line?.region_line_index ?? 0),
         regionId: line?.regionId || line?.region_id || "",
         regionLabel: line?.regionLabel || line?.region_label || "",
+        manualBaselineText: typeof line?.manualBaselineText === "string" ? line.manualBaselineText : undefined,
+        manuallyEdited: Boolean(line?.manuallyEdited),
+        manualErrorChars: Math.max(0, Number(line?.manualErrorChars || 0)),
+        manualEditRanges: getManualEditRanges(line),
         error: Boolean(line?.error),
         missing: Boolean(line?.missing),
         diagnostic: Boolean(line?.diagnostic),
@@ -3693,6 +3697,7 @@ function normalizeOcrCompareSide(side) {
           manualBaselineText: typeof line?.manualBaselineText === "string" ? line.manualBaselineText : undefined,
           manuallyEdited: Boolean(line?.manuallyEdited),
           manualErrorChars: Math.max(0, Number(line?.manualErrorChars || 0)),
+          manualEditRanges: getManualEditRanges(line),
           index,
           error: Boolean(line?.error),
           missing: Boolean(line?.missing),
@@ -4871,7 +4876,7 @@ function renderOcrLineComparison() {
 
     const preview = document.createElement("div");
     preview.className = "ocr-line-preview";
-    renderOcrLineMarkup(preview, line.text || "");
+    renderOcrLineMarkup(preview, line.text || "", {manualEditRanges: getManualEditRanges(line)});
 
     const editor = document.createElement("textarea");
     editor.className = "ocr-line-editor";
@@ -4887,8 +4892,9 @@ function renderOcrLineComparison() {
     row.addEventListener("click", activateLine);
     editor.addEventListener("focus", activateLine);
     editor.addEventListener("input", () => {
+      updateManualEditTracking(line, editor.value || "", line.manualBaselineText ?? line.text ?? "");
       line.text = editor.value || "";
-      renderOcrLineMarkup(preview, line.text);
+      renderOcrLineMarkup(preview, line.text, {manualEditRanges: getManualEditRanges(line)});
       resizeLineEditor(editor);
       syncLineEditorsToResult(lines);
     });
@@ -5240,7 +5246,7 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
       : `${label} · ${candidate.model || "未知模型"}（可直接编辑）`;
     text.dataset.reviewProvider = provider;
     text.dataset.sourceRowIndex = String(index);
-    renderOcrLineMarkup(text, candidate.text, {sharedErrorRanges: candidate.errorRanges || [], sharedErrorTitle: `${label} 候选：人工标记的错误，需核对原图`});
+    renderOcrLineMarkup(text, candidate.text, {manualEditRanges: getManualEditRanges(candidate), sharedErrorRanges: candidate.errorRanges || [], sharedErrorTitle: `${label} 候选：人工标记的错误，需核对原图`});
     text.addEventListener("focus", () => {
       const source = getSourceLineForRow(sourceLine, bdrcLine);
       activateOcrSourceBlock(source, index, { scrollRows: false });
@@ -5254,6 +5260,7 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
         ?.find((review) => review.index === index);
       if (!current) return;
       renderOcrLineMarkup(text, current.text, {
+        manualEditRanges: getManualEditRanges(current),
         sharedErrorRanges: current.errorRanges || [],
         sharedErrorTitle: `${label} 候选：人工标记的错误，需核对原图`,
       });
@@ -5338,16 +5345,32 @@ function updateIndependentReviewText(provider, index, value) {
   if (!candidate) return false;
   const nextText = normalizeOcrTextSpacing(String(value || ""));
   const baseline = String(candidate.manualBaselineText ?? candidate.text ?? "");
-  candidate.manualBaselineText = baseline;
   candidate.text = nextText;
-  candidate.manualErrorChars = levenshteinDistance(Array.from(baseline), Array.from(nextText));
-  const changedRange = getChangedTextRange(baseline, nextText);
-  candidate.errorRanges = changedRange ? [changedRange] : [];
-  candidate.manuallyEdited = true;
+  updateManualEditTracking(candidate, nextText, baseline);
   candidate.updatedAt = new Date().toISOString();
   result.updatedAt = candidate.updatedAt;
   saveCachedResults();
   return true;
+}
+
+function updateManualEditTracking(target, nextText, baselineText = target?.manualBaselineText ?? target?.text ?? "") {
+  if (!target || typeof target !== "object") return target;
+  const baseline = String(baselineText || "");
+  const normalized = normalizeOcrTextSpacing(String(nextText || ""));
+  target.manualBaselineText = baseline;
+  target.manualErrorChars = levenshteinDistance(Array.from(baseline), Array.from(normalized));
+  const changedRange = getChangedTextRange(baseline, normalized);
+  target.manualEditRanges = changedRange ? [changedRange] : [];
+  target.manuallyEdited = true;
+  return target;
+}
+
+function getManualEditRanges(target) {
+  if (!target || typeof target !== "object") return [];
+  if (Array.isArray(target.manualEditRanges)) return normalizeTextRanges(target.manualEditRanges);
+  if (!target.manuallyEdited || typeof target.manualBaselineText !== "string") return [];
+  const changedRange = getChangedTextRange(target.manualBaselineText, target.text || "");
+  return changedRange ? [changedRange] : [];
 }
 
 function getChangedTextRange(previous, next) {
@@ -5773,6 +5796,7 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     } else {
       renderOcrLineMarkup(editor, text, {
         highlightDiff: false,
+        manualEditRanges: getManualEditRanges(line),
         sharedErrorRanges: getSharedErrorRanges(compare, side, index, text),
       });
     }
@@ -5799,6 +5823,7 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
       line.manualBaselineText = updatedLine.manualBaselineText;
       line.manuallyEdited = updatedLine.manuallyEdited;
       line.manualErrorChars = updatedLine.manualErrorChars;
+      line.manualEditRanges = updatedLine.manualEditRanges;
     }
     editor.classList.toggle("is-empty", !String(value || "").trim());
     editor.classList.toggle("is-diagnostic", isDiagnosticOcrLine(line));
@@ -5881,15 +5906,14 @@ function updateProofreadCompareLine(side, index, value, line, peerLine) {
   const normalizedValue = normalizeOcrTextSpacing(value || "");
   const targetLine = ensureProofreadLine(compare[sideKey].lines, index, getSourceLineForRow(line, peerLine));
   const previousText = String(targetLine.text || "");
-  if (typeof targetLine.manualBaselineText !== "string") targetLine.manualBaselineText = previousText;
   targetLine.text = normalizedValue;
-  targetLine.manualErrorChars = levenshteinDistance(Array.from(targetLine.manualBaselineText), Array.from(normalizedValue));
-  targetLine.manuallyEdited = true;
+  updateManualEditTracking(targetLine, normalizedValue, targetLine.manualBaselineText ?? previousText);
   if (line) {
     line.text = normalizedValue;
     line.manualBaselineText = targetLine.manualBaselineText;
     line.manuallyEdited = true;
     line.manualErrorChars = targetLine.manualErrorChars;
+    line.manualEditRanges = targetLine.manualEditRanges;
   }
   compare[sideKey].text = compare[sideKey].lines.map((item) => item.text || "").join("\n").trim();
   if (sideKey === "llm") {
@@ -6119,6 +6143,8 @@ function saveProofreadBlockChoice(index, side, card) {
       provider: candidateProvider,
       manuallyEdited: Boolean(candidate.manuallyEdited),
       manualErrorChars: Number(candidate.manualErrorChars || 0),
+      manualBaselineText: candidate.manualBaselineText,
+      manualEditRanges: getManualEditRanges(candidate),
     });
     compare.llm.text = compare.llm.lines.map((line) => line.text || "").join("\n").trim();
     compare.llm.model = candidate.model || "";
@@ -6143,6 +6169,10 @@ function saveProofreadBlockChoice(index, side, card) {
   finalLines[index] = {
     text: normalizeOcrTextSpacing(selectedLine.text || ""),
     bbox: normalizeBbox(sourceLine?.bbox) || normalizeBbox(finalLines[index]?.bbox),
+    manualBaselineText: selectedLine.manualBaselineText,
+    manuallyEdited: Boolean(selectedLine.manuallyEdited),
+    manualErrorChars: Math.max(0, Number(selectedLine.manualErrorChars || 0)),
+    manualEditRanges: getManualEditRanges(selectedLine),
     index,
   };
 
@@ -6475,6 +6505,7 @@ function renderOcrSourceRows({ lines, peerLines, rowCount, side, compare = null 
     } else {
       renderOcrLineMarkup(text, line.text || "", {
         highlightDiff: false,
+        manualEditRanges: getManualEditRanges(line),
         sharedErrorRanges: getSharedErrorRanges(compare, side, index, line.text || ""),
       });
     }
@@ -6561,6 +6592,7 @@ function getEffectiveOcrSideLines(sideData, fallbackLines = []) {
       manualBaselineText: typeof line?.manualBaselineText === "string" ? line.manualBaselineText : undefined,
       manuallyEdited: Boolean(line?.manuallyEdited),
       manualErrorChars: Math.max(0, Number(line?.manualErrorChars || 0)),
+      manualEditRanges: getManualEditRanges(line),
       model: String(line?.model || ""),
       provider: String(line?.provider || ""),
       index,
@@ -6590,12 +6622,14 @@ function renderOcrLineMarkup(container, text, options = {}) {
     .filter((cluster) => cluster.highRisk)
     .map(({ start, end }) => ({ start, end }));
   const diffRanges = options.highlightDiff ? getOcrDiffRanges(text, options.peerText || "") : [];
+  const manualEditRanges = normalizeTextRanges(options.manualEditRanges || []);
   const sharedErrorRanges = normalizeTextRanges(options.sharedErrorRanges || []);
   const boundaries = Array.from(new Set([
     0,
     text.length,
     ...highRiskRanges.flatMap((range) => [range.start, range.end]),
     ...diffRanges.flatMap((range) => [range.start, range.end]),
+    ...manualEditRanges.flatMap((range) => [range.start, range.end]),
     ...sharedErrorRanges.flatMap((range) => [range.start, range.end]),
   ])).sort((a, b) => a - b);
 
@@ -6608,8 +6642,9 @@ function renderOcrLineMarkup(container, text, options = {}) {
 
     const highRisk = highRiskRanges.some((range) => rangesOverlap(start, end, range.start, range.end));
     const different = diffRanges.some((range) => rangesOverlap(start, end, range.start, range.end));
+    const manuallyEdited = manualEditRanges.some((range) => rangesOverlap(start, end, range.start, range.end));
     const sharedError = sharedErrorRanges.some((range) => rangesOverlap(start, end, range.start, range.end));
-    if (!highRisk && !different && !sharedError) {
+    if (!highRisk && !different && !manuallyEdited && !sharedError) {
       container.appendChild(document.createTextNode(segment));
       continue;
     }
@@ -6618,11 +6653,13 @@ function renderOcrLineMarkup(container, text, options = {}) {
     mark.className = [
       highRisk ? "ocr-risk-inline" : "",
       different ? "ocr-diff-inline" : "",
+      manuallyEdited ? "ocr-manual-edit-inline" : "",
       sharedError ? "ocr-shared-error-inline" : "",
     ].filter(Boolean).join(" ");
     mark.title = [
       highRisk ? "高危：包含藏文上下加字或组合符，优先人工校对" : "",
       different ? "差异：BDRC 与 Gemini Vision 此处不一致" : "",
+      manuallyEdited ? "手动修改过的字" : "",
       sharedError ? (options.sharedErrorTitle || "错误：BDRC 与 Gemini Vision 都疑似识别错误，需人工改正") : "",
     ].filter(Boolean).join("；");
     mark.textContent = segment;
