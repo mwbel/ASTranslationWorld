@@ -35,3 +35,22 @@ test('single-pane display retains BDRC rows after visiting proofread, even with 
   assert.deepEqual(display.side.lines[1].bbox,{x:.4,y:.6,width:.2,height:.04});
   assert.equal(vm.runInContext('JSON.stringify(state.ocrResults.get(1))',ctx),before,'display must not mutate stored results');
 });
+
+test('manual BDRC edits update the displayed line quality count immediately', () => {
+  const ctx=context();
+  vm.runInContext(`
+    state.ocrResults.set(1, {source:'proofread', text:'བོད་', lines:[], compare:{
+      bdrc:{text:'བོད་', lines:[{text:'བོད་'}]},
+      llm:{text:'', lines:[]}, sharedErrors:[]
+    }});
+    updateAiOcrPanelMeta = () => {};
+    const displayedLine = getEffectiveOcrSideLines(getOcrSourceCompare(state.ocrResults.get(1)).bdrc)[0];
+    updateProofreadCompareLine('bdrc', 0, 'བོན་', displayedLine, null);
+    globalThis.displayedQuality = getLineQualityStats(displayedLine, getOcrSourceCompare(state.ocrResults.get(1)), 'bdrc', 0);
+  `,ctx);
+  const quality=JSON.parse(vm.runInContext('JSON.stringify(displayedQuality)',ctx));
+  assert.equal(quality.manualChars,1);
+  assert.equal(quality.errorChars,1);
+  assert.equal(vm.runInContext("getEffectiveOcrSideLines(getOcrSourceCompare(state.ocrResults.get(1)).bdrc)[0].manualErrorChars",ctx),1,
+    'manual edit count must survive rebuilding normalized display rows');
+});

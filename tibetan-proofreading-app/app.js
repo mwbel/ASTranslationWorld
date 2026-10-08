@@ -5794,7 +5794,12 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
         line.diagnostic = false;
       }
     }
-    updateProofreadCompareLine(side, index, value, line, peerLine);
+    const updatedLine = updateProofreadCompareLine(side, index, value, line, peerLine);
+    if (line && updatedLine) {
+      line.manualBaselineText = updatedLine.manualBaselineText;
+      line.manuallyEdited = updatedLine.manuallyEdited;
+      line.manualErrorChars = updatedLine.manualErrorChars;
+    }
     editor.classList.toggle("is-empty", !String(value || "").trim());
     editor.classList.toggle("is-diagnostic", isDiagnosticOcrLine(line));
     resizeLineEditor(editor);
@@ -5880,6 +5885,12 @@ function updateProofreadCompareLine(side, index, value, line, peerLine) {
   targetLine.text = normalizedValue;
   targetLine.manualErrorChars = levenshteinDistance(Array.from(targetLine.manualBaselineText), Array.from(normalizedValue));
   targetLine.manuallyEdited = true;
+  if (line) {
+    line.text = normalizedValue;
+    line.manualBaselineText = targetLine.manualBaselineText;
+    line.manuallyEdited = true;
+    line.manualErrorChars = targetLine.manualErrorChars;
+  }
   compare[sideKey].text = compare[sideKey].lines.map((item) => item.text || "").join("\n").trim();
   if (sideKey === "llm") {
     compare.llm.returnedLineCount = countNonEmptyOcrLines(compare.llm.lines);
@@ -5889,6 +5900,7 @@ function updateProofreadCompareLine(side, index, value, line, peerLine) {
   state.ocrResults.set(state.pageNum, result);
   saveCachedResults();
   updateAiOcrPanelMeta(compare);
+  return targetLine;
 }
 
 function markSelectedSharedError(index, card) {
@@ -6546,6 +6558,9 @@ function getEffectiveOcrSideLines(sideData, fallbackLines = []) {
       regionId: line?.regionId || line?.region_id || textLines[index]?.regionId || "",
       regionLabel: line?.regionLabel || line?.region_label || textLines[index]?.regionLabel || "",
       regionLineCount: Number(line?.regionLineCount || line?.region_line_count || textLines[index]?.regionLineCount || 0) || 0,
+      manualBaselineText: typeof line?.manualBaselineText === "string" ? line.manualBaselineText : undefined,
+      manuallyEdited: Boolean(line?.manuallyEdited),
+      manualErrorChars: Math.max(0, Number(line?.manualErrorChars || 0)),
       model: String(line?.model || ""),
       provider: String(line?.provider || ""),
       index,
