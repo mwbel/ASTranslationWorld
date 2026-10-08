@@ -64,7 +64,7 @@ vm.runInContext("updateIndependentReviewErrors('qwen',0,'བོད་',null); re
 assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].errorRanges.length',ctx),0);
 console.log('Candidate error marks persist independently; unrelated output rejected');
 const bdrcStats = vm.runInContext("getLineQualityStats({text:'བོད་',manualErrorChars:1},{sharedErrors:[]},'bdrc',0)", ctx);
-assert.equal(bdrcStats.totalChars, 4);
+assert.equal(bdrcStats.totalChars, 3);
 assert.equal(bdrcStats.errorChars, 1);
 assert.equal(bdrcStats.manualChars, 1);
 console.log('BDRC manual edits are included in per-line quality statistics');

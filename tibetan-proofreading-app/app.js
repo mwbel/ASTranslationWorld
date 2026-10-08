@@ -5358,7 +5358,10 @@ function updateManualEditTracking(target, nextText, baselineText = target?.manua
   const baseline = String(baselineText || "");
   const normalized = normalizeOcrTextSpacing(String(nextText || ""));
   target.manualBaselineText = baseline;
-  target.manualErrorChars = levenshteinDistance(Array.from(baseline), Array.from(normalized));
+  target.manualErrorChars = levenshteinDistance(
+    tokenizeOcrDiffText(baseline).map((token) => token.value),
+    tokenizeOcrDiffText(normalized).map((token) => token.value),
+  );
   const changedRange = getChangedTextRange(baseline, normalized);
   target.manualEditRanges = changedRange ? [changedRange] : [];
   target.manuallyEdited = true;
@@ -5706,12 +5709,14 @@ function createSourceBlockPreviewCanvas(sourceLine) {
 }
 
 function countErrorRanges(text, ranges) {
-  const length = Array.from(String(text || "")).length;
-  return mergeRanges((ranges || []).map((range) => ({
-    start: clamp(Number(range?.start), 0, length),
-    end: clamp(Number(range?.end), 0, length),
-  })).filter((range) => range.end > range.start))
-    .reduce((sum, range) => sum + Array.from(String(text || "")).slice(range.start, range.end).length, 0);
+  const source = String(text || "");
+  const marked = mergeRanges((ranges || []).map((range) => ({
+    start: clamp(Number(range?.start), 0, source.length),
+    end: clamp(Number(range?.end), 0, source.length),
+  })).filter((range) => range.end > range.start));
+  return tokenizeOcrDiffText(source).filter((token) => marked.some((range) => (
+    rangesOverlap(token.start, token.end, range.start, range.end)
+  ))).length;
 }
 
 function getLineQualityStats(line, compare, side, index) {
@@ -7298,15 +7303,14 @@ function getOcrResponseRequestId(raw) {
 }
 
 function countOcrCharacters(text) {
-  return Array.from(String(text || "").replace(/\s+/g, "")).length;
+  return tokenizeOcrDiffText(text).length;
 }
 
 function saveOcrQualityReview({ result, compare, pageNum, blockIndex, text, qualitySide = "llm", manualErrorChars = 0 }) {
   const metadata = getOcrQualityMetadata(compare, result, qualitySide);
   const reviewedChars = countOcrCharacters(text);
   if (!reviewedChars) return;
-  const markedErrorChars = getSharedErrorRanges(compare, qualitySide, blockIndex, text)
-    .reduce((sum, range) => sum + countOcrCharacters(String(text || "").slice(range.start, range.end)), 0);
+  const markedErrorChars = countErrorRanges(text, getSharedErrorRanges(compare, qualitySide, blockIndex, text));
   const errorChars = markedErrorChars + Math.max(0, Number(manualErrorChars) || 0);
   const matchIndex = state.ocrQualityReviews.findIndex((review) => (
     review.pageNum === pageNum &&
