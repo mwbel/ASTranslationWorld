@@ -5227,12 +5227,33 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
   if (candidate) {
     const text = document.createElement("div");
     text.className = "tibetan-text openai-review-candidate";
+    text.contentEditable = "true";
+    text.spellcheck = false;
+    text.setAttribute("role", "textbox");
+    text.setAttribute("aria-multiline", "true");
+    text.setAttribute("aria-label", `第 ${index + 1} 行 ${label}候选文字`);
+    text.title = candidate.note
+      ? `${label} · ${candidate.model || "未知模型"} · ${candidate.note}（可直接编辑）`
+      : `${label} · ${candidate.model || "未知模型"}（可直接编辑）`;
     text.dataset.reviewProvider = provider;
     text.dataset.sourceRowIndex = String(index);
     renderOcrLineMarkup(text, candidate.text, {sharedErrorRanges: candidate.errorRanges || [], sharedErrorTitle: `${label} 候选：人工标记的错误，需核对原图`});
-    text.title = candidate.note
-      ? `${label} · ${candidate.model || "未知模型"} · ${candidate.note}`
-      : `${label} · ${candidate.model || "未知模型"}`;
+    text.addEventListener("focus", () => {
+      const source = getSourceLineForRow(sourceLine, bdrcLine);
+      activateOcrSourceBlock(source, index, { scrollRows: false });
+    });
+    text.addEventListener("input", () => {
+      updateIndependentReviewText(provider, index, text.textContent || "");
+    });
+    text.addEventListener("blur", () => {
+      const current = getOcrSourceCompare(state.ocrResults.get(state.pageNum))?.[reviewKey]
+        ?.find((review) => review.index === index);
+      if (!current) return;
+      renderOcrLineMarkup(text, current.text, {
+        sharedErrorRanges: current.errorRanges || [],
+        sharedErrorTitle: `${label} 候选：人工标记的错误，需核对原图`,
+      });
+    });
     group.append(text);
   }
   button.addEventListener("click", async (event) => {
@@ -5287,6 +5308,22 @@ function validateIndependentReviewText(value) {
     throw new Error("模型返回了非藏文转录（可能是无关 JSON 或说明），未作为新候选保存。请换模型复核；原候选保留。");
   }
   return text;
+}
+
+function updateIndependentReviewText(provider, index, value) {
+  const result = state.ocrResults.get(state.pageNum);
+  const key = provider === "qwen" ? "qwenReviews" : "openaiReviews";
+  const candidate = result?.compare?.[key]?.find((review) => review.index === index);
+  if (!candidate) return false;
+  candidate.text = normalizeOcrTextSpacing(String(value || ""));
+  // Existing character ranges refer to the previous text and must not be
+  // applied after a manual edit.
+  candidate.errorRanges = [];
+  candidate.manuallyEdited = true;
+  candidate.updatedAt = new Date().toISOString();
+  result.updatedAt = candidate.updatedAt;
+  saveCachedResults();
+  return true;
 }
 
 function updateIndependentReviewErrors(provider, index, expectedText, range) {

@@ -1506,6 +1506,8 @@ body.is-resizing-panes * {
   padding: 6px;
   background: #f0f6ff;
 }
+.openai-review-candidate[contenteditable="true"] { cursor: text; outline: 1px solid transparent; }
+.openai-review-candidate[contenteditable="true"]:focus { outline: 2px solid #8b5cf6; outline-offset: 1px; background: #fff; }
 
 .ocr-source-line-actions .proofread-ai-review-button {
   min-height: 30px;

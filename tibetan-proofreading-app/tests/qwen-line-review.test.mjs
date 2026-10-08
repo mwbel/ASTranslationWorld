@@ -63,6 +63,15 @@ assert.equal(vm.runInContext("updateIndependentReviewErrors('qwen',0,'stale',{st
 vm.runInContext("updateIndependentReviewErrors('qwen',0,'བོད་',null); restoreCachedResults()",ctx);
 assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].errorRanges.length',ctx),0);
 console.log('Candidate error marks persist independently; unrelated output rejected');
+const editableCandidate = vm.runInContext("renderQwenLineReview(0,{bbox:{x:.1,y:.2,width:.4,height:.1}},null,null)", ctx);
+const candidateEditor = elements.find(node => node.className?.includes('openai-review-candidate'));
+assert.equal(candidateEditor.contentEditable, 'true');
+candidateEditor.textContent = 'བོད་ཡིག་';
+for (const handler of candidateEditor.handlers.input || []) handler({});
+assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].text', ctx), 'བོད་ཡིག་');
+assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].manuallyEdited', ctx), true);
+vm.runInContext("updateIndependentReviewText('qwen',0,'བོད་')", ctx);
+console.log('Qwen candidate is directly editable and persists manual changes');
 vm.runInContext(`
   const candidateMarkup = document.createElement('div');
   renderOcrLineMarkup(candidateMarkup, 'སྐྱ་', {sharedErrorRanges:[{start:0,end:3}]});
