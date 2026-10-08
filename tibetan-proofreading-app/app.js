@@ -5315,15 +5315,51 @@ function updateIndependentReviewText(provider, index, value) {
   const key = provider === "qwen" ? "qwenReviews" : "openaiReviews";
   const candidate = result?.compare?.[key]?.find((review) => review.index === index);
   if (!candidate) return false;
-  candidate.text = normalizeOcrTextSpacing(String(value || ""));
-  // Existing character ranges refer to the previous text and must not be
-  // applied after a manual edit.
-  candidate.errorRanges = [];
+  const nextText = normalizeOcrTextSpacing(String(value || ""));
+  const baseline = String(candidate.manualBaselineText ?? candidate.text ?? "");
+  candidate.manualBaselineText = baseline;
+  candidate.text = nextText;
+  candidate.manualErrorChars = levenshteinDistance(Array.from(baseline), Array.from(nextText));
+  const changedRange = getChangedTextRange(baseline, nextText);
+  candidate.errorRanges = changedRange ? [changedRange] : [];
   candidate.manuallyEdited = true;
   candidate.updatedAt = new Date().toISOString();
   result.updatedAt = candidate.updatedAt;
   saveCachedResults();
   return true;
+}
+
+function getChangedTextRange(previous, next) {
+  const before = Array.from(String(previous || ""));
+  const after = Array.from(String(next || ""));
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start += 1;
+  if (start === before.length && start === after.length) return null;
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1] === after[afterEnd - 1]) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+  return { start, end: afterEnd };
+}
+
+function levenshteinDistance(left, right) {
+  const a = Array.isArray(left) ? left : Array.from(String(left || ""));
+  const b = Array.isArray(right) ? right : Array.from(String(right || ""));
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= a.length; row += 1) {
+    const current = [row];
+    for (let column = 1; column <= b.length; column += 1) {
+      current[column] = Math.min(
+        current[column - 1] + 1,
+        previous[column] + 1,
+        previous[column - 1] + (a[row - 1] === b[column - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length] || 0;
 }
 
 function updateIndependentReviewErrors(provider, index, expectedText, range) {
@@ -6001,7 +6037,17 @@ function saveProofreadBlockChoice(index, side, card) {
       return;
     }
     const target = ensureProofreadLine(compare.llm.lines, index, candidate);
-    Object.assign(target, { text: candidate.text, bbox: normalizeBbox(candidate.bbox) || target.bbox, missing: false, error: false, diagnostic: false, model: candidate.model, provider: candidateProvider });
+    Object.assign(target, {
+      text: candidate.text,
+      bbox: normalizeBbox(candidate.bbox) || target.bbox,
+      missing: false,
+      error: false,
+      diagnostic: false,
+      model: candidate.model,
+      provider: candidateProvider,
+      manuallyEdited: Boolean(candidate.manuallyEdited),
+      manualErrorChars: Number(candidate.manualErrorChars || 0),
+    });
     compare.llm.text = compare.llm.lines.map((line) => line.text || "").join("\n").trim();
     compare.llm.model = candidate.model || "";
     compare.llm.provider = candidateProvider;
@@ -6032,7 +6078,14 @@ function saveProofreadBlockChoice(index, side, card) {
   result.text = finalLines.map((line) => line.text || "").join("\n").trim();
   result.compare = compare;
   if (sideKey === "llm") {
-    saveOcrQualityReview({ result, compare, pageNum: state.pageNum, blockIndex: index, text: selectedLine.text || "" });
+    saveOcrQualityReview({
+      result,
+      compare,
+      pageNum: state.pageNum,
+      blockIndex: index,
+      text: selectedLine.text || "",
+      manualErrorChars: selectedLine.manualErrorChars || 0,
+    });
   }
   result.source = "proofread";
   result.updatedAt = new Date().toISOString();
@@ -7124,12 +7177,13 @@ function countOcrCharacters(text) {
   return Array.from(String(text || "").replace(/\s+/g, "")).length;
 }
 
-function saveOcrQualityReview({ result, compare, pageNum, blockIndex, text }) {
+function saveOcrQualityReview({ result, compare, pageNum, blockIndex, text, manualErrorChars = 0 }) {
   const metadata = getAiVisionModelMetadata(compare, result);
   const reviewedChars = countOcrCharacters(text);
   if (!reviewedChars) return;
-  const errorChars = getSharedErrorRanges(compare, "llm", blockIndex, text)
+  const markedErrorChars = getSharedErrorRanges(compare, "llm", blockIndex, text)
     .reduce((sum, range) => sum + countOcrCharacters(String(text || "").slice(range.start, range.end)), 0);
+  const errorChars = markedErrorChars + Math.max(0, Number(manualErrorChars) || 0);
   const matchIndex = state.ocrQualityReviews.findIndex((review) => (
     review.pageNum === pageNum &&
     review.blockIndex === blockIndex &&
