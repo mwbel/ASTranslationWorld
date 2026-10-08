@@ -1883,7 +1883,8 @@ body.is-resizing-panes * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.proofread-line-quality {
+.proofread-editor-label > .proofread-line-quality {
+  display: inline-flex;
   color: #5b6b63;
   font-size: 11px;
   font-weight: 700;
