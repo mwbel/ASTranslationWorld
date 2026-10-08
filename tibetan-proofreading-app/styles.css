@@ -1883,6 +1883,16 @@ body.is-resizing-panes * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.proofread-line-quality {
+  color: #5b6b63;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.independent-line-quality {
+  padding: 2px 6px 6px;
+  background: #f0f6ff;
+}
 
 .proofread-editor-body {
   min-width: 0;

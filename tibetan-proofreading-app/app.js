@@ -3690,6 +3690,9 @@ function normalizeOcrCompareSide(side) {
           regionRole: line?.regionRole || line?.region_role || line?.role || "",
           regionDirection: line?.regionDirection || line?.region_direction || line?.direction || "",
           regionLineCount: Number(line?.regionLineCount || line?.region_line_count || line?.line_count || line?.lineCount || line?.lines?.length || 0) || 0,
+          manualBaselineText: typeof line?.manualBaselineText === "string" ? line.manualBaselineText : undefined,
+          manuallyEdited: Boolean(line?.manuallyEdited),
+          manualErrorChars: Math.max(0, Number(line?.manualErrorChars || 0)),
           index,
           error: Boolean(line?.error),
           missing: Boolean(line?.missing),
@@ -5152,7 +5155,7 @@ function renderReviewModelSelector(provider, index, onCatalog = null) {
       select.dataset.reviewConfigured = String(Boolean(catalog[provider]?.configured));
       if (onCatalog) onCatalog(catalog[provider]);
       select.title = provider === "qwen" && !catalog.qwen?.configured
-        ? "千问后端尚未配置 key 和对应平台的接口地址。"
+        ? "千问后端没有读取到持久配置。请在项目根目录运行：python3 tibetan-proofreading-app/configure_qwen_review.py（配置文件应为 tibetan-proofreading-app/.qwen-review.env）。"
         : (catalog[provider]?.billing_note || "模型权限及费用以服务商账号为准。");
     }).catch((error) => { select.title = `模型列表加载失败：${error.message}；当前显示默认模型。`; });
   }
@@ -5219,7 +5222,7 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
   feedback.setAttribute("role", "status");
   controls.append(button);
   const select = provider === "qwen" ? renderReviewModelSelector("qwen", index, (catalog) => {
-    if (!catalog?.configured && !button.disabled) feedback.textContent = "千问后端尚未配置 API key 和对应平台的接口地址。";
+    if (!catalog?.configured && !button.disabled) feedback.textContent = "千问后端没有读取到持久配置，请运行 configure_qwen_review.py 后重启服务。";
   }) : null;
   if (select) controls.append(select);
   group.append(controls, feedback);
@@ -5244,6 +5247,7 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
     });
     text.addEventListener("input", () => {
       updateIndependentReviewText(provider, index, text.textContent || "");
+      updateCandidateQuality();
     });
     text.addEventListener("blur", () => {
       const current = getOcrSourceCompare(state.ocrResults.get(state.pageNum))?.[reviewKey]
@@ -5254,7 +5258,24 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
         sharedErrorTitle: `${label} 候选：人工标记的错误，需核对原图`,
       });
     });
-    group.append(text);
+    const quality = document.createElement("div");
+    quality.className = "proofread-line-quality independent-line-quality";
+    const updateCandidateQuality = () => {
+      const current = getOcrSourceCompare(state.ocrResults.get(state.pageNum))?.[reviewKey]
+        ?.find((review) => review.index === index) || candidate;
+      const candidateText = String(current.text || "");
+      const totalChars = countOcrCharacters(candidateText);
+      const errorChars = Math.min(totalChars, countErrorRanges(candidateText, current.errorRanges || []));
+      const manualChars = Math.max(0, Number(current.manualErrorChars || 0));
+      quality.textContent = formatLineQualityStats({
+        totalChars,
+        errorChars: Math.max(errorChars, manualChars),
+        manualChars,
+        errorRate: totalChars ? Math.max(errorChars, manualChars) / totalChars : 0,
+      });
+    };
+    updateCandidateQuality();
+    group.append(text, quality);
   }
   button.addEventListener("click", async (event) => {
     event.stopPropagation();
@@ -5271,7 +5292,7 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
     if (select) select.disabled = true;
     feedback.textContent = `${label} 复核中…`;
     try {
-      if (select?.dataset.reviewConfigured === "false") throw new Error("千问后端尚未配置 API key 和对应平台的接口地址。");
+      if (select?.dataset.reviewConfigured === "false") throw new Error("千问后端没有读取到持久配置，请运行 configure_qwen_review.py 后重启服务。");
       const blob = await getCurrentPageImageBlob();
       if (state.pageNum !== pageNum || state.cacheKey !== sourceKey) throw new Error("页面已切换，请返回原页面重试。");
       const cropContext = makeLineCropContext();
@@ -5661,6 +5682,34 @@ function createSourceBlockPreviewCanvas(sourceLine) {
   return wrapper;
 }
 
+function countErrorRanges(text, ranges) {
+  const length = Array.from(String(text || "")).length;
+  return mergeRanges((ranges || []).map((range) => ({
+    start: clamp(Number(range?.start), 0, length),
+    end: clamp(Number(range?.end), 0, length),
+  })).filter((range) => range.end > range.start))
+    .reduce((sum, range) => sum + Array.from(String(text || "")).slice(range.start, range.end).length, 0);
+}
+
+function getLineQualityStats(line, compare, side, index) {
+  const text = String(line?.text || "");
+  const totalChars = countOcrCharacters(text);
+  const sharedRanges = getSharedErrorRanges(compare, side, index, text);
+  const manualErrorChars = Math.max(0, Number(line?.manualErrorChars || 0));
+  const markedErrorChars = countErrorRanges(text, sharedRanges);
+  const errorChars = Math.min(totalChars, Math.max(markedErrorChars, manualErrorChars));
+  return {
+    totalChars,
+    errorChars,
+    manualChars: manualErrorChars,
+    errorRate: totalChars ? errorChars / totalChars : 0,
+  };
+}
+
+function formatLineQualityStats(stats) {
+  return `共 ${stats.totalChars} 字 · 错误 ${stats.errorChars} 字 · 错误率 ${(stats.errorRate * 100).toFixed(1)}% · 手动修改 ${stats.manualChars} 字`;
+}
+
 function renderProofreadEditorGroup({ index, side, label, line, peerLine, compare }) {
   const group = document.createElement("div");
   group.className = `proofread-editor-group ${side === "llm" ? "is-ai" : "is-bdrc"}`;
@@ -5683,7 +5732,13 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     statusEl.hidden = false;
     statusEl.style.color = "#b42318";
   }
-  labelEl.append(labelTitle, labelMeta, statusEl);
+  const qualityEl = document.createElement("span");
+  qualityEl.className = "proofread-line-quality";
+  const updateQuality = () => {
+    qualityEl.textContent = formatLineQualityStats(getLineQualityStats(line, compare, side, index));
+  };
+  updateQuality();
+  labelEl.append(labelTitle, labelMeta, qualityEl, statusEl);
 
   const editor = document.createElement("div");
   editor.className = "proofread-editor proofread-result-editor";
@@ -5761,6 +5816,7 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
   editor.addEventListener("input", () => {
     userEdited = true;
     syncEditorValue(true);
+    updateQuality();
   });
   editor.addEventListener("blur", () => {
     syncEditorValue(userEdited);
@@ -5819,7 +5875,11 @@ function updateProofreadCompareLine(side, index, value, line, peerLine) {
   const sideKey = side === "bdrc" ? "bdrc" : "llm";
   const normalizedValue = normalizeOcrTextSpacing(value || "");
   const targetLine = ensureProofreadLine(compare[sideKey].lines, index, getSourceLineForRow(line, peerLine));
+  const previousText = String(targetLine.text || "");
+  if (typeof targetLine.manualBaselineText !== "string") targetLine.manualBaselineText = previousText;
   targetLine.text = normalizedValue;
+  targetLine.manualErrorChars = levenshteinDistance(Array.from(targetLine.manualBaselineText), Array.from(normalizedValue));
+  targetLine.manuallyEdited = true;
   compare[sideKey].text = compare[sideKey].lines.map((item) => item.text || "").join("\n").trim();
   if (sideKey === "llm") {
     compare.llm.returnedLineCount = countNonEmptyOcrLines(compare.llm.lines);
@@ -6084,6 +6144,7 @@ function saveProofreadBlockChoice(index, side, card) {
       pageNum: state.pageNum,
       blockIndex: index,
       text: selectedLine.text || "",
+      qualitySide: sideKey,
       manualErrorChars: selectedLine.manualErrorChars || 0,
     });
   }
@@ -7168,6 +7229,17 @@ function getAiVisionModelMetadata(compare, result) {
   };
 }
 
+function getOcrQualityMetadata(compare, result, side = "llm") {
+  if (side !== "bdrc") return getAiVisionModelMetadata(compare, result);
+  const model = String(compare?.bdrc?.model || result?.ocrProfile || "BDRC").trim() || "BDRC";
+  return {
+    model,
+    provider: "bdrc",
+    requestId: getOcrResponseRequestId(result?.raw),
+    ocrRunAt: String(compare?.bdrc?.recognizedAt || result?.updatedAt || ""),
+  };
+}
+
 function getOcrResponseRequestId(raw) {
   if (!raw || typeof raw !== "object") return "";
   return String(raw.requestId || raw.request_id || raw.id || raw.raw?.requestId || raw.raw?.request_id || raw.raw?.id || "").trim();
@@ -7177,11 +7249,11 @@ function countOcrCharacters(text) {
   return Array.from(String(text || "").replace(/\s+/g, "")).length;
 }
 
-function saveOcrQualityReview({ result, compare, pageNum, blockIndex, text, manualErrorChars = 0 }) {
-  const metadata = getAiVisionModelMetadata(compare, result);
+function saveOcrQualityReview({ result, compare, pageNum, blockIndex, text, qualitySide = "llm", manualErrorChars = 0 }) {
+  const metadata = getOcrQualityMetadata(compare, result, qualitySide);
   const reviewedChars = countOcrCharacters(text);
   if (!reviewedChars) return;
-  const markedErrorChars = getSharedErrorRanges(compare, "llm", blockIndex, text)
+  const markedErrorChars = getSharedErrorRanges(compare, qualitySide, blockIndex, text)
     .reduce((sum, range) => sum + countOcrCharacters(String(text || "").slice(range.start, range.end)), 0);
   const errorChars = markedErrorChars + Math.max(0, Number(manualErrorChars) || 0);
   const matchIndex = state.ocrQualityReviews.findIndex((review) => (
