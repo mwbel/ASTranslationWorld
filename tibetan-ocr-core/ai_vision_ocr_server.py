@@ -59,7 +59,7 @@ OPENAI_REVIEW_MODEL = os.environ.get("OPENAI_REVIEW_MODEL", "").strip()
 OPENAI_REVIEW_API_KEY = os.environ.get("OPENAI_REVIEW_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
 QWEN_REVIEW_API_KEY = os.environ.get("QWEN_REVIEW_API_KEY", "") or os.environ.get("DASHSCOPE_API_KEY", "")
 QWEN_REVIEW_BASE_URL = os.environ.get("QWEN_REVIEW_BASE_URL", "").rstrip("/")
-QWEN_REVIEW_MODELS = [item.strip() for item in os.environ.get("QWEN_REVIEW_MODELS", "qwen3.5-ocr,qwen3.8-max,qwen3.7-plus").split(",") if item.strip()]
+QWEN_REVIEW_MODELS = [item.strip() for item in os.environ.get("QWEN_REVIEW_MODELS", "qwen3.8-max,qwen3.7-plus").split(",") if item.strip()]
 GEMINI_REVIEW_MODELS = [item.strip() for item in os.environ.get("GEMINI_REVIEW_MODELS", "gemini-2.5-flash,gemini-3.1-flash-lite").split(",") if item.strip()]
 AGGREGATOR_ALLOW_FALLBACK = os.environ.get("AI_VISION_ALLOW_FALLBACK", "0").strip().lower() not in {
     "0",
@@ -192,41 +192,109 @@ def split_enlarged_line(enlarged, tile_width):
     return tiles, ranges
 
 
-LINE_CROP_VERSION = 2
+LINE_CROP_VERSION = 16
 
 
 def bound_legacy_line_crop(image_bytes, bbox):
-    """Recover physical-row limits for old cached horizontal blocks.
-
-    Sparse vertical side inscriptions must retain their native full height.
-    Detection is local and does not call an OCR/model API.
-    """
+    """Resolve a saved block to one physical row without splitting its stacks."""
     bbox = dict(bbox)
-    if cv2 is None or np is None or "clip_top" in bbox or bbox["height"] > bbox["width"]:
+    if cv2 is None or np is None or bbox["height"] > bbox["width"]:
         return bbox
     regions = detect_traditional_column_bboxes(image_bytes)
     center = next((region for region in regions if region["id"] == "center"), None)
     if not center:
+        if isinstance(bbox.get("physical_row_index"), int):
+            raise RuntimeError("中栏定位失败，无法安全恢复已保存的物理行裁剪。")
         return bbox
     mid_x = bbox["x"] + bbox["width"] / 2
     mid_y = bbox["y"] + bbox["height"] / 2
-    if not (center["x"] <= mid_x <= center["x"] + center["width"] and
-            center["y"] <= mid_y <= center["y"] + center["height"]):
+    if not center["x"] <= mid_x <= center["x"] + center["width"]:
+        if isinstance(bbox.get("physical_row_index"), int):
+            raise RuntimeError("已保存的物理行不在中栏，无法安全生成预览。")
         return bbox
-    local = merge_physical_row_fragments(detect_text_line_bboxes(crop_image_to_bbox(image_bytes, center)))
-    rows = [{"y": center["y"] + row["y"] * center["height"],
-             "height": row["height"] * center["height"]} for row in local]
-    if not rows or (len(rows) == 1 and local[0]["height"] > .65):
+    # The frame can slope across the page. Its average y coordinate must not
+    # truncate the upper marks at the right end of the first row.
+    region = dict(center)
+    region["y"] = max(0, center["y"] - center["height"] * .15)
+    region["height"] = min(1, center["y"] + center["height"] * 1.15) - region["y"]
+    local_image = crop_image_to_bbox(image_bytes, region, padding=False)
+    rows = detect_physical_text_line_bboxes(local_image, include_masks=True)
+    if not rows:
+        if isinstance(bbox.get("physical_row_index"), int):
+            raise RuntimeError("中栏物理行定位失败，无法生成可靠的单行预览。")
         return bbox
-    index = min(range(len(rows)), key=lambda i: abs(rows[i]["y"] + rows[i]["height"] / 2 - mid_y))
+    with Image.open(BytesIO(image_bytes)) as page:
+        page_width, page_height = page.size
+    ox, oy = round(region["x"] * page_width), round(region["y"] * page_height)
+    with Image.open(BytesIO(local_image)) as local:
+        width, height = local.size
+    centers = [(oy + (r["y"] + r["height"] / 2) * height) / page_height for r in rows]
+    index = min(range(len(rows)), key=lambda i: abs(centers[i] - mid_y))
+    saved_index = bbox.get("physical_row_index")
+    if isinstance(saved_index, int) and 0 <= saved_index < len(rows):
+        index = saved_index
     row = rows[index]
-    if abs(row["y"] + row["height"] / 2 - mid_y) > max(row["height"], bbox["height"]):
-        return bbox
-    bbox["clip_left"] = center["x"] + center["width"] * .008
-    bbox["clip_right"] = center["x"] + center["width"] * .992
-    bbox["clip_top"] = (rows[index - 1]["y"] + rows[index - 1]["height"] + row["y"]) / 2 if index else center["y"]
-    bbox["clip_bottom"] = (row["y"] + row["height"] + rows[index + 1]["y"]) / 2 if index + 1 < len(rows) else center["y"] + center["height"]
+    bbox.update(x=(ox + row["x"] * width) / page_width,
+                y=(oy + row["y"] * height) / page_height,
+                width=row["width"] * width / page_width,
+                height=row["height"] * height / page_height,
+                physical_row_index=index, physical_row_count=len(rows))
+    # Components are assigned to complete row bodies before cropping. This
+    # removes neighbouring ink even where sloped rows overlap in y.
+    bbox['_exclusion'] = (ox, oy, row.get('_exclusion'))
+    for key in ('clip_top', 'clip_bottom', 'crop_pad_y', 'clip_left', 'clip_right'):
+        bbox.pop(key, None)
+    # Red frame rules lie at the region edges. Keep the crop inside the
+    # middle column even when horizontal padding expands a short line.
+    bbox['clip_left'] = center['x'] + center['width'] * .01
+    bbox['clip_right'] = center['x'] + center['width'] * .99
     return bbox
+
+
+def remove_crop_frame_rules(crop):
+    """Erase long red frame strokes without changing nearby black or red glyphs."""
+    if cv2 is None or np is None:
+        return crop
+    rgb = np.asarray(crop).copy()
+    height, width = rgb.shape[:2]
+    if height < 20 or width < 40:
+        return crop
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    red = (((hsv[:, :, 0] <= 25) | (hsv[:, :, 0] >= 165)) &
+           (hsv[:, :, 1] >= 55)).astype(np.uint8)
+    if red.sum() < 30:
+        return crop
+    erase = np.zeros_like(red)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(red, 8)
+    for component in range(1, count):
+        x, y, rule_width, rule_height, _ = stats[component]
+        horizontal_rule = (rule_width >= width * .4 and rule_height <= max(8, height * .2)
+                           and min(y, height - (y + rule_height)) < height * .28)
+        vertical_rule = (rule_height >= height * .5 and rule_width <= max(8, width * .03)
+                         and min(x, width - (x + rule_width)) < width * .08)
+        if horizontal_rule or vertical_rule:
+            erase[labels == component] = 1
+    for minimum in (max(30, round(width * .3)), max(14, round(height * .45))):
+        lines = cv2.HoughLinesP(red * 255, 1, np.pi / 180, threshold=12,
+                                minLineLength=minimum, maxLineGap=max(6, round(minimum * .06)))
+        for item in lines if lines is not None else []:
+            x0, y0, x1, y1 = map(int, item[0]); dx, dy = x1-x0, y1-y0
+            horizontal = abs(dx) >= width * .3 and abs(dy) <= max(4, abs(dx) * .04)
+            vertical = abs(dy) >= height * .45 and abs(dx) <= max(4, abs(dy) * .25)
+            near_horizontal_edge = min((y0+y1)/2, height-(y0+y1)/2) < height * .28
+            near_vertical_edge = min((x0+x1)/2, width-(x0+x1)/2) < width * .08
+            if (horizontal and near_horizontal_edge) or (vertical and near_vertical_edge):
+                cv2.line(erase, (x0,y0), (x1,y1), 1,
+                         thickness=max(5, min(11, round(height * .06))))
+    if width > 1000:
+        edge = max(5, round(width * .007))
+        erase[:, :edge] = red[:, :edge]
+        erase[:, -edge:] = red[:, -edge:]
+    if erase.any():
+        paper = np.median(rgb.reshape(-1, 3), axis=0).astype(np.uint8)
+        rgb[(erase > 0) & (red > 0)] = paper
+        return Image.fromarray(rgb)
+    return crop
 
 
 def prepare_line_review_images(
@@ -246,6 +314,7 @@ def prepare_line_review_images(
             image = source.convert("RGB")
             page_width, page_height = image.size
             bbox = bound_legacy_line_crop(image_bytes, bbox)
+            exclusion = bbox.pop("_exclusion", None)
             raw_x = bbox["x"] * page_width
             raw_y = bbox["y"] * page_height
             raw_width = max(1.0, bbox["width"] * page_width)
@@ -253,7 +322,18 @@ def prepare_line_review_images(
             # Keep Tibetan stacks and red punctuation at the line edges, but do
             # not include the surrounding frame or neighbouring rows.
             pad_x = max(5, round(raw_width * 0.06))
-            pad_y = max(4, round(raw_height * 0.8))
+            # For a bounded physical row, the OCR bbox often covers only the
+            # central body of a Tibetan glyph. Expand toward the midpoint clips
+            # so detached top/bottom marks stay visible without reaching a
+            # neighbouring row.
+            pad_y = max(
+                4,
+                round(raw_height * (2.0 if "clip_top" in bbox else 0.8)),
+                round(bbox.get("crop_pad_y", 0) * page_height),
+            )
+            if exclusion is not None:
+                pad_x = 8
+                pad_y = max(6, round(raw_height * .12))
             x0 = max(0, int(round(raw_x - pad_x)))
             y0 = max(0, int(round(raw_y - pad_y)))
             x1 = min(page_width, int(round(raw_x + raw_width + pad_x)))
@@ -265,31 +345,72 @@ def prepare_line_review_images(
             if x1 <= x0 or y1 <= y0:
                 raise RuntimeError("bbox crop is empty")
             crop = image.crop((x0, y0, x1, y1))
+            if exclusion is not None and exclusion[2] is not None:
+                ox, oy, mask = exclusion
+                rgb_crop = np.array(crop)
+                background = np.median(rgb_crop.reshape(-1, 3), axis=0).astype(np.uint8)
+                ax, ay = max(x0, ox), max(y0, oy)
+                bx, by = min(x1, ox + mask.shape[1]), min(y1, oy + mask.shape[0])
+                if bx > ax and by > ay:
+                    view = rgb_crop[ay-y0:by-y0, ax-x0:bx-x0]
+                    view[mask[ay-oy:by-oy, ax-ox:bx-ox] > 0] = background
+                crop = Image.fromarray(rgb_crop)
+            crop = remove_crop_frame_rules(crop)
             # A BDRC rubric band may include a long red rule and blank paper.
             # Locate saturated red glyph components before enlargement so a
             # short inscription is not split into a dozen mostly-empty tiles.
             red_dominant = False
-            if cv2 is not None and np is not None:
+            if exclusion is None and cv2 is not None and np is not None:
                 rgb = np.asarray(crop)
                 hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
                 red = (((hsv[:, :, 0] <= 18) | (hsv[:, :, 0] >= 170)) &
                        (hsv[:, :, 1] >= 110)).astype(np.uint8)
                 gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
                 dark = (gray < 90) & (red == 0)
+                # Scanned frame rules are often pale red (below the stricter
+                # rubric-ink threshold), so use a lower threshold for crop
+                # segmentation and remove long rules from this mask.
+                red_for_glyphs = (((hsv[:, :, 0] <= 22) | (hsv[:, :, 0] >= 165)) &
+                                  (hsv[:, :, 1] >= 60)).astype(np.uint8)
+                dark = (gray < 90) & (red_for_glyphs == 0)
+                if crop.height > crop.width * 2:
+                    # Long side rules can touch black characters and merge into
+                    # one mixed-color component. Remove vertical rule strokes
+                    # from the mask before connected-component cropping.
+                        kernel_height = max(12, min(40, round(crop.height * .06)))
+                        vertical_kernel = np.ones((kernel_height, 1), dtype=np.uint8)
+                        vertical_rules = cv2.morphologyEx(red_for_glyphs, cv2.MORPH_OPEN, vertical_kernel)
+                        red_for_glyphs[vertical_rules > 0] = 0
+                        rule_columns = np.flatnonzero(
+                            vertical_rules.sum(axis=0) >= max(3, round(crop.height * .03))
+                        )
+                        edge_margin = max(8, round(crop.width * .25))
+                        for column in rule_columns:
+                            if column < edge_margin or column >= crop.width - edge_margin:
+                                # Clear separated red fragments that share the
+                                # same page-edge rule column after morphology.
+                                red_for_glyphs[:, column] = 0
+                mixed_glyph_mask = (((gray < 90) & (red_for_glyphs == 0)) | (red_for_glyphs > 0)).astype(np.uint8)
                 if red.sum() >= 40 or dark.sum() >= 40:
                     red_dominant = red.sum() > dark.sum() * 3
-                    glyph_mask = red if red_dominant else (((gray < 90) & (hsv[:, :, 1] < 110)) | (red > 0)).astype(np.uint8)
+                    glyph_mask = red_for_glyphs if red_dominant else mixed_glyph_mask
                     count, labels, stats, _ = cv2.connectedComponentsWithStats(glyph_mask, 8)
                     kept = []
                     for component in range(1, count):
                         cx, cy, cw, ch, area = stats[component]
-                        if area < 5 or cw > red.shape[1] * .65 or (cw > ch * 12) or (ch > cw * 4 and ch >= red.shape[0] * .85):
+                        if area < 5 or cw > red.shape[1] * .65 or (cw > ch * 12) or (ch > cw * 4 and ch >= red.shape[0] * .55):
                             continue
                         # Slanted/broken red side rules can survive run filtering.
                         near_edge = cx < 24 or cx + cw > crop.width - 24
                         component_hsv = hsv[cy:cy + ch, cx:cx + cw]
                         component_red = int(((component_hsv[:, :, 1] >= 60) & ((component_hsv[:, :, 0] <= 22) | (component_hsv[:, :, 0] >= 165))).sum())
-                        if "clip_left" in bbox and near_edge and ch > cw * 2 and component_red > area * .6:
+                        # Side-region crops can be only a few dozen pixels wide,
+                        # so a broken frame segment may sit well inside the crop
+                        # rather than within the fixed edge margin. In a tall
+                        # crop, discard elongated red rules wherever they occur;
+                        # actual stacked glyphs remain short connected groups.
+                        if (crop.height > crop.width * 2 and ch > cw * 2 and
+                                cw <= max(8, crop.width * .2) and component_red >= area * .45):
                             continue
                         # Ignore nearby-row components outside the requested band.
                         center_y = cy + ch / 2 + y0
@@ -313,22 +434,51 @@ def prepare_line_review_images(
                             if not (edge and gx1 - gx0 < raw_height and area < largest * .1):
                                 retained.extend(group)
                         kept = retained or kept
+                    if not kept and red_dominant:
+                        # A long red frame can dominate a narrow side crop. Once
+                        # the frame is filtered from the red-only mask, fall back
+                        # to mixed ink so black side text still gets a tight crop.
+                        # This fallback runs after the red-only candidate pass
+                        # discarded every tall red component as a frame. Prefer
+                        # the separate dark-ink mask so a touching border cannot
+                        # rejoin the frame to otherwise valid side text.
+                        glyph_mask = ((gray < 90) & (hsv[:, :, 1] < 110)).astype(np.uint8)
+                        count, labels, stats, _ = cv2.connectedComponentsWithStats(glyph_mask, 8)
+                        for component in range(1, count):
+                            cx, cy, cw, ch, area = stats[component]
+                            if area < 5 or cw > red.shape[1] * .65 or cw > ch * 12:
+                                continue
+                            component_hsv = hsv[cy:cy + ch, cx:cx + cw]
+                            component_red = int(((component_hsv[:, :, 1] >= 60) & ((component_hsv[:, :, 0] <= 22) | (component_hsv[:, :, 0] >= 165))).sum())
+                            if crop.height > crop.width * 2 and ch > cw * 2 and component_red > area * .6:
+                                continue
+                            if ch > cw * 4 and ch >= red.shape[0] * .55:
+                                continue
+                            kept.append((cx, cy, cx + cw, cy + ch))
                     if kept:
-                        tx0 = max(0, min(b[0] for b in kept) - 8)
-                        tx1 = min(crop.width, max(b[2] for b in kept) + 8)
-                        # Keep the full vertically padded bbox only when physical-row
-                        # limits are unavailable. Bounded rows of either colour use
-                        # complete component extents, preserving detached stack marks.
+                        # Tall side inscriptions sit close to the page frame;
+                        # the ordinary 8 px row margin can reintroduce that
+                        # frame even after its connected component was removed.
+                        side_padding = 1 if raw_height > raw_width * 2 else 8
+                        tx0 = max(0, min(b[0] for b in kept) - side_padding)
+                        tx1 = min(crop.width, max(b[2] for b in kept) + side_padding)
+                        # A center-row crop is already bounded by the midpoints
+                        # between physical rows. Keep that full safe band: trimming
+                        # to connected components clips detached Tibetan marks.
                         ty0, ty1 = 0, crop.height
-                        if "clip_top" in bbox:
-                            ty0 = max(0, min(b[1] for b in kept) - 6)
-                            ty1 = min(crop.height, max(b[3] for b in kept) + 6)
                         crop = crop.crop((tx0, ty0, tx1, ty1))
                         x0, x1 = int(x0 + tx0), int(x0 + tx1)
                         y0, y1 = int(y0 + ty0), int(y0 + ty1)
+            padding_pixels = 0
+            if exclusion is not None:
+                padding_pixels = max(8, round(raw_height * .12))
+                paper = tuple(int(v) for v in np.median(np.asarray(crop).reshape(-1, 3), axis=0))
+                padded = Image.new('RGB', (crop.width, crop.height + 2 * padding_pixels), paper)
+                padded.paste(crop, (0, padding_pixels))
+                crop = padded
             crop_width, crop_height = crop.size
             target_height = max(480, LINE_REVIEW_TARGET_HEIGHT)
-            if "clip_top" in bbox:
+            if "clip_top" in bbox or exclusion is not None:
                 # Keep glyphs legible without turning a short note into many tiles.
                 target_height = min(target_height, max(160, crop_height * 3))
             scale = target_height / max(1, crop_height)
@@ -341,6 +491,7 @@ def prepare_line_review_images(
             tiles, tile_ranges = split_enlarged_line(enlarged, tile_width)
             return tiles, {
                 "crop_version": LINE_CROP_VERSION,
+                "padding_pixels": padding_pixels,
                 "source_bbox": bbox,
                 "ink_color": "red" if red_dominant else "mixed",
                 "source_size": {"width": page_width, "height": page_height},
@@ -353,6 +504,19 @@ def prepare_line_review_images(
         raise
     except Exception as exc:
         raise RuntimeError(f"unable to prepare line review crop: {exc}") from exc
+
+
+def resolve_line_preview_bbox(bbox: dict[str, float], metadata: dict[str, Any], source_size: dict[str, int]) -> dict[str, float]:
+    """Reuse source coordinates, but recompute obsolete vertical crop limits."""
+    saved_bbox = metadata.get("source_bbox")
+    if not saved_bbox or metadata.get("source_size") != source_size:
+        return bbox
+    resolved = dict(saved_bbox)
+    if metadata.get("crop_version") != LINE_CROP_VERSION:
+        resolved.pop("clip_top", None)
+        resolved.pop("clip_bottom", None)
+        resolved.pop("crop_pad_y", None)
+    return resolved
 
 def find_framed_text_region(gray: Any, red_ink: Any) -> tuple[int, int] | None:
     """Find the densest nested red-frame interior, if this is a framed page."""
@@ -537,6 +701,47 @@ def _select_traditional_boundaries(
     return best[1] if best else []
 
 
+def _projection_vertical_rule_candidates(red_ink: Any) -> list[tuple[float, float]]:
+    """Recover faint side rules that Hough misses on low-contrast PDF pages."""
+    height, width = red_ink.shape[:2]
+    relaxed = red_ink.astype(np.uint8)
+    window = max(11, round(width * .007))
+    if window % 2 == 0:
+        window += 1
+    scores = cv2.GaussianBlur(relaxed.sum(axis=0).astype(np.float32).reshape(1, -1),
+                              (window, 1), 0).ravel()
+    candidates = []
+    min_gap = max(20, round(width * .012))
+    for start, end in ((round(width * .02), round(width * .30)),
+                       (round(width * .70), round(width * .995))):
+        remaining = scores[start:end].copy()
+        for _ in range(8):
+            local = int(np.argmax(remaining))
+            x = start + local
+            if remaining[local] < height * .04:
+                break
+            lo, hi = max(0, x - min_gap // 2), min(width, x + min_gap // 2 + 1)
+            support = float(relaxed[:, lo:hi].any(axis=1).mean())
+            if support >= .38:
+                candidates.append((float(x), height * support))
+            remaining[max(0, local - min_gap):min(len(remaining), local + min_gap + 1)] = 0
+    return candidates
+
+
+def _select_fallback_boundaries(clusters: list[tuple[float, float]], width: int) -> list[float]:
+    left = sorted(x for x, _ in clusters if width * .02 <= x < width * .30)
+    right = sorted(x for x, _ in clusters if width * .70 < x <= width * .995)
+    if len(left) < 2 or len(right) < 2:
+        return []
+    outer_left, inner_left, outer_right = left[0], left[-1], right[-1]
+    inner_right = next((x for x in reversed(right[:-1]) if outer_right - x >= width * .012), None)
+    if inner_right is None or inner_left - outer_left < width * .012:
+        return []
+    if inner_right - inner_left < width * .25:
+        return []
+    return [outer_left, inner_left, inner_right, outer_right]
+
+
 def detect_traditional_column_bboxes(image_bytes: bytes) -> list[dict[str, float]]:
     """Find the three text columns inside a traditional pecha page frame.
 
@@ -559,9 +764,7 @@ def detect_traditional_column_bboxes(image_bytes: bytes) -> list[dict[str, float
     hue, saturation, _ = cv2.split(hsv)
     red_ink = (saturation >= 80) & ((hue <= 22) | (hue >= 165))
     frame_region = find_framed_text_region(gray, red_ink)
-    if not frame_region:
-        return []
-    y0, y1 = frame_region
+    y0, y1 = frame_region if frame_region else (0, height)
 
     # LSD finds both red rules and dark rules after scanning/deskewing. Keep
     # lines that cross most of the text frame, then cluster duplicate edges.
@@ -592,7 +795,26 @@ def detect_traditional_column_bboxes(image_bytes: bytes) -> list[dict[str, float
         + _red_vertical_rule_candidates(red_ink, y0, y1),
         max(10.0, width * 0.012),
     )
-    boundaries = _select_traditional_boundaries(clusters, width)
+    boundaries = _select_traditional_boundaries(clusters, width) if frame_region else []
+    if len(boundaries) != 4:
+        # The usual detector depends on complete red frame bands. Several
+        # scanned pages have broken bands but still show two long side rules
+        # on each side. Recover only those high-coverage margin rules.
+        relaxed_red = (saturation >= 55) & ((hue <= 25) | (hue >= 165))
+        fallback = _cluster_positions(
+            _red_vertical_rule_candidates(relaxed_red, 0, height)
+            + _projection_vertical_rule_candidates(relaxed_red),
+            max(8.0, width * .006),
+        )
+        boundaries = _select_fallback_boundaries(fallback, width)
+        if len(boundaries) == 4 and not frame_region:
+            center_ink = gray[:, round(boundaries[1]):round(boundaries[2])] < 130
+            density = center_ink.mean(axis=1)
+            active = np.flatnonzero(density > .002)
+            if active.size:
+                margin = max(8, round(height * .025))
+                y0 = max(0, int(active[0]) - margin)
+                y1 = min(height, int(active[-1]) + margin)
     if len(boundaries) != 4:
         return []
     if not (boundaries[0] < boundaries[1] < boundaries[2] < boundaries[3]):
@@ -616,6 +838,103 @@ def detect_traditional_column_bboxes(image_bytes: bytes) -> list[dict[str, float
             "height": round(max(0.0, bottom - top), 6),
         })
     return regions
+
+
+def detect_physical_text_line_bboxes(image_bytes, include_masks=False):
+    """Find row bodies by density peaks, keeping detached Tibetan stack marks.
+
+    A nonzero projection is not a line boundary: slanted neighbouring rows can
+    overlap vertically, while detached marks can create gaps inside one row.
+    """
+    if cv2 is None or np is None:
+        return []
+    image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return []
+    height, width = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = ((gray < 135) | ((hsv[:, :, 1] > 100) &
+            ((hsv[:, :, 0] < 22) | (hsv[:, :, 0] > 165)))).astype(np.uint8)
+    # Remove connected frame rules, including slanted rules. Do not erase a
+    # whole scanline just because one long ink run occurs on it.
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    components = []
+    accepted = np.zeros(count, dtype=np.uint8)
+    for label, (x, y, w, h, area) in enumerate(stats[1:], 1):
+        red_fraction = float(((hsv[y:y+h, x:x+w, 1] > 100) &
+                              ((hsv[y:y+h, x:x+w, 0] < 22) | (hsv[y:y+h, x:x+w, 0] > 165))).mean())
+        rule = red_fraction > .35 and (w > h * 8 or h > w * 4)
+        if area >= max(3, height * .015) and w <= width * .55 and h <= height * .8 and not rule:
+            accepted[label] = 1
+            components.append((label, int(x), int(y), int(w), int(h)))
+    mask = accepted[labels]
+    margin = max(1, round(width * .025))
+    density = mask[:, margin:width - margin].sum(axis=1).astype(np.float64)
+    smooth = cv2.GaussianBlur(density.reshape(-1, 1), (1, 0),
+                             sigmaX=0, sigmaY=max(2, height * .015)).ravel()
+    if not smooth.size or smooth.max() < 3:
+        return []
+    candidates = [i for i in range(1, height - 1)
+                  if smooth[i] > smooth[i - 1] and smooth[i] >= smooth[i + 1]]
+    peaks = []
+    for i in sorted(candidates, key=lambda i: smooth[i], reverse=True):
+        if any(abs(i - old) < max(8, height * .065) for old in peaks):
+            continue
+        left = i - 1
+        while left > 0 and smooth[left] <= smooth[i]:
+            left -= 1
+        right = i + 1
+        while right < height - 1 and smooth[right] <= smooth[i]:
+            right += 1
+        prominence = smooth[i] - max(smooth[left:i + 1].min(), smooth[i:right + 1].min())
+        if prominence >= max(3, smooth.max() * .065):
+            peaks.append(i)
+    peaks.sort()
+    if not peaks:
+        return []
+    cuts = [0] + [a + int(np.argmin(smooth[a:b + 1]))
+                  for a, b in zip(peaks, peaks[1:])] + [height]
+    # Follow local valleys across x: a horizontal cut can cross the top of a
+    # sloping row at one end and the preceding row at the other end.
+    local_density = cv2.boxFilter(mask.astype(np.float32), -1,
+                                 (max(31, round(width * .09)), max(3, round(height * .015))))
+    seams = [np.zeros(width, dtype=np.float32)]
+    for left, right in zip(peaks, peaks[1:]):
+        start = round(left + (right - left) * .22)
+        end = max(start + 1, round(right - (right - left) * .22))
+        seam = start + np.argmin(local_density[start:end], axis=0)
+        seam = cv2.GaussianBlur(seam.astype(np.float32).reshape(1, -1), (0, 1),
+                                sigmaX=max(2, width * .01)).ravel()
+        seams.append(seam)
+    seams.append(np.full(width, height, dtype=np.float32))
+    groups = [[] for _ in peaks]
+    for component in components:
+        _, x, y, w, h = component
+        if h > height * .45:
+            continue
+        center = y + h / 2
+        cx = min(width - 1, x + w // 2)
+        row = next((i for i in range(len(peaks)) if seams[i][cx] <= center < seams[i + 1][cx]), len(peaks) - 1)
+        groups[row].append(component)
+    rows = []
+    for i, group in enumerate(groups):
+        if not group:
+            continue
+        x0 = min(c[1] for c in group); x1 = max(c[1] + c[3] for c in group)
+        y0 = min(c[2] for c in group); y1 = max(c[2] + c[4] for c in group)
+        row = {'x': x0 / width, 'y': y0 / height,
+                     'width': (x1 - x0) / width, 'height': (y1 - y0) / height,
+                     'clip_top': cuts[i] / height, 'clip_bottom': cuts[i + 1] / height}
+        if include_masks:
+            top, bottom = seams[i].copy(), seams[i + 1].copy()
+            for _, x, y, w, h in group:
+                top[x:x+w] = np.minimum(top[x:x+w], y - 2)
+                bottom[x:x+w] = np.maximum(bottom[x:x+w], y + h + 2)
+            yy = np.arange(height)[:, None]
+            row['_exclusion'] = ((yy < top[None, :]) | (yy >= bottom[None, :])).astype(np.uint8)
+        rows.append(row)
+    return rows
 
 
 def detect_text_line_bboxes(image_bytes: bytes) -> list[dict[str, float]]:
@@ -810,15 +1129,15 @@ def attach_layout_bboxes(
     return lines, boxes
 
 
-def crop_image_to_bbox(image_bytes: bytes, bbox: dict[str, float]) -> bytes:
+def crop_image_to_bbox(image_bytes: bytes, bbox: dict[str, float], padding: bool = True) -> bytes:
     """Crop a normalized region while retaining a small border for glyphs."""
     if Image is None:
         return image_bytes
     with Image.open(BytesIO(image_bytes)) as image:
         image.load()
         width, height = image.size
-        pad_x = max(3, round(width * 0.008))
-        pad_y = max(3, round(height * 0.012))
+        pad_x = max(3, round(width * 0.008)) if padding else 0
+        pad_y = max(3, round(height * 0.012)) if padding else 0
         x0 = max(0, round(bbox["x"] * width) - pad_x)
         y0 = max(0, round(bbox["y"] * height) - pad_y)
         x1 = min(width, round((bbox["x"] + bbox["width"]) * width) + pad_x)
@@ -829,12 +1148,12 @@ def crop_image_to_bbox(image_bytes: bytes, bbox: dict[str, float]) -> bytes:
         return output.getvalue()
 
 
-def merge_physical_row_fragments(boxes):
+def merge_physical_row_fragments(boxes, max_gap=0.02):
     """Match BDRC's physical-row merging without importing its model runtime."""
     merged = []
     for raw in sorted(boxes, key=lambda box: box["y"]):
         box = dict(raw)
-        if merged and box["y"] - (merged[-1]["y"] + merged[-1]["height"]) <= 0.02:
+        if merged and box["y"] - (merged[-1]["y"] + merged[-1]["height"]) <= max_gap:
             previous = merged[-1]
             right = max(previous["x"] + previous["width"], box["x"] + box["width"])
             bottom = max(previous["y"] + previous["height"], box["y"] + box["height"])
@@ -868,9 +1187,13 @@ def call_traditional_region_ocr(
     """Locate physical rows first; only enlarged row images reach Gemini."""
     blocks = []
     models = []
-    for region in regions:
-        crop = crop_image_to_bbox(image_bytes, region)
-        local_boxes = merge_physical_row_fragments(detect_text_line_bboxes(crop)) if region["id"] == "center" else detect_sparse_side_bbox(crop)
+    for original_region in regions:
+        region = dict(original_region)
+        if region['id'] == 'center':
+            region['y'] = max(0, original_region['y'] - original_region['height'] * .15)
+            region['height'] = min(1, original_region['y'] + original_region['height'] * 1.15) - region['y']
+        crop = crop_image_to_bbox(image_bytes, region, padding=False)
+        local_boxes = detect_physical_text_line_bboxes(crop) if region["id"] == "center" else detect_sparse_side_bbox(crop)
         boxes = [{
                 "x": region["x"] + box["x"] * region["width"],
                 "y": region["y"] + box["y"] * region["height"],
@@ -887,8 +1210,8 @@ def call_traditional_region_ocr(
             # Limit vertical padding at neighbouring row midpoints.
             if region["id"] == "center":
                 box = dict(box)
-                box["clip_left"] = region["x"] + region["width"] * .008
-                box["clip_right"] = region["x"] + region["width"] * .992
+                box["clip_left"] = region["x"] + region["width"] * .01
+                box["clip_right"] = region["x"] + region["width"] * .99
                 box["clip_top"] = (boxes[index - 1]["y"] + boxes[index - 1]["height"] + box["y"]) / 2 if index else region["y"]
                 box["clip_bottom"] = (box["y"] + box["height"] + boxes[index + 1]["y"]) / 2 if index + 1 < len(boxes) else region["y"] + region["height"]
             try:
@@ -1331,6 +1654,7 @@ def health_payload() -> dict[str, Any]:
 
         return {
             "ok": upstream_ok,
+            "line_crop_version": LINE_CROP_VERSION,
             "model": MODEL,
             "models": AGGREGATOR_MODELS or [MODEL],
             "allow_fallback": AGGREGATOR_ALLOW_FALLBACK,
@@ -1345,6 +1669,7 @@ def health_payload() -> dict[str, Any]:
         }
     return {
         "ok": True,
+        "line_crop_version": LINE_CROP_VERSION,
         "model": MODEL,
         "base_url": BASE_URL,
         "upstream": chat_completions_url(),
@@ -1445,7 +1770,7 @@ class Handler(BaseHTTPRequestHandler):
                 crop_pixels = metadata.get("crop_pixels", {})
                 exact_match = False
                 with Image.open(BytesIO(image_bytes)) as image:
-                    if source_size == {"width": image.width, "height": image.height} and crop_pixels and metadata.get("crop_version") == LINE_CROP_VERSION:
+                    if source_size == {"width": image.width, "height": image.height} and crop_pixels and metadata.get("crop_version") == LINE_CROP_VERSION and "physical_row_index" not in metadata.get("source_bbox", {}):
                         exact_match = True
                         x, y = crop_pixels["x"], crop_pixels["y"]
                         cropped = image.convert("RGB").crop((x, y, x + crop_pixels["width"], y + crop_pixels["height"]))
@@ -1459,9 +1784,12 @@ class Handler(BaseHTTPRequestHandler):
                             enlarged.crop((left, 0, right, enlarged.height)).save(output, format="PNG")
                             tiles.append(output.getvalue())
                     else:
-                        saved_bbox = metadata.get("source_bbox")
-                        if saved_bbox and source_size == {"width": image.width, "height": image.height}:
-                            bbox = saved_bbox
+                        # Old preview metadata can carry vertical limits that
+                        # already cut Tibetan marks. Recompute those limits on
+                        # a version change while retaining source coordinates.
+                        bbox = resolve_line_preview_bbox(
+                            bbox, metadata, {"width": image.width, "height": image.height}
+                        )
                         tiles, metadata = prepare_line_review_images(image_bytes, bbox)
                 self.send_json({"images": ["data:image/png;base64," + base64.b64encode(tile).decode("ascii") for tile in tiles], "review_image": metadata, "exact_match": exact_match})
                 return
@@ -1527,6 +1855,8 @@ def resolve_saved_review_bbox(image_bytes, bbox, metadata):
             for key in ("clip_left", "clip_right", "clip_top", "clip_bottom"):
                 if key in saved_bbox:
                     bbox[key] = max(0.0, min(1.0, float(saved_bbox[key])))
+            if metadata.get("crop_version") == LINE_CROP_VERSION and isinstance(saved_bbox.get("physical_row_index"), int):
+                bbox["physical_row_index"] = saved_bbox["physical_row_index"]
     return bbox
 
 

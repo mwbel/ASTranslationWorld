@@ -4,7 +4,7 @@ import vm from 'node:vm';
 const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
 const source=app.slice(app.indexOf('const lineCropRequests ='),app.indexOf('function createModelInputPreview('));
 const storage=new Map();let calls=0;
-const meta={crop_version:2,source_size:{width:100,height:20},source_bbox:{x:0,y:0,width:1,height:1},crop_pixels:{x:0,y:0,width:100,height:20},review_size:{width:500,height:100},tile_ranges:[[0,500]]};
+const meta={crop_version:16,source_size:{width:100,height:20},source_bbox:{x:0,y:0,width:1,height:1},crop_pixels:{x:0,y:0,width:100,height:20},review_size:{width:500,height:100},tile_ranges:[[0,500]]};
 const context={cacheKey:'doc-a',pageNum:1,dpi:260,profile:'traditional',endpoint:'local/line-review'};
 const line={bbox:{x:0,y:0,width:1,height:1}};
 function boot(){
@@ -19,6 +19,7 @@ function boot(){
 let ctx=boot();
 const first=await ctx.getCachedLineCrop(line,0,null,context);
 assert.equal(calls,1);assert.equal(first.modelInput,undefined);
+assert.match(ctx.makeLineCropCacheKey(line,0,context),/row-crop-v16/);
 ctx=boot(); // A new browser lifetime, same persistent storage.
 await ctx.getCachedLineCrop(line,0,null,context);assert.equal(calls,1);
 await ctx.saveModelInputCrop(line,0,meta,context,'gemini','test',new Blob(['page']));

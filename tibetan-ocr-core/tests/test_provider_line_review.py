@@ -78,16 +78,16 @@ class ProviderReviewTests(unittest.TestCase):
                 server.call_qwen_line_review(b'', '', {}, 'unknown-model')
             with patch.object(server, 'QWEN_REVIEW_API_KEY', ''):
                 with self.assertRaisesRegex(RuntimeError, '未配置'):
-                    server.call_qwen_line_review(b'', '', {}, 'qwen3.5-ocr')
+                    server.call_qwen_line_review(b'', '', {}, 'qwen3.8-max')
             with patch.object(server, 'QWEN_REVIEW_API_KEY', 'test-only'), patch.object(server, 'QWEN_REVIEW_BASE_URL', 'https://example.com/v1'):
                 with self.assertRaisesRegex(RuntimeError, '官方 HTTPS'):
-                    server.call_qwen_line_review(b'', '', {}, 'qwen3.5-ocr')
+                    server.call_qwen_line_review(b'', '', {}, 'qwen3.8-max')
             request.assert_not_called()
 
     def test_truncated_qwen_is_rejected(self):
         with patch.object(server, 'QWEN_REVIEW_API_KEY', 'test-only'), patch.object(server, 'QWEN_REVIEW_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'), patch.object(server, 'prepare_line_review_images', return_value=([b'png'], {})), patch.object(server, 'post_json', return_value={'choices': [{'finish_reason': 'length', 'message': {'content': 'བོད་'}}]}):
             with self.assertRaisesRegex(RuntimeError, '完整'):
-                server.call_qwen_line_review(b'', '', {}, 'qwen3.5-ocr')
+                server.call_qwen_line_review(b'', '', {}, 'qwen3.8-max')
 
     def test_transcript_rejects_unrelated_json_and_preserves_tibetan(self):
         for value in ['```text\n{"vin码":"se72k210400000000000000"}\n```', 'No text found', '{"text":"བོད་"}']:

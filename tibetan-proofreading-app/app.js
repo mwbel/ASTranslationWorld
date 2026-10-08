@@ -1,7 +1,7 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
 const APP_BUILD_ID = "20261007-line-crop-v24";
-const REVIEW_MODEL_DEFAULTS = { qwen: ["qwen3.5-ocr", "qwen3.8-max", "qwen3.7-plus"], gemini: ["gemini-2.5-flash", "gemini-3.1-flash-lite"] };
+const REVIEW_MODEL_DEFAULTS = { qwen: ["qwen3.8-max", "qwen3.7-plus"], gemini: ["gemini-2.5-flash", "gemini-3.1-flash-lite"] };
 const reviewCatalogRequests = new Map();
 const SOURCE_LAYOUT_VERSION = 4;
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
@@ -5183,7 +5183,10 @@ function renderReviewModelSelector(provider, index, onCatalog = null) {
   const preferenceKey = `tibetan-proofreading-app:review-model:${provider}:${state.cacheKey}:${state.pageNum}:${index}`;
   let preferred = "";
   try { preferred = window.localStorage.getItem(preferenceKey) || ""; } catch (_) { /* storage optional */ }
-  const fill = (models) => {
+  const fill = (availableModels) => {
+    const models = provider === "qwen"
+      ? availableModels.filter((model) => model !== "qwen3.5-ocr")
+      : availableModels;
     const chosen = select.value || preferred;
     select.replaceChildren();
     for (const model of models) {
@@ -5508,6 +5511,8 @@ function renderProofreadSourcePanel(sourceLine, index) {
   const panel = document.createElement("div");
   panel.className = "proofread-source-panel";
   panel.dataset.sourceRowIndex = String(index);
+  const isTraditionalSide = getSelectedOcrProfile().id === "traditional"
+    && ["left", "right", "左侧", "右侧"].includes(sourceLine?.regionId || sourceLine?.regionLabel);
 
   const header = document.createElement("div");
   header.className = "proofread-source-header";
@@ -5518,16 +5523,19 @@ function renderProofreadSourcePanel(sourceLine, index) {
   title.textContent = sourceLine?.bboxApproximate
     ? `${regionLabel}原文 block ${String(index + 1).padStart(2, "0")} 预览（合并定位）${regionCountLabel}`
     : `${regionLabel}原文 block ${String(index + 1).padStart(2, "0")} 预览${regionCountLabel}`;
-  header.append(title, renderSourcePreviewScaleControls());
+  header.append(title);
+  if (!isTraditionalSide) header.append(renderSourcePreviewScaleControls());
   panel.appendChild(header);
 
-  const preview = sourceLine?.estimated ? null : createModelInputPreview(sourceLine, index);
+  const preview = sourceLine?.estimated || isTraditionalSide ? null : createModelInputPreview(sourceLine, index);
   if (preview) {
     panel.classList.add("has-preview");
     panel.appendChild(preview);
   } else {
     const fallback = document.createElement("span");
-    fallback.textContent = sourceLine?.estimated
+    fallback.textContent = isTraditionalSide
+      ? "左右侧文字保留识别结果；单行裁剪预览仅显示中栏。"
+      : sourceLine?.estimated
       ? "暂无可靠定位坐标，请在左栏查看整页原文。"
       : "当前 block 没有可用坐标预览，可在左栏查看整页原文。";
     panel.appendChild(fallback);
@@ -5578,7 +5586,7 @@ function makeLineCropContext() {
 
 function makeLineCropCacheKey(sourceLine, index, context) {
   return JSON.stringify([context.cacheKey, context.pageNum, index, context.dpi,
-    context.profile, context.endpoint, normalizeBbox(sourceLine.bbox), "row-crop-v2"]);
+    context.profile, context.endpoint, normalizeBbox(sourceLine.bbox), "row-crop-v16"]);
 }
 
 function sameLineCropMetadata(a, b) {
@@ -5617,8 +5625,8 @@ async function getCachedLineCrop(sourceLine, index, metadata, context, blob = nu
   const key = makeLineCropCacheKey(sourceLine, index, context);
   let cached = null;
   try { cached = await accessLineCropCache(key); } catch { /* Preview can still render. */ }
-  const currentInput = metadata?.crop_version === 2;
-  if (cached?.payload?.images?.length && (!currentInput || sameLineCropMetadata(metadata, cached.payload.review_image))) {
+  const currentInput = metadata?.crop_version === 16;
+  if (cached?.payload?.review_image?.crop_version === 16 && cached?.payload?.images?.length && (!currentInput || sameLineCropMetadata(metadata, cached.payload.review_image))) {
     return cached;
   }
   if (lineCropRequests.has(key)) return lineCropRequests.get(key);
@@ -5633,6 +5641,7 @@ async function getCachedLineCrop(sourceLine, index, metadata, context, blob = nu
     const response = await fetch(endpoint, { method: "POST", body: data });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    if (payload.review_image?.crop_version !== 16) throw new Error("裁剪服务尚未更新，请重启本地服务后重试");
     const entry = { payload, savedAt: new Date().toISOString(), context, modelInputs: cached?.modelInputs || {}, ...(cached?.modelInput ? { modelInput: cached.modelInput } : {}) };
     try { await accessLineCropCache(key, entry); }
     catch (error) { entry.cacheError = error.message; }
@@ -5693,6 +5702,7 @@ function createModelInputPreview(sourceLine, index) {
       const strip = document.createElement("div");
       strip.style.display = "flex";
       strip.style.width = "max-content";
+      let previewHeight = 0;
       for (const [tileIndex, url] of (payload.images || []).entries()) {
         const img = document.createElement("img");
         img.src = url;
@@ -5702,18 +5712,56 @@ function createModelInputPreview(sourceLine, index) {
         const baseHeight = shortLine
           ? Math.min(160, Math.max(48, (wrapper.clientWidth - 24) * size.height / size.width))
           : 160;
-        img.style.height = `${baseHeight * (Number(state.sourcePreviewScale) || 1)}px`;
+        const displayHeight = baseHeight * (Number(state.sourcePreviewScale) || 1);
+        img.style.height = `${displayHeight}px`;
+        previewHeight = Math.max(previewHeight, displayHeight);
         img.style.width = "auto";
         img.style.maxWidth = "none";
         strip.appendChild(img);
       }
+      wrapper.style.height = "auto";
+      wrapper.style.minHeight = `${Math.ceil(previewHeight + 38)}px`;
+      wrapper.style.overflowY = "visible";
+      strip.dataset.cropStrip = "true";
       wrapper.appendChild(strip);
+      const rowIndex = payload.review_image?.source_bbox?.physical_row_index;
+      if (Number.isInteger(rowIndex)) {
+        wrapper.dataset.physicalRowKey = JSON.stringify([payload.review_image.source_size, rowIndex]);
+        wrapper.dataset.blockIndex = String(index);
+        wrapper.dataset.previewHeight = wrapper.style.minHeight;
+        mergeDuplicateSourcePreviews(wrapper.closest("#ocrLineCompare"));
+      }
     } catch (error) {
       wrapper.textContent = `裁剪预览失败：${error.message}`;
     }
   };
   window.setTimeout(() => { if (wrapper.isConnected) void load(); }, 0);
   return wrapper;
+}
+
+function mergeDuplicateSourcePreviews(root) {
+  if (!root) return;
+  const owners = new Map();
+  const previews = [...root.querySelectorAll("[data-physical-row-key]")]
+    .sort((a, b) => Number(a.dataset.blockIndex) - Number(b.dataset.blockIndex));
+  for (const preview of previews) {
+    const owner = owners.get(preview.dataset.physicalRowKey);
+    const strip = preview.querySelector("[data-crop-strip]");
+    let note = preview.querySelector("[data-duplicate-source]");
+    if (!note) {
+      note = document.createElement("p");
+      note.dataset.duplicateSource = "true";
+      preview.appendChild(note);
+    }
+    note.hidden = !owner;
+    if (owner) {
+      note.textContent = `与 block ${String(Number(owner.dataset.blockIndex) + 1).padStart(2, "0")} 对应同一原文行，已合并预览；下方识别文字保留供核对。`;
+    } else {
+      owners.set(preview.dataset.physicalRowKey, preview);
+    }
+    if (strip) strip.style.display = owner ? "none" : "flex";
+    preview.style.minHeight = owner ? "0" : preview.dataset.previewHeight;
+  }
 }
 
 function createSourceBlockPreviewCanvas(sourceLine) {
@@ -5815,13 +5863,13 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     statusEl.hidden = false;
     statusEl.style.color = "#b42318";
   }
-  const qualityEl = document.createElement("span");
-  qualityEl.className = "proofread-line-quality";
+  const qualityEl = document.createElement("div");
+  qualityEl.className = "proofread-line-quality proofread-result-quality";
   const updateQuality = () => {
     qualityEl.textContent = formatLineQualityStats(getLineQualityStats(line, compare, side, index));
   };
   updateQuality();
-  labelEl.append(labelTitle, labelMeta, qualityEl, statusEl);
+  labelEl.append(labelTitle, labelMeta, statusEl);
 
   const editor = document.createElement("div");
   editor.className = "proofread-editor proofread-result-editor";
@@ -5835,7 +5883,7 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
   editor.dataset.sourceRowIndex = String(index);
   const editorBody = document.createElement("div");
   editorBody.className = "proofread-editor-body";
-  editorBody.appendChild(editor);
+  editorBody.append(editor, qualityEl);
 
   let userEdited = false;
   const getEditorText = () => editor.textContent || "";

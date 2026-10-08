@@ -1873,7 +1873,7 @@ body.is-resizing-panes * {
   gap: 0;
   background: #f8fbff;
 }
-.proofread-independent-label { color: #244f7a; background: #f4f7fc; flex-wrap: wrap; }
+.proofread-independent-label { color: #244f7a; background: #f4f7fc; }
 .proofread-independent-label .review-provider-controls { display: inline-flex; }
 .proofread-independent-content { width: 100%; background: #fff; }
 .proofread-independent-content .openai-review-feedback { padding: 0 12px; }
@@ -1926,6 +1926,13 @@ body.is-resizing-panes * {
 .independent-line-quality {
   padding: 2px 6px 6px;
   background: #f0f6ff;
+}
+.proofread-result-quality {
+  padding: 2px 16px 10px;
+  color: #5b6b63;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: normal;
 }
 
 .proofread-editor-body {
@@ -2447,8 +2454,15 @@ body.is-resizing-panes * {
   }
 }
 
-/* Keep per-block Gemini review beside the recognition heading. */
-.proofread-editor-label { flex-wrap: wrap; }
+/* Keep each model's selector and error controls in the same horizontal row. */
+.proofread-model-section .proofread-editor-label {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.proofread-model-section .proofread-editor-label > strong,
+.proofread-model-section .review-provider-controls { flex: 0 0 auto; }
+.proofread-model-section .review-provider-controls { flex-wrap: nowrap; }
 .proofread-editor-label .review-in-heading { margin-left: 0; font-weight: 400; }
 .proofread-editor-label .review-in-heading .review-feedback:empty { display: none; }
 
