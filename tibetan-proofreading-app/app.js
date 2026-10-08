@@ -5004,12 +5004,7 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
 
   const options = document.createElement("div");
   options.className = "proofread-options proofread-block-actions";
-  options.append(
-    renderQwenLineReview(index, sourceLine, bdrcLine, aiLine),
-    renderOpenAiLineReview(index, sourceLine, bdrcLine, aiLine),
-    renderSharedErrorActionGroup(index, card),
-    saveButton,
-  );
+  options.append(saveButton);
   const choiceSelect = renderProofreadChoiceSelect(
     index,
     savedSide,
@@ -5042,6 +5037,13 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
   const geminiReview = renderAiVisionLineReviewButton(index, card, sourceLine, bdrcLine, aiLine);
   geminiReview.classList.add("review-in-heading");
   reviewHeader.insertBefore(geminiReview, reviewHeader.querySelector(".proofread-editor-status"));
+  stack.querySelectorAll(".proofread-editor-group").forEach((group) => {
+    decorateProofreadModelSection(group, index, group.classList.contains("is-bdrc") ? "bdrc" : "llm", card);
+  });
+  stack.append(
+    decorateIndependentProofreadModelSection(renderQwenLineReview(index, sourceLine, bdrcLine, aiLine), index, "qwen", card),
+    decorateIndependentProofreadModelSection(renderOpenAiLineReview(index, sourceLine, bdrcLine, aiLine), index, "openai", card),
+  );
 
   const activate = () => {
     if (!hasPreciseSourceLine) return;
@@ -5110,14 +5112,67 @@ function renderProofreadChoiceSelect(index, savedSide, candidateLabel = "Gemini 
   return control;
 }
 
-function renderSharedErrorActionGroup(index, card) {
+function renderSharedErrorActionGroup(index, card, provider) {
   const group = document.createElement("div");
   group.className = "proofread-inline-action-group";
-  group.setAttribute("aria-label", "标错操作");
+  group.setAttribute("aria-label", `${proofreadModelName(provider)}标错操作`);
   group.append(
-    renderClearSharedErrorButton(index, card),
-    renderSharedErrorButton(index, card),
+    renderClearSharedErrorButton(index, card, provider),
+    renderSharedErrorButton(index, card, provider),
   );
+  return group;
+}
+
+const collapsedProofreadModels = new Set();
+
+function proofreadModelName(provider) {
+  return {bdrc:"BDRC", llm:"Gemini Vision", qwen:"千问", openai:"OpenAI"}[provider] || provider;
+}
+
+function makeProofreadModelToggle(index, provider, content) {
+  const key = JSON.stringify([state.cacheKey, state.pageNum, index, provider]);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost-button compact proofread-model-toggle";
+  button.setAttribute("aria-label", `折叠${proofreadModelName(provider)}识别结果`);
+  const sync = () => {
+    const collapsed = collapsedProofreadModels.has(key);
+    content.hidden = collapsed;
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.setAttribute("aria-label", `${collapsed ? "展开" : "折叠"}${proofreadModelName(provider)}识别结果`);
+    button.textContent = collapsed ? "展开" : "折叠";
+  };
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (collapsedProofreadModels.has(key)) collapsedProofreadModels.delete(key);
+    else collapsedProofreadModels.add(key);
+    sync();
+  });
+  sync();
+  return button;
+}
+
+function decorateProofreadModelSection(group, index, provider, card) {
+  const header = group.querySelector(".proofread-editor-label");
+  const content = group.querySelector(".proofread-editor-body");
+  content.classList.add("proofread-model-content");
+  header.append(renderSharedErrorActionGroup(index, card, provider), makeProofreadModelToggle(index, provider, content));
+  group.classList.add("proofread-model-section");
+  return group;
+}
+
+function decorateIndependentProofreadModelSection(group, index, provider, card) {
+  const header = document.createElement("div");
+  header.className = "proofread-editor-label proofread-independent-label";
+  const title = document.createElement("strong");
+  title.textContent = `${proofreadModelName(provider)} block ${String(index + 1).padStart(2, "0")} 识别`;
+  const controls = group.querySelector(".review-provider-controls");
+  const content = document.createElement("div");
+  content.className = "proofread-model-content proofread-independent-content";
+  while (group.firstChild) content.appendChild(group.firstChild);
+  header.append(title, controls, renderSharedErrorActionGroup(index, card, provider), makeProofreadModelToggle(index, provider, content));
+  group.classList.add("proofread-model-section", `is-${provider}`);
+  group.replaceChildren(header, content);
   return group;
 }
 
@@ -5425,27 +5480,27 @@ function updateIndependentReviewErrors(provider, index, expectedText, range) {
   return true;
 }
 
-function renderSharedErrorButton(index, card) {
+function renderSharedErrorButton(index, card, provider) {
   const button = document.createElement("button");
   button.className = "ghost-button compact proofread-shared-error-button";
   button.type = "button";
   button.innerHTML = '<i data-lucide="circle-alert"></i><span>标错</span>';
-  button.title = "标错：将当前选中的 BDRC、Gemini Vision、千问或 OpenAI 文字标记为错误";
-  button.setAttribute("aria-label", "标错");
+  button.title = `标错：仅标记当前选中的${proofreadModelName(provider)}文字`;
+  button.setAttribute("aria-label", `${proofreadModelName(provider)}标错`);
   button.addEventListener("mousedown", (event) => event.preventDefault());
-  button.addEventListener("click", () => markSelectedSharedError(index, card));
+  button.addEventListener("click", () => markSelectedSharedError(index, card, provider));
   return button;
 }
 
-function renderClearSharedErrorButton(index, card) {
+function renderClearSharedErrorButton(index, card, provider) {
   const button = document.createElement("button");
   button.className = "ghost-button compact proofread-clear-shared-error-button";
   button.type = "button";
   button.innerHTML = '<i data-lucide="eraser"></i><span>撤销标错</span>';
-  button.title = "有选区时撤销相交标记；无选区时撤销当前 block 的全部错误标记";
-  button.setAttribute("aria-label", "撤销标错");
+  button.title = `有选区时撤销相交标记；无选区时仅撤销当前${proofreadModelName(provider)}的错误标记`;
+  button.setAttribute("aria-label", `${proofreadModelName(provider)}撤销标错`);
   button.addEventListener("mousedown", (event) => event.preventDefault());
-  button.addEventListener("click", () => clearSharedErrorMark(index, card));
+  button.addEventListener("click", () => clearSharedErrorMark(index, card, provider));
   return button;
 }
 
@@ -5932,10 +5987,10 @@ function updateProofreadCompareLine(side, index, value, line, peerLine) {
   return targetLine;
 }
 
-function markSelectedSharedError(index, card) {
+function markSelectedSharedError(index, card, expectedProvider = "") {
   const selection = getSelectedProofreadRange(card);
-  if (!selection || selection.index !== index) {
-    setStatus("请先在当前 block 的 BDRC、Gemini Vision 或千问/OpenAI 候选文字中选中需要标记为“错误”的字母。", "warn");
+  if (!selection || selection.index !== index || (expectedProvider && (selection.reviewProvider || selection.side) !== expectedProvider)) {
+    setStatus(`请先在当前 block 的${expectedProvider ? proofreadModelName(expectedProvider) : "BDRC、Gemini Vision 或千问/OpenAI 候选"}文字中选中需要标记为“错误”的字母。`, "warn");
     return;
   }
 
@@ -5983,8 +6038,35 @@ function markSelectedSharedError(index, card) {
   setStatus(`第 ${index + 1} 个 block 已在 ${sourceLabel} 结果中标记“错误”。`, "ok");
 }
 
-function clearSharedErrorMark(index, card) {
+function clearSharedErrorMark(index, card, expectedProvider = "") {
   const candidateSelection = getSelectedProofreadRange(card);
+  if (expectedProvider && candidateSelection && (
+    candidateSelection.index !== index || (candidateSelection.reviewProvider || candidateSelection.side) !== expectedProvider
+  )) {
+    setStatus(`请先选择当前 block 的${proofreadModelName(expectedProvider)}文字，或取消选区后撤销该模型的全部标错。`, "warn");
+    return;
+  }
+  if (expectedProvider === "qwen" || expectedProvider === "openai") {
+    const result = state.ocrResults.get(state.pageNum);
+    const candidate = result?.compare?.[`${expectedProvider}Reviews`]?.find((review) => review.index === index);
+    if (!candidate) return;
+    if (candidateSelection && candidateSelection.sourceText !== candidate.text) {
+      setStatus("识别文字已更新，请重新选中后撤销标错。", "warn");
+      return;
+    }
+    const before = candidate.errorRanges?.length || 0;
+    candidate.errorRanges = candidateSelection
+      ? (candidate.errorRanges || []).filter((range) => !rangesOverlap(range.start, range.end, candidateSelection.start, candidateSelection.end))
+      : [];
+    if (candidate.errorRanges.length === before) {
+      setStatus(`当前${proofreadModelName(expectedProvider)}结果没有命中的“错误”标记。`, "warn");
+      return;
+    }
+    saveCachedResults();
+    updateOcrPanelForPage();
+    setStatus(`已清除${proofreadModelName(expectedProvider)}结果中的“错误”标记。`, "ok");
+    return;
+  }
   if (candidateSelection?.reviewProvider && candidateSelection.index === index) {
     const result = state.ocrResults.get(state.pageNum);
     const key = candidateSelection.reviewProvider === "qwen" ? "qwenReviews" : "openaiReviews";
@@ -6012,15 +6094,31 @@ function clearSharedErrorMark(index, card) {
       start: Math.min(selection.start, selection.end),
       end: Math.max(selection.start, selection.end),
     };
-    nextMarks = compare.sharedErrors.filter((mark) => (
-      mark.blockIndex !== index || !sharedErrorMarkOverlaps(mark, sideKey, selectedRange)
-    ));
+    if (expectedProvider) {
+      const rangesKey = sideKey === "bdrc" ? "bdrcRanges" : "llmRanges";
+      nextMarks = compare.sharedErrors.map((mark) => mark.blockIndex === index ? {
+        ...mark,
+        [rangesKey]: (mark[rangesKey] || []).filter((range) => !rangesOverlap(range.start, range.end, selectedRange.start, selectedRange.end)),
+      } : mark).filter((mark) => mark.bdrcRanges?.length || mark.llmRanges?.length);
+    } else {
+      nextMarks = compare.sharedErrors.filter((mark) => (
+        mark.blockIndex !== index || !sharedErrorMarkOverlaps(mark, sideKey, selectedRange)
+      ));
+    }
   } else {
-    nextMarks = compare.sharedErrors.filter((mark) => mark.blockIndex !== index);
+    if (expectedProvider) {
+      const rangesKey = expectedProvider === "bdrc" ? "bdrcRanges" : "llmRanges";
+      nextMarks = compare.sharedErrors.map((mark) => mark.blockIndex === index ? {
+        ...mark, [rangesKey]: [],
+      } : mark).filter((mark) => mark.bdrcRanges?.length || mark.llmRanges?.length);
+    } else {
+      nextMarks = compare.sharedErrors.filter((mark) => mark.blockIndex !== index);
+    }
   }
 
+  const changed = JSON.stringify(nextMarks) !== JSON.stringify(compare.sharedErrors);
   compare.sharedErrors = normalizeSharedErrorMarks(nextMarks);
-  if (compare.sharedErrors.length === before) {
+  if (!changed) {
     setStatus("当前选区没有命中“错误”标记。", "warn");
     return;
   }

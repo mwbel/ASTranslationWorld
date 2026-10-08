@@ -1846,6 +1846,39 @@ body.is-resizing-panes * {
   background: #f8fbff;
 }
 
+.proofread-model-section.is-collapsed,
+.proofread-editor-group.proofread-model-section:has(.proofread-model-content[hidden]) {
+  min-height: 0;
+}
+
+.proofread-model-section .proofread-model-content[hidden],
+.workspace.proofread-merged-view .proofread-model-section .proofread-model-content[hidden] {
+  display: none !important;
+}
+
+.proofread-model-section .proofread-inline-action-group { margin-left: auto; flex: 0 0 auto; }
+.proofread-model-section .proofread-clear-shared-error-button {
+  width: auto;
+  min-width: 90px;
+  padding: 0 8px;
+  border-left: 0;
+  border-right: 1px solid #f7c8c1;
+}
+.proofread-model-toggle { flex: 0 0 auto; min-height: 30px; }
+.proofread-model-section.is-qwen,
+.proofread-model-section.is-openai {
+  width: 100%;
+  max-width: none;
+  border-bottom: 1px solid #e0e7e3;
+  gap: 0;
+  background: #f8fbff;
+}
+.proofread-independent-label { color: #244f7a; background: #f4f7fc; flex-wrap: wrap; }
+.proofread-independent-label .review-provider-controls { display: inline-flex; }
+.proofread-independent-content { width: 100%; background: #fff; }
+.proofread-independent-content .openai-review-feedback { padding: 0 12px; }
+.proofread-independent-content .openai-review-candidate { padding: 14px 16px; }
+
 .proofread-editor-label {
   min-height: 42px;
   padding: 9px 16px;
