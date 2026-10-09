@@ -22,6 +22,18 @@ def test_long_middle_line_removes_red_frame_but_keeps_red_text():
     assert int(((rgb[55:100, 700:800, 0] - rgb[55:100, 700:800, 1]) > 70).sum()) > 40
 
 
+def test_curved_red_page_rule_is_removed_without_erasing_rubric_letters():
+    image = np.full((150, 1800, 3), 235, dtype=np.uint8)
+    points = np.array([(x, int(20 + 16 * np.sin(x / 120))) for x in range(0, 1800, 5)])
+    cv2.polylines(image, [points], False, (25, 40, 210), 3)
+    cv2.putText(image, 'RED', (700, 82), cv2.FONT_HERSHEY_SIMPLEX, 1, (25, 40, 210), 3)
+    from PIL import Image
+    cropped = ai_vision.remove_crop_frame_rules(Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)))
+    rgb = np.asarray(cropped).astype(np.int16)
+    assert int(((rgb[:35, :, 0] - rgb[:35, :, 1]) > 70).sum()) < 50
+    assert int(((rgb[50:100, 700:800, 0] - rgb[50:100, 700:800, 1]) > 70).sum()) > 40
+
+
 def test_red_rubric_crop_excludes_long_frame_and_blank_tail():
     image = np.full((260, 1600, 3), 220, dtype=np.uint8)
     cv2.line(image, (10, 180), (1590, 180), (20, 30, 210), 3)
@@ -175,15 +187,121 @@ def test_center_row_crop_keeps_detached_top_and_bottom_strokes():
     assert crop['y'] + crop['height'] + metadata['padding_pixels'] >= 174, 'the crop must leave visible margin below detached lower marks'
 
 
+def test_center_row_crop_keeps_safe_horizontal_margin_at_both_ends():
+    image = np.full((200, 500, 3), 235, dtype=np.uint8)
+    # Simulate a row whose first and last glyphs sit close to the detected
+    # physical-row bounds. The preview must retain a margin on both ends.
+    for x in (50, 90, 130, 170, 210, 250, 290, 330, 370, 410, 430):
+        cv2.rectangle(image, (x, 82), (x + 19, 118), (20, 20, 20), -1)
+    ok, encoded = cv2.imencode('.png', image)
+    assert ok
+    center = {'id': 'center', 'x': 0.0, 'y': 0.0, 'width': 1.0, 'height': 1.0}
+    detected_row = {
+        'x': .1, 'y': .3, 'width': .8, 'height': .2,
+        '_exclusion': np.zeros((200, 500), dtype=np.uint8),
+    }
+
+    with patch.object(ai_vision, 'detect_traditional_column_bboxes', return_value=[center]), \
+         patch.object(ai_vision, 'detect_physical_text_line_bboxes', return_value=[detected_row]):
+        _, metadata = prepare_line_review_images(
+            encoded.tobytes(), {'x': .1, 'y': .3, 'width': .8, 'height': .2}
+        )
+
+    crop = metadata['crop_pixels']
+    assert crop['x'] <= 38, 'the first glyph needs proportional edge padding'
+    assert crop['x'] + crop['width'] >= 462, 'the last glyph needs proportional edge padding'
+
+
+def test_center_row_crop_does_not_clip_glyphs_at_column_edges():
+    image = np.full((200, 500, 3), 235, dtype=np.uint8)
+    cv2.rectangle(image, (95, 82), (115, 118), (20, 20, 20), -1)
+    cv2.rectangle(image, (385, 82), (405, 118), (20, 20, 20), -1)
+    ok, encoded = cv2.imencode('.png', image)
+    assert ok
+    center = {'id': 'center', 'x': .2, 'y': 0.0, 'width': .6, 'height': 1.0}
+    detected_row = {
+        # The detector sees only the glyph portions within the center region.
+        'x': 0.0, 'y': .41, 'width': 1.0, 'height': .18,
+        '_exclusion': np.zeros((200, 500), dtype=np.uint8),
+    }
+
+    with patch.object(ai_vision, 'detect_traditional_column_bboxes', return_value=[center]), \
+         patch.object(ai_vision, 'detect_physical_text_line_bboxes', return_value=[detected_row]):
+        _, metadata = prepare_line_review_images(
+            encoded.tobytes(), {'x': .2, 'y': .41, 'width': .6, 'height': .18}
+        )
+
+    crop = metadata['crop_pixels']
+    assert crop['x'] <= 95, 'the left column boundary must not cut the first glyph'
+    assert crop['x'] + crop['width'] >= 406, 'the right column boundary must not cut the last glyph'
+
+
+def test_framed_center_row_does_not_include_side_inscription():
+    image = np.full((240, 600, 3), 235, dtype=np.uint8)
+    cv2.line(image, (65, 12), (65, 228), (25, 45, 210), 3)
+    cv2.line(image, (525, 12), (525, 228), (25, 45, 210), 3)
+    cv2.rectangle(image, (53, 95), (57, 115), (20, 20, 20), -1)
+    cv2.rectangle(image, (72, 92), (94, 120), (20, 20, 20), -1)
+    cv2.rectangle(image, (500, 92), (520, 120), (20, 20, 20), -1)
+    ok, encoded = cv2.imencode('.png', image)
+    assert ok
+    regions = [
+        {'id': 'left', 'x': 0.0, 'y': 0.0, 'width': 65 / 600, 'height': 1.0},
+        {'id': 'center', 'x': 65 / 600, 'y': 0.0, 'width': 460 / 600, 'height': 1.0},
+        {'id': 'right', 'x': 525 / 600, 'y': 0.0, 'width': 75 / 600, 'height': 1.0},
+    ]
+    row = {'x': 0, 'y': .38, 'width': 1, 'height': .14,
+           '_exclusion': np.zeros((240, 460), dtype=np.uint8)}
+    with patch.object(ai_vision, 'detect_traditional_column_bboxes', return_value=regions), \
+         patch.object(ai_vision, 'detect_physical_text_line_bboxes', return_value=[row]):
+        _, metadata = prepare_line_review_images(
+            encoded.tobytes(), {'x': 65 / 600, 'y': .38, 'width': 460 / 600, 'height': .14}
+        )
+    crop = metadata['crop_pixels']
+    assert crop['x'] >= 60, 'left-side vertical inscription must stay outside the center preview'
+    assert crop['x'] <= 72, 'first center glyph must remain complete'
+    assert crop['x'] + crop['width'] >= 521, 'last center glyph must remain complete'
+    assert crop['x'] + crop['width'] <= 530, 'right margin must not widen the crop substantially'
+
+
+def test_sloping_frame_uses_each_rows_actual_inner_border():
+    image = np.full((300, 700, 3), 235, dtype=np.uint8)
+    cv2.line(image, (160, 5), (120, 295), (25, 45, 210), 4)
+    cv2.line(image, (580, 5), (540, 295), (25, 45, 210), 4)
+    ok, encoded = cv2.imencode('.png', image)
+    assert ok
+    regions = [
+        {'id': 'left', 'x': 0, 'y': 0, 'width': .2, 'height': 1},
+        {'id': 'center', 'x': .2, 'y': 0, 'width': .6, 'height': 1},
+        {'id': 'right', 'x': .8, 'y': 0, 'width': .2, 'height': 1},
+    ]
+    rows = [
+        {'x': 0, 'y': .2, 'width': 1, 'height': .12},
+        {'x': 0, 'y': .7, 'width': 1, 'height': .12},
+    ]
+    with patch.object(ai_vision, 'detect_traditional_column_bboxes', return_value=regions), \
+         patch.object(ai_vision, 'detect_physical_text_line_bboxes', return_value=rows):
+        top = ai_vision.bound_legacy_line_crop(encoded.tobytes(),
+            {'x': .2, 'y': .2, 'width': .6, 'height': .12, 'physical_row_index': 0})
+        bottom = ai_vision.bound_legacy_line_crop(encoded.tobytes(),
+            {'x': .2, 'y': .7, 'width': .6, 'height': .12, 'physical_row_index': 1})
+    assert 145 <= top['clip_left'] * 700 <= 160
+    assert 118 <= bottom['clip_left'] * 700 <= 140
+    assert top['clip_left'] > bottom['clip_left'], 'one average x clip cannot follow a sloping frame'
+
+
 def test_stale_preview_metadata_drops_old_vertical_clip_limits():
     bbox = {'x': .2, 'y': .4, 'width': .6, 'height': .1}
     metadata = {
         'crop_version': 12,
         'source_size': {'width': 800, 'height': 200},
-        'source_bbox': {**bbox, 'clip_top': .48, 'clip_bottom': .51, 'crop_pad_y': .01},
+        'source_bbox': {**bbox, 'clip_top': .48, 'clip_bottom': .51,
+                        'clip_left': .21, 'clip_right': .79, 'crop_pad_y': .01},
     }
     resolved = ai_vision.resolve_line_preview_bbox(bbox, metadata, metadata['source_size'])
     assert 'clip_top' not in resolved
     assert 'clip_bottom' not in resolved
+    assert 'clip_left' not in resolved
+    assert 'clip_right' not in resolved
     assert 'crop_pad_y' not in resolved
     assert resolved['y'] == bbox['y'] and resolved['height'] == bbox['height']

@@ -192,7 +192,55 @@ def split_enlarged_line(enlarged, tile_width):
     return tiles, ranges
 
 
-LINE_CROP_VERSION = 16
+LINE_CROP_VERSION = 21
+
+
+def find_row_frame_clips(image_bytes, center, row, page_width, page_height):
+    """Follow a sloping pecha's inner side rules at this physical row."""
+    if cv2 is None or np is None:
+        return None, None, None, None
+    image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return None, None, None, None
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    red = (((hsv[:, :, 0] <= 25) | (hsv[:, :, 0] >= 165)) &
+           (hsv[:, :, 1] >= 70))
+    search = max(14, round(center['width'] * page_width * .055))
+    boundaries = (round(center['x'] * page_width),
+                  round((center['x'] + center['width']) * page_width))
+    clips = []
+    tracks = []
+    for side, edge in enumerate(boundaries):
+        x0 = max(0, edge - search)
+        x1 = min(page_width, edge + search)
+        rule_pixels = red[:, x0:x1].astype(np.uint8) * 255
+        lines = cv2.HoughLinesP(rule_pixels, 1, np.pi / 360, threshold=40,
+                                minLineLength=max(24, round(page_height * .3)),
+                                maxLineGap=max(12, round(page_height * .04)))
+        candidates = []
+        for line in lines if lines is not None else []:
+            lx0, ly0, lx1, ly1 = map(int, line[0])
+            lx0 += x0; lx1 += x0
+            if abs(ly1 - ly0) < page_height * .3 or abs(lx1 - lx0) > abs(ly1 - ly0) * .5:
+                continue
+            slope = (lx1 - lx0) / (ly1 - ly0)
+            intercept = lx0 - slope * ly0
+            midpoint = slope * page_height * .5 + intercept
+            candidates.append((midpoint, slope, intercept))
+        if not candidates:
+            clips.append(None)
+            tracks.append(None)
+            continue
+        _, slope, intercept = (max(candidates, key=lambda item: item[0]) if side == 0
+                               else min(candidates, key=lambda item: item[0]))
+        y0 = row['y'] * page_height
+        y1 = (row['y'] + row['height']) * page_height
+        edge_values = (slope * y0 + intercept, slope * y1 + intercept)
+        # Keep the entire sloping edge in the raw crop; the per-scanline mask
+        # below removes side writing without cutting the first or last glyph.
+        clips.append((min(edge_values) - 4 if side == 0 else max(edge_values) + 4) / page_width)
+        tracks.append((slope, intercept))
+    return (*clips, *tracks)
 
 
 def bound_legacy_line_crop(image_bytes, bbox):
@@ -244,10 +292,21 @@ def bound_legacy_line_crop(image_bytes, bbox):
     bbox['_exclusion'] = (ox, oy, row.get('_exclusion'))
     for key in ('clip_top', 'clip_bottom', 'crop_pad_y', 'clip_left', 'clip_right'):
         bbox.pop(key, None)
-    # Red frame rules lie at the region edges. Keep the crop inside the
-    # middle column even when horizontal padding expands a short line.
-    bbox['clip_left'] = center['x'] + center['width'] * .01
-    bbox['clip_right'] = center['x'] + center['width'] * .99
+    # A three-region pecha layout has two physical frame boundaries. Expanding
+    # across those boundaries picks up the side inscription (and often a red
+    # vertical rule). Unframed/synthetic single-region pages still need the
+    # original margin for glyphs that overhang the estimated column edge.
+    horizontal_buffer = center['width'] * (.01 if len(regions) >= 3 else .02)
+    bbox['clip_left'] = max(0, center['x'] - horizontal_buffer)
+    bbox['clip_right'] = min(1, center['x'] + center['width'] + horizontal_buffer)
+    if len(regions) >= 3:
+        frame_left, frame_right, left_track, right_track = find_row_frame_clips(
+            image_bytes, center, bbox, page_width, page_height)
+        if frame_left is not None and frame_left < bbox['x'] + bbox['width']:
+            bbox['clip_left'] = frame_left
+        if frame_right is not None and frame_right > bbox['x']:
+            bbox['clip_right'] = frame_right
+        bbox['_frame_tracks'] = (left_track, right_track)
     return bbox
 
 
@@ -261,14 +320,14 @@ def remove_crop_frame_rules(crop):
         return crop
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     red = (((hsv[:, :, 0] <= 25) | (hsv[:, :, 0] >= 165)) &
-           (hsv[:, :, 1] >= 55)).astype(np.uint8)
+           (hsv[:, :, 1] >= 25)).astype(np.uint8)
     if red.sum() < 30:
         return crop
     erase = np.zeros_like(red)
     count, labels, stats, _ = cv2.connectedComponentsWithStats(red, 8)
     for component in range(1, count):
         x, y, rule_width, rule_height, _ = stats[component]
-        horizontal_rule = (rule_width >= width * .4 and rule_height <= max(8, height * .2)
+        horizontal_rule = (rule_width >= width * .4 and rule_height <= max(8, height * .4)
                            and min(y, height - (y + rule_height)) < height * .28)
         vertical_rule = (rule_height >= height * .5 and rule_width <= max(8, width * .03)
                          and min(x, width - (x + rule_width)) < width * .08)
@@ -286,6 +345,20 @@ def remove_crop_frame_rules(crop):
             if (horizontal and near_horizontal_edge) or (vertical and near_vertical_edge):
                 cv2.line(erase, (x0,y0), (x1,y1), 1,
                          thickness=max(5, min(11, round(height * .06))))
+    # Scanned pecha rules can curve enough to join a vertical border, making
+    # connected-component and straight-Hough removal leave red fragments.
+    # A rule still occupies a large fraction of an edge scanline; rubric
+    # letters do not. Remove red pixels only in those narrow edge bands.
+    strong_red = red & (hsv[:, :, 1] >= 110)
+    coverage = strong_red.sum(axis=1)
+    for edge_rows in (np.arange(round(height * .34)),
+                      np.arange(round(height * .66), height)):
+        rule_rows = edge_rows[coverage[edge_rows] >= width * .25]
+        if rule_rows.size:
+            pad = max(3, round(height * .035))
+            top = max(0, int(rule_rows.min()) - pad)
+            bottom = min(height, int(rule_rows.max()) + pad + 1)
+            erase[top:bottom] |= red[top:bottom]
     if width > 1000:
         edge = max(5, round(width * .007))
         erase[:, :edge] = red[:, :edge]
@@ -315,6 +388,7 @@ def prepare_line_review_images(
             page_width, page_height = image.size
             bbox = bound_legacy_line_crop(image_bytes, bbox)
             exclusion = bbox.pop("_exclusion", None)
+            frame_tracks = bbox.pop("_frame_tracks", None)
             raw_x = bbox["x"] * page_width
             raw_y = bbox["y"] * page_height
             raw_width = max(1.0, bbox["width"] * page_width)
@@ -332,7 +406,10 @@ def prepare_line_review_images(
                 round(bbox.get("crop_pad_y", 0) * page_height),
             )
             if exclusion is not None:
-                pad_x = 8
+                # The exclusion mask bounds neighboring rows vertically, so
+                # horizontal padding can scale with glyph height without
+                # pulling ink from adjacent rows into the crop.
+                pad_x = max(8, round(raw_height * .35))
                 pad_y = max(6, round(raw_height * .12))
             x0 = max(0, int(round(raw_x - pad_x)))
             y0 = max(0, int(round(raw_y - pad_y)))
@@ -345,6 +422,19 @@ def prepare_line_review_images(
             if x1 <= x0 or y1 <= y0:
                 raise RuntimeError("bbox crop is empty")
             crop = image.crop((x0, y0, x1, y1))
+            if frame_tracks and any(frame_tracks) and np is not None:
+                rgb_crop = np.array(crop)
+                background = np.median(rgb_crop.reshape(-1, 3), axis=0).astype(np.uint8)
+                for local_y in range(crop.height):
+                    page_y = y0 + local_y
+                    left_track, right_track = frame_tracks
+                    if left_track is not None:
+                        left = round(left_track[0] * page_y + left_track[1]) + 3 - x0
+                        rgb_crop[local_y, :max(0, min(crop.width, left))] = background
+                    if right_track is not None:
+                        right = round(right_track[0] * page_y + right_track[1]) - 3 - x0
+                        rgb_crop[local_y, max(0, min(crop.width, right)):] = background
+                crop = Image.fromarray(rgb_crop)
             if exclusion is not None and exclusion[2] is not None:
                 ox, oy, mask = exclusion
                 rgb_crop = np.array(crop)
@@ -507,15 +597,14 @@ def prepare_line_review_images(
 
 
 def resolve_line_preview_bbox(bbox: dict[str, float], metadata: dict[str, Any], source_size: dict[str, int]) -> dict[str, float]:
-    """Reuse source coordinates, but recompute obsolete vertical crop limits."""
+    """Reuse source coordinates, but recompute crop limits from older versions."""
     saved_bbox = metadata.get("source_bbox")
     if not saved_bbox or metadata.get("source_size") != source_size:
         return bbox
     resolved = dict(saved_bbox)
     if metadata.get("crop_version") != LINE_CROP_VERSION:
-        resolved.pop("clip_top", None)
-        resolved.pop("clip_bottom", None)
-        resolved.pop("crop_pad_y", None)
+        for key in ("clip_top", "clip_bottom", "clip_left", "clip_right", "crop_pad_y"):
+            resolved.pop(key, None)
     return resolved
 
 def find_framed_text_region(gray: Any, red_ink: Any) -> tuple[int, int] | None:
