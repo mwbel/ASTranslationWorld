@@ -100,3 +100,18 @@ assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].err
 vm.runInContext('clearSharedErrorMark(0,{})',ctx);
 assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].errorRanges.length',ctx),0);
 console.log('Shared mark/clear controls route candidate selections independently');
+
+// An old "unconfigured" catalog must be checked again after the AI service restarts.
+vm.runInContext("renderQwenLineReview(0,{bbox:{x:.1,y:.2,width:.4,height:.1}},null,null)", ctx);
+const restartedSelector = elements.filter(node => node['aria-label']?.includes('千问复核模型')).at(-1);
+const restartedButton = elements.filter(node => node.textContent === '千问 复核').at(-1);
+restartedSelector.dataset.reviewConfigured = 'false';
+restartedSelector.value = 'qwen3.7-plus';
+ctx.fetch = async url => {
+  assert.match(url, /\/review-models$/);
+  return {ok:true, json:async()=>({qwen:{configured:true}})};
+};
+await restartedButton.handlers.click[0]({stopPropagation(){}});
+assert.equal(restartedSelector.dataset.reviewConfigured, 'true');
+assert.equal(vm.runInContext('state.ocrResults.get(1).compare.qwenReviews[0].text',ctx), 'བོད་');
+console.log('Qwen review rechecks stale configuration after service restart');

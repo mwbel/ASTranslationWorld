@@ -69,10 +69,15 @@ start_service() {
 
   pid_file="$RUNTIME_DIR/$name.pid"
   log_file="$RUNTIME_DIR/$name.log"
+  if [ "$name" = "frontend" ] && [ "$port" != "8790" ]; then
+    pid_file="$RUNTIME_DIR/frontend-$port.pid"
+    log_file="$RUNTIME_DIR/frontend-$port.log"
+  fi
 
   if [ -f "$pid_file" ]; then
     saved_pid="$(cat "$pid_file" 2>/dev/null || true)"
-    if [ -n "$saved_pid" ] && kill -0 "$saved_pid" 2>/dev/null; then
+    listening_pid="$(port_pid "$port")"
+    if [ -n "$saved_pid" ] && [ "$saved_pid" = "$listening_pid" ] && kill -0 "$saved_pid" 2>/dev/null; then
       echo "已运行：$name (PID $saved_pid, 端口 $port)"
       return 0
     fi
@@ -163,7 +168,11 @@ ensure_frontend_no_cache_service() {
 
   echo "正在替换：端口 $FRONTEND_PORT 上的旧前端静态服务没有 no-store 缓存头 (PID $existing_pid)"
   kill "$existing_pid" 2>/dev/null || true
-  rm -f "$RUNTIME_DIR/frontend.pid"
+  frontend_pid_file="$RUNTIME_DIR/frontend.pid"
+  if [ "$FRONTEND_PORT" != "8790" ]; then
+    frontend_pid_file="$RUNTIME_DIR/frontend-$FRONTEND_PORT.pid"
+  fi
+  rm -f "$frontend_pid_file"
   attempt=0
   while [ "$attempt" -lt 20 ]; do
     if [ -z "$(port_pid "$FRONTEND_PORT")" ]; then

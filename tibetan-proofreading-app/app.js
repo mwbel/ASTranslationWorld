@@ -5219,7 +5219,7 @@ function renderReviewModelSelector(provider, index, onCatalog = null) {
       select.dataset.reviewConfigured = String(Boolean(catalog[provider]?.configured));
       if (onCatalog) onCatalog(catalog[provider]);
       select.title = provider === "qwen" && !catalog.qwen?.configured
-        ? "千问后端没有读取到持久配置。请在项目根目录运行：python3 tibetan-proofreading-app/configure_qwen_review.py（配置文件应为 tibetan-proofreading-app/.qwen-review.env）。"
+        ? "当前 AI OCR 服务尚未读取到千问 API key 或接口地址；请检查服务状态与本地配置。"
         : (catalog[provider]?.billing_note || "模型权限及费用以服务商账号为准。");
     }).catch((error) => { select.title = `模型列表加载失败：${error.message}；当前显示默认模型。`; });
   }
@@ -5286,7 +5286,7 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
   feedback.setAttribute("role", "status");
   controls.append(button);
   const select = provider === "qwen" ? renderReviewModelSelector("qwen", index, (catalog) => {
-    if (!catalog?.configured && !button.disabled) feedback.textContent = "千问后端没有读取到持久配置，请运行 configure_qwen_review.py 后重启服务。";
+    if (!catalog?.configured && !button.disabled) feedback.textContent = "当前 AI OCR 服务未读取到千问 API key 或接口地址，请检查服务状态与本地配置。";
   }) : null;
   if (select) controls.append(select);
   group.append(controls, feedback);
@@ -5357,7 +5357,14 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
     if (select) select.disabled = true;
     feedback.textContent = `${label} 复核中…`;
     try {
-      if (select?.dataset.reviewConfigured === "false") throw new Error("千问后端没有读取到持久配置，请运行 configure_qwen_review.py 后重启服务。");
+      if (select?.dataset.reviewConfigured === "false") {
+        const catalogEndpoint = endpoint.replace(/\/qwen-line-review$/, "/review-models");
+        const response = await fetch(catalogEndpoint, { cache: "no-store" });
+        if (!response.ok) throw new Error(`千问配置状态检查失败：HTTP ${response.status}`);
+        const catalog = await response.json();
+        select.dataset.reviewConfigured = String(Boolean(catalog.qwen?.configured));
+        if (!catalog.qwen?.configured) throw new Error("当前 AI OCR 服务未读取到千问 API key 或接口地址，请检查服务状态与本地配置。");
+      }
       const blob = await getCurrentPageImageBlob();
       if (state.pageNum !== pageNum || state.cacheKey !== sourceKey) throw new Error("页面已切换，请返回原页面重试。");
       const cropContext = makeLineCropContext();

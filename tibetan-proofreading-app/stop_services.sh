@@ -37,6 +37,12 @@ stop_service() {
 }
 
 stop_service frontend
+for frontend_pid_file in "$RUNTIME_DIR"/frontend-*.pid; do
+  if [ -f "$frontend_pid_file" ]; then
+    frontend_name="$(basename "$frontend_pid_file" .pid)"
+    stop_service "$frontend_name"
+  fi
+done
 stop_service ocr
 stop_service bdrc
 stop_service ai_ocr
