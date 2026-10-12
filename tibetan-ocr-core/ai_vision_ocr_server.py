@@ -1927,13 +1927,23 @@ def review_models_payload() -> dict[str, Any]:
 
 
 def call_vision_model(
-    image_bytes: bytes, filename: str, prompt: str, ocr_profile: str = ""
+    image_bytes: bytes, filename: str, prompt: str, ocr_profile: str = "", model: str = ""
 ) -> dict[str, Any]:
     if ocr_profile == "traditional":
         regions = detect_traditional_column_bboxes(image_bytes)
         if len(regions) == 3:
             return call_traditional_region_ocr(image_bytes, filename, prompt, regions)
         raise RuntimeError("传统经书三栏定位失败，请调整定位后重试；不会退回整页识别。")
+    if model:
+        model = model.removeprefix("gemini:")
+        if model not in GEMINI_REVIEW_MODELS:
+            raise RuntimeError("Gemini OCR 模型不在允许列表中，请刷新模型列表。")
+        if USE_MODEL_AGGREGATOR:
+            return call_model_aggregator_images([(image_bytes, filename)], prompt, preserve_size=True, model_override=f"gemini:{model}")
+        result = call_openai_compatible_images([(image_bytes, filename)], prompt, model_override=model)
+        if result.get("model") not in {model, f"gemini:{model}"}:
+            raise RuntimeError("Gemini OCR 响应模型与所选模型不一致，结果未采用。")
+        return result
     if USE_MODEL_AGGREGATOR:
         return call_model_aggregator(image_bytes, filename, prompt)
     return call_openai_compatible(image_bytes, filename, prompt)

@@ -407,6 +407,14 @@ button {
   gap: 10px;
 }
 
+.gemini-model-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
 .ocr-profile-control {
   display: inline-flex;
   align-items: center;
@@ -2676,8 +2684,8 @@ body.is-resizing-panes * {
 }
 
 .app-shell.workbench-mode #workbenchView .ocr-toolbar-primary {
-  overflow-x: auto;
-  scrollbar-width: thin;
+  flex-wrap: wrap;
+  overflow: visible;
 }
 
 .app-shell.workbench-mode #workbenchView .ocr-toolbar-secondary {
@@ -2725,6 +2733,10 @@ body.is-resizing-panes * {
 
 .app-shell.workbench-mode #workbenchView #ocrProfileSelect {
   max-width: min(190px, 28vw);
+}
+
+.app-shell.workbench-mode #workbenchView #geminiModelSelect {
+  max-width: min(190px, 30vw);
 }
 
 .app-shell.workbench-mode #workbenchView .ocr-toolbar-secondary > [data-collapse-pane="ocr"] {

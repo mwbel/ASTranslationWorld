@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20261012-server-ai-only";
+const APP_BUILD_ID = "20261012-server-ai-gemini-shared-toolbar";
 let pageReviewPending = false;
 const REVIEW_MODEL_DEFAULTS = { qwen: ["qwen3.8-max", "qwen3.7-plus"], gemini: ["gemini-3.8-flash", "gemini-3.1-flash-lite"] };
 const reviewCatalogRequests = new Map();
@@ -271,6 +271,8 @@ function cacheElements() {
     "zoomInput",
     "checkTranslateButton",
     "ocrButton",
+    "geminiPageReviewButton",
+    "geminiModelSelect",
     "statusBar",
     "thumbnailList",
     "sourceTitle",
@@ -473,6 +475,8 @@ function wireEvents() {
   });
   bindOptionalClick("checkTranslateButton", checkTranslateService);
   els.ocrButton.addEventListener("click", runOcrForCurrentPage);
+  els.geminiPageReviewButton.addEventListener("click", reviewGeminiCurrentPage);
+  initializeGeminiModelSelector();
   els.batchOcrButton.addEventListener("click", runOcrForRemainingPages);
   els.cancelBatchOcrButton.addEventListener("click", () => {
     if (state.batchOcr?.running) {
@@ -3161,6 +3165,7 @@ async function runOcrForCurrentPage(options = {}) {
       mode: profile.id,
       ocr_profile: profile.id,
       prompt: buildAiOcrPrompt("", profile.id),
+      model: getSelectedGeminiModel(),
     });
     saveOcrResultFromParsed(
       parsed,
@@ -5313,10 +5318,6 @@ function renderProofreadBlockCard({ index, bdrcLine, aiLine, finalLine, sourceLi
     }),
   );
 
-  const reviewHeader = stack.querySelector(".proofread-editor-group.is-ai .proofread-editor-label");
-  const geminiReview = renderAiVisionLineReviewButton(index, card, sourceLine, bdrcLine, aiLine);
-  geminiReview.classList.add("review-in-heading");
-  reviewHeader.insertBefore(geminiReview, reviewHeader.querySelector(".proofread-editor-status"));
   stack.querySelectorAll(".proofread-editor-group").forEach((group) => {
     decorateProofreadModelSection(group, index, group.classList.contains("is-bdrc") ? "bdrc" : "llm", card);
   });
@@ -5522,37 +5523,71 @@ function renderReviewModelSelector(provider, index, onCatalog = null) {
   return select;
 }
 
-function renderAiVisionLineReviewButton(index, card, sourceLine, bdrcLine, aiLine) {
-  const group = document.createElement("div");
-  group.className = "provider-line-review";
-  const controls = document.createElement("div");
-  controls.className = "review-provider-controls";
-  const button = document.createElement("button");
-  button.className = "ghost-button compact proofread-ai-review-button";
-  button.type = "button";
-  button.innerHTML = '<i data-lucide="scan-search"></i><span>Gemini整页复核</span>';
-  button.title = "使用完整原图复核本页中间栏全部文字行；裁剪预览供人工对照。";
-  button.setAttribute("aria-label", "Gemini整页复核，更新本页中间栏结果");
-  const canReview = Boolean(state.pageCount);
-  button.disabled = !canReview;
-  if (!canReview) {
-    button.title = "请先加载一页图像。";
-  }
-  button.addEventListener("mousedown", (event) => event.preventDefault());
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    reviewOcrLineWithAiVision(index, card, sourceLine, bdrcLine, aiLine);
+function getSelectedGeminiModel() {
+  return els.geminiModelSelect?.value || REVIEW_MODEL_DEFAULTS.gemini[0];
+}
+
+function initializeGeminiModelSelector() {
+  const select = els.geminiModelSelect;
+  if (!select) return;
+  let preferred = "";
+  try { preferred = window.localStorage.getItem("tibetan-proofreading-app:gemini-model") || ""; } catch (_) { /* storage optional */ }
+  const fill = (models) => {
+    const available = Array.isArray(models) ? models.filter((model) => typeof model === "string" && model.startsWith("gemini-")) : [];
+    const choices = available.length ? available : REVIEW_MODEL_DEFAULTS.gemini;
+    const chosen = preferred || select.value;
+    select.replaceChildren(...choices.map((model) => {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      return option;
+    }));
+    select.value = choices.includes(chosen) ? chosen : choices[0];
+    select.disabled = !choices.length;
+  };
+  fill(REVIEW_MODEL_DEFAULTS.gemini);
+  select.addEventListener("change", () => {
+    preferred = select.value;
+    try { window.localStorage.setItem("tibetan-proofreading-app:gemini-model", select.value); } catch (_) { /* storage optional */ }
   });
-  const select = renderReviewModelSelector("gemini", index);
-  button.dataset.reviewModel = select.value;
-  select.addEventListener("change", () => { button.dataset.reviewModel = select.value; });
-  const feedback = document.createElement("div");
-  feedback.className = "review-feedback";
-  feedback.setAttribute("role", "status");
-  controls.append(button, select);
-  group.append(controls, feedback);
-  return group;
+  const endpoint = getAiVisionLineReviewEndpoint().replace(/\/line-review$/, "/review-models");
+  fetch(endpoint).then(async (response) => {
+    if (!response.ok) throw new Error(`模型列表 HTTP ${response.status}`);
+    return response.json();
+  }).then((catalog) => {
+    if (!select.isConnected) return;
+    if (Array.isArray(catalog.gemini?.models)) fill(catalog.gemini.models);
+    select.title = catalog.gemini?.billing_note || "所选模型同时用于 Gemini 识别和整页复核。";
+  }).catch((error) => {
+    select.title = `模型列表加载失败：${error.message}；当前显示默认模型。`;
+  });
+}
+
+async function reviewGeminiCurrentPage() {
+  const button = els.geminiPageReviewButton;
+  if (pageReviewPending || state.isOcrBusy) return;
+  if (!state.pageCount) {
+    setStatus("请先加载一页图像，再进行 Gemini 整页复核。", "warn");
+    return;
+  }
+  const endpoint = els.aiOcrEndpointInput.value.trim();
+  if (!endpoint) {
+    setStatus("Gemini Vision 服务地址未配置。", "warn");
+    return;
+  }
+  pageReviewPending = true;
+  button.disabled = true;
+  els.geminiModelSelect.disabled = true;
+  try {
+    const blob = await getCurrentPageImageBlob();
+    await runTraditionalGeminiLines(endpoint, blob, getSelectedGeminiModel());
+  } catch (error) {
+    setStatus(`Gemini 整页复核失败：${error.message || error}`, "error");
+  } finally {
+    pageReviewPending = false;
+    button.disabled = false;
+    els.geminiModelSelect.disabled = false;
+  }
 }
 
 function renderOpenAiLineReview(index, sourceLine, bdrcLine, aiLine) {
@@ -6833,30 +6868,6 @@ function clearSharedErrorMark(index, card, expectedProvider = "") {
   setStatus(saved
     ? `已清除第 ${index + 1} 个 block 的“错误”标记。`
     : `第 ${index + 1} 个 block 撤销标错后未能保存，请重试。`, saved ? "ok" : "error");
-}
-
-async function reviewOcrLineWithAiVision(index, card, sourceLine, bdrcLine, aiLine) {
-  if (state.batchOcr?.running) {
-    setStatus("请先停止批量识别，再进行整页复核。", "warn");
-    return;
-  }
-  const endpoint = els.aiOcrEndpointInput.value.trim();
-  const button = card?.querySelector(".proofread-ai-review-button");
-  const feedback = card?.querySelector(".review-feedback");
-  if (!endpoint) {
-    if (feedback) feedback.textContent = "Gemini Vision 服务地址未配置。";
-    return;
-  }
-  if (button) button.disabled = true;
-  try {
-    const blob = await getCurrentPageImageBlob();
-    await runTraditionalGeminiLines(endpoint, blob, button?.dataset.reviewModel || "");
-  } catch (error) {
-    if (feedback) feedback.textContent = `Gemini 整页复核失败：${error.message || error}`;
-    setStatus(`Gemini 整页复核失败：${error.message || error}`, "error");
-  } finally {
-    if (button?.isConnected) button.disabled = false;
-  }
 }
 
 function saveProofreadBlockChoice(index, side, card) {
@@ -8377,6 +8388,7 @@ function refreshControls() {
   setOptionalDisabled("ocrNextPageButton", !hasDocument || state.pageNum >= state.pageCount || Boolean(state.batchOcr?.running));
   setOptionalDisabled("ocrLastPageButton", !hasDocument || state.pageNum >= state.pageCount || Boolean(state.batchOcr?.running));
   els.ocrButton.disabled = !hasDocument || state.isOcrBusy;
+  els.geminiPageReviewButton.disabled = !hasDocument || state.isOcrBusy || pageReviewPending;
   setOptionalDisabled("downloadPageButton", !hasDocument);
   els.copyButton.disabled = !hasDocument;
   setOptionalDisabled("clearButton", !hasDocument);
@@ -8425,6 +8437,8 @@ function setBusy(isBusy) {
   if (els.ocrModeSelect) els.ocrModeSelect.disabled = Boolean(isBusy);
   if (els.ocrProfileSelect) els.ocrProfileSelect.disabled = Boolean(isBusy);
   els.ocrButton.disabled = isBusy || !state.pageCount;
+  if (els.geminiPageReviewButton) els.geminiPageReviewButton.disabled = isBusy || !state.pageCount || pageReviewPending;
+  if (els.geminiModelSelect) els.geminiModelSelect.disabled = isBusy || pageReviewPending;
   setOptionalDisabled("checkOcrButton", isBusy);
   els.ocrButton.querySelector("span").textContent = isBusy ? "识别中" : "识别";
   if (wasBusy && !isBusy && state.ocrResults.get(state.pageNum)?.raw?.line_ocr) updateOcrPanelForPage();

@@ -10,20 +10,16 @@ const ocrFlowStart = source.indexOf("async function runOcrForCurrentPage(");
 const ocrFlowEnd = source.indexOf("async function runTraditionalGeminiLines(", ocrFlowStart);
 const ocrFlow = source.slice(ocrFlowStart, ocrFlowEnd);
 const persistResult = ocrFlow.indexOf("saveOcrResultFromParsed(");
-const reviewMissingLines = ocrFlow.indexOf("for (const [index, line] of lines.entries())");
 
 assert.notEqual(ocrFlowStart, -1, "current-page OCR flow must exist");
 assert.notEqual(persistResult, -1, "OCR results must be persisted as soon as recognition completes");
-assert.notEqual(reviewMissingLines, -1, "BDRC OCR must review missing lines when coordinates are available");
-assert.ok(
-  persistResult < reviewMissingLines,
-  "the page result must be saved before awaiting any line-level AI review"
-);
 assert.match(
   ocrFlow,
-  /isMissingOcrTranscription\(line\) && normalizeBbox\(line\.bbox\)[\s\S]*await reviewOcrLineWithAiVision/,
-  "only missing OCR lines with source coordinates should be sent for AI review"
+  /model: getSelectedGeminiModel\(\)/,
+  "whole-page OCR must use the selected shared Gemini model"
 );
+assert.match(source, /runTraditionalGeminiLines\(endpoint, blob, getSelectedGeminiModel\(\)\)/,
+  "the separate whole-page review action must use the same selected model");
 assert.match(
   source,
   /pdfPageRenderCache/,

@@ -5,8 +5,9 @@ const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const server = readFileSync(new URL("../../tibetan-ocr-core/ai_vision_ocr_server.py", import.meta.url), "utf8");
 
 assert.match(app, /function getAiVisionLineReviewEndpoint\(\)/, "the app needs a dedicated AI Vision line-review endpoint");
-assert.match(app, /function reviewOcrLineWithAiVision\(index, card, sourceLine, bdrcLine, aiLine\)/, "each OCR row must be reviewable independently");
-assert.match(app, /Gemini整页复核/, "the whole-page action must be visible to a proofreader");
+assert.match(app, /async function reviewGeminiCurrentPage\(\)/, "the whole-page action must be available from the shared toolbar");
+assert.match(app, /Gemini 整页复核/, "whole-page review status must be visible to a proofreader");
+assert.doesNotMatch(app, /proofread-ai-review-button/, "Gemini whole-page review must not be duplicated in every block");
 assert.match(app, /getCurrentPageImageBlob\(\)/, "line review must use the same high-resolution OCR page image");
 assert.match(app, /formData\.append\("bbox", JSON\.stringify\(bbox\)\)/, "line review must send the precise source bbox");
 const sourceRowsStart = app.indexOf("function renderOcrSourceRows(");

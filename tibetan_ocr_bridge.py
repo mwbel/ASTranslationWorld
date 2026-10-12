@@ -16,9 +16,9 @@ def load_ai_ocr_module() -> Any:
     return module
 
 
-def call_ai_ocr(image: bytes, filename: str, draft: str = "", prompt: str = "") -> dict[str, Any]:
+def call_ai_ocr(image: bytes, filename: str, draft: str = "", prompt: str = "", model: str = "") -> dict[str, Any]:
     module = load_ai_ocr_module()
-    return module.call_vision_model(image, filename, prompt or module.default_prompt(draft))
+    return module.call_vision_model(image, filename, prompt or module.default_prompt(draft), model=model)
 
 
 def call_ai_layout(image: bytes, line_count: int) -> dict[str, Any]:

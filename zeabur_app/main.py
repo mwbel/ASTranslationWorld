@@ -199,8 +199,9 @@ async def ai_ocr(
     file: UploadFile = File(...),
     ocr_text: str = Form(""),
     prompt: str = Form(""),
+    model: str = Form(""),
 ) -> dict[str, Any]:
-    return call_ai_ocr(await file.read(), file.filename or "page.png", ocr_text, prompt)
+    return call_ai_ocr(await file.read(), file.filename or "page.png", ocr_text, prompt, model)
 
 
 @app.post("/api/layout")
