@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tibetan_ocr_bridge import call_ai_ocr
+from tibetan_ocr_bridge import call_ai_layout, call_ai_line_preview, call_ai_ocr
 from tibetan_translation_bridge import call_translation
 
 
@@ -201,6 +201,21 @@ async def ai_ocr(
     prompt: str = Form(""),
 ) -> dict[str, Any]:
     return call_ai_ocr(await file.read(), file.filename or "page.png", ocr_text, prompt)
+
+
+@app.post("/api/layout")
+async def ai_layout(file: UploadFile = File(...), line_count: int = Form(0)) -> dict[str, Any]:
+    return call_ai_layout(await file.read(), line_count)
+
+
+@app.post("/api/line-preview")
+async def ai_line_preview(
+    file: UploadFile = File(...), bbox: str = Form(...), review_image: str = Form("")
+) -> dict[str, Any]:
+    try:
+        return call_ai_line_preview(await file.read(), bbox, review_image)
+    except (ValueError, KeyError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/translate")

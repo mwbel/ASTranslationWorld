@@ -16,7 +16,7 @@ vm.runInContext(`
   goToPage=async(page)=>{state.pageNum=page;};
   saveCachedResults=()=>saved.push(state.pageNum);
   runOcrForCurrentPage=async(options)=>{
-    if(options.mode!=='bdrc'||!options.skipPageSync||!options.skipBusy) throw Error('wrong route');
+    if(options.mode!=='ai'||!options.skipPageSync||!options.skipBusy) throw Error('wrong route');
     visited.push(state.pageNum);
     if(state.pageNum===3) throw Error('offline');
     state.ocrResults.set(state.pageNum,{text:'བོད་',lines:[{text:'བོད་'}]});

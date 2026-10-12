@@ -7,7 +7,7 @@
 - 同一仓库同时保留本地与 Zeabur 两种运行方式。
 - Zeabur 运行前端、OSS 持久化 API、AI Vision OCR 和藏译汉适配器。
 - 一个私有 OSS Bucket 保存全部待校对书籍、状态和导出；按 `tibetan-proofreading/books/<book_id>/` 隔离。
-- 本地 BDRC 依赖 macOS 应用模型，不能直接复制进 Linux 容器。Zeabur 通过 `BDRC_OCR_UPSTREAM_URL` 调用独立部署的 BDRC 服务；未配置时 `/health` 会明确显示 `bdrc.configured=false`，不会伪装为可用。
+- 服务器版只调用 Gemini Vision AI OCR；传统版式将整页原图送给模型，并要求只转录中间栏。BDRC 依赖本机模型，服务器不启动也不调用它。已有项目中的 BDRC 历史结果仍保留供查看。
 - 本地 `127.0.0.1` 工作流不变，仍使用本地端口与 localStorage。
 
 ## OSS Bucket
@@ -38,9 +38,6 @@ OSS_ACCESS_KEY_SECRET=<RAM 子用户 AccessKey Secret>
 OSS_PREFIX=tibetan-proofreading
 MAX_UPLOAD_BYTES=209715200
 
-# 真正 BDRC 初稿服务；没有独立 Linux/GPU 服务时先留空
-BDRC_OCR_UPSTREAM_URL=https://<bdrc-service>/ocr
-
 # AI Vision OCR：当前线上使用 Gemini OpenAI-compatible 入口
 AI_VISION_PROVIDER=openai-compatible
 AI_VISION_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
@@ -70,7 +67,7 @@ AI_VISION_MODEL=<vision-model-id>
 1. 在 Zeabur 项目中新增 Git Service，选择 GitHub 仓库 `mwbel/ASTranslationWorld` 和部署分支。
 2. 仓库根目录的 `zbpack.json` 会指定 `Dockerfile.zeabur`。
 3. 填入上述 Variables，生成域名并部署。
-4. 检查 `https://<domain>/health`，必须满足 `oss.configured=true`；需要 BDRC 对照时还必须满足 `bdrc.configured=true`。
+4. 检查 `https://<domain>/health`，必须满足 `oss.configured=true` 和 `ai_ocr.configured=true`；`bdrc.status=disabled` 是服务器版的预期状态。
 5. 打开 `https://<domain>/tibetan-proofreading-app/`。
 
 ## 数据布局与验证
@@ -93,4 +90,4 @@ tibetan-proofreading/books/<book_id>/exports/<时间>-<类型>.md
 - OSS：建书、`state.json` 更新/读取、Markdown 导出回写通过。
 - 藏译中：真实藏文请求成功，Gemini 2.5 Flash 返回中文译文。
 - AI Vision OCR：真实图片请求成功。
-- BDRC：尚未配置 `BDRC_OCR_UPSTREAM_URL`。智能模式会明确提示后回退到 AI Vision；尚不能称为完整 BDRC + LLM 双结果对照。
+- 这条历史验证记录对应旧界面；当前服务器分支已移除 BDRC 识别入口，使用 Gemini Vision 识别。

@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20261011-center-page-models";
+const APP_BUILD_ID = "20261012-server-ai-only";
 let pageReviewPending = false;
 const REVIEW_MODEL_DEFAULTS = { qwen: ["qwen3.8-max", "qwen3.7-plus"], gemini: ["gemini-3.8-flash", "gemini-3.1-flash-lite"] };
 const reviewCatalogRequests = new Map();
@@ -63,7 +63,7 @@ const OCR_PROFILES = Object.freeze({
     label: "传统经书印刷版式",
     model: "Woodblock-Stacks",
     lineMode: "line",
-    prompt: "这是传统藏文经书/木刻印刷版式。优先保留堆叠字、上加字、下加字、朱色标记和经书行序；不要把边框、页码或边注误并入正文。",
+    prompt: "这是传统藏文经书/木刻印刷版式。只识别中间栏正文，忽略左右边栏、边框和页码。优先保留堆叠字、上加字、下加字、朱色标记和经书行序。",
   },
   modern: {
     label: "现代印刷版式",
@@ -357,8 +357,6 @@ function isCloudDeployment() {
 }
 
 function configureDeploymentEndpoints() {
-  if (!isCloudDeployment()) return;
-  els.endpointInput.value = `${window.location.origin}/api/ocr`;
   els.aiOcrEndpointInput.value = `${window.location.origin}/api/ai-ocr`;
   els.translateEndpointInput.value = `${window.location.origin}/api/translate`;
 }
@@ -471,7 +469,7 @@ function wireEvents() {
     const profile = getSelectedOcrProfile();
     state.ocrProfile = profile.id;
     saveCachedResults();
-    setStatus(`资料类型已切换为“${profile.label}”，下次识别将使用 ${profile.model} 模型。`, "ok");
+    setStatus(`资料类型已切换为“${profile.label}”，下次将使用 Gemini Vision 识别。`, "ok");
   });
   bindOptionalClick("checkTranslateButton", checkTranslateService);
   els.ocrButton.addEventListener("click", runOcrForCurrentPage);
@@ -3142,12 +3140,11 @@ async function runOcrForCurrentPage(options = {}) {
 
   discardCurrentBadPdfTextResult();
 
-  const mode = options.mode || getOcrMode();
   const profile = getSelectedOcrProfile();
-  const endpoint = mode === "ai" ? els.aiOcrEndpointInput.value.trim() : els.endpointInput.value.trim();
-  const engineLabel = mode === "ai" ? "Gemini Vision" : `BDRC ${profile.model}`;
+  const endpoint = els.aiOcrEndpointInput.value.trim();
+  const engineLabel = "Gemini Vision";
   if (!endpoint) {
-    setStatus(`请填写 ${mode === "ai" ? "Gemini Vision" : "BDRC"} OCR 接口地址。`, "warn");
+    setStatus("请填写 Gemini Vision OCR 接口地址。", "warn");
     return;
   }
 
@@ -3158,29 +3155,22 @@ async function runOcrForCurrentPage(options = {}) {
     setStatus(`正在生成第 ${state.pageNum} 页 OCR 图片...`, "warn");
     const blob = await getCurrentPageImageBlob();
 
-    if (mode === "ai" && profile.id === "traditional") {
-      await runTraditionalGeminiLines(endpoint, blob);
-      return;
-    }
-
     setStatus(`正在调用 ${engineLabel} OCR 接口...`, "warn");
     const parsed = await callOcrEndpoint(endpoint, blob, {
-      engine: mode === "ai" ? "ai_vision" : "bdrc",
+      engine: "ai_vision",
       mode: profile.id,
       ocr_profile: profile.id,
-      bdrc_model: profile.model,
-      bdrc_line_mode: profile.lineMode,
-      prompt: mode === "ai" ? buildAiOcrPrompt("", profile.id) : "",
+      prompt: buildAiOcrPrompt("", profile.id),
     });
     saveOcrResultFromParsed(
       parsed,
-      mode === "ai" ? "ai-vision" : "bdrc",
+      "ai-vision",
       `第 ${state.pageNum} 页 ${engineLabel} 识别完成。${parsed.raw?.failed_line_count ? ` ${parsed.raw.failed_line_count} 行失败或未返回文字，请逐行重新识别。` : ""}`,
       [], parsed.raw?.line_ocr ? "proofread" : "lines"
     );
   } catch (error) {
     setStatus(
-      `${engineLabel} OCR 调用失败：${formatNetworkError(error, endpoint, mode === "ai" ? "ai-ocr" : "bdrc-ocr")}`,
+      `${engineLabel} OCR 调用失败：${formatNetworkError(error, endpoint, "ai-ocr")}`,
       "error"
     );
     throw error;
@@ -3331,7 +3321,7 @@ async function runOcrForRemainingPages() {
 }
 
 function getOcrMode() {
-  return els.ocrModeSelect?.value === "ai" ? "ai" : "bdrc";
+  return "ai";
 }
 
 function getSelectedOcrProfile() {
@@ -3413,12 +3403,12 @@ function needsSourceCoordinateHydration(result) {
 
 function getAiVisionLayoutEndpoint() {
   const endpoint = els.aiOcrEndpointInput.value.trim();
-  return endpoint.replace(/\/ocr\/?$/, "/layout");
+  return endpoint.replace(/\/(?:ai-)?ocr\/?$/, "/layout");
 }
 
 function getAiVisionLineReviewEndpoint() {
   const endpoint = els.aiOcrEndpointInput.value.trim();
-  return endpoint.replace(/\/ocr\/?$/, "/line-review");
+  return endpoint.replace(/\/(?:ai-)?ocr\/?$/, "/line-review");
 }
 
 async function callAiVisionLineReviewEndpoint(endpoint, blob, bbox, draftText = "", model = "", reviewImage = null, regionId = "", primaryLine = false) {
@@ -5388,7 +5378,8 @@ function renderProofreadChoiceSelect(index, savedSide, candidateLabel = "Gemini 
   select.className = "proofread-choice-select";
   select.name = `proofread-choice-${state.pageNum}-${index}`;
   select.setAttribute("aria-label", `第 ${index + 1} 个 block 采用版本`);
-  const choices = [["bdrc", "BDRC"], ["llm", candidateLabel]];
+  const choices = [["llm", candidateLabel]];
+  if (String(compare?.bdrc?.lines?.[index]?.text || "").trim()) choices.unshift(["bdrc", "BDRC 历史结果"]);
   if (compare?.qwenReviews?.some((review) => review.index === index)) choices.push(["qwen", "千问候选"]);
   if (compare?.openaiReviews?.some((review) => review.index === index)) choices.push(["openai", "OpenAI 候选"]);
   choices.forEach(([value, text]) => {

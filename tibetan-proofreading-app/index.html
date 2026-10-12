@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="./styles.css?v=20261011-proofread-autosave-v63" />
     <script src="./vendor/pdf.min.js" defer></script>
     <script src="./vendor/lucide.min.js" defer></script>
-    <script src="./app.js?v=20261012-gemini-review-model-menu" defer></script>
+    <script src="./app.js?v=20261012-server-ai-only" defer></script>
   </head>
   <body>
     <main class="app-shell ocr-only-mode ai-only-mode">
@@ -103,7 +103,7 @@
             <div class="home-entry-body">
               <span class="eyebrow">OCR Proofreading</span>
               <h3>藏文 OCR 识别和校对</h3>
-              <p>分页面查看原文，对照 BDRC 与 Gemini Vision 识别结果，逐 block 标错、选择并保存最终 OCR 文本。</p>
+              <p>分页面查看原文，使用 Gemini Vision 识别，并逐 block 标错、复核及保存最终 OCR 文本。</p>
             </div>
             <div class="home-entry-actions">
               <button id="homeNewOcrProjectButton" class="primary-button compact" type="button">
@@ -277,8 +277,7 @@
             <label class="ocr-profile-control ocr-engine-control" for="ocrModeSelect">
               <span>引擎</span>
               <select id="ocrModeSelect" aria-label="OCR 识别引擎">
-                <option value="bdrc" selected>BDRC</option>
-                <option value="ai">Gemini Vision（逐行）</option>
+                <option value="ai" selected>Gemini Vision</option>
               </select>
             </label>
             <button id="batchOcrButton" class="ghost-button compact" type="button" disabled>批量识别剩余页</button>
