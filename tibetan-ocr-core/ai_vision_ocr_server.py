@@ -1600,7 +1600,7 @@ def call_model_aggregator(image_bytes: bytes, filename: str, prompt: str) -> dic
 
 
 def call_openai_compatible_images(
-    images: list[tuple[bytes, str]], prompt: str
+    images: list[tuple[bytes, str]], prompt: str, model_override: str = ""
 ) -> dict[str, Any]:
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     content.extend({
@@ -1608,7 +1608,7 @@ def call_openai_compatible_images(
         "image_url": {"url": image_data_url(image_bytes, filename)},
     } for image_bytes, filename in images)
     body = {
-        "model": MODEL,
+        "model": model_override or MODEL,
         "temperature": TEMPERATURE,
         "max_tokens": MAX_TOKENS,
         "messages": [
@@ -1630,7 +1630,7 @@ def call_openai_compatible_images(
         "layout_bboxes": layout_bboxes,
         "layout_bbox_source": "projection",
         "raw": raw,
-        "model": MODEL,
+        "model": raw.get("model") or model_override or MODEL,
         "provider": "openai-compatible",
         "upstream": chat_completions_url(),
     }
@@ -1709,16 +1709,24 @@ def call_model_aggregator_gemini_page(image_bytes: bytes, filename: str, prompt:
 
 
 def call_gemini_page_review(image_bytes: bytes, filename: str, rows: list, model: str = "") -> dict[str, Any]:
-    if not USE_MODEL_AGGREGATOR:
-        raise RuntimeError("Gemini 整页识别需要本地模型聚合服务。")
     model = model.removeprefix("gemini:") if model else MODEL.removeprefix("gemini:")
     if model not in GEMINI_REVIEW_MODELS:
         raise RuntimeError("Gemini 复核模型不在允许列表中。")
     targets = normalize_center_page_rows(rows)
-    result = call_model_aggregator_gemini_page(image_bytes, filename, center_page_prompt(targets), model)
-    lines = parse_center_page_response(str(result.get("text") or ""), targets)
+    prompt = center_page_prompt(targets)
+    if USE_MODEL_AGGREGATOR:
+        result = call_model_aggregator_gemini_page(image_bytes, filename, prompt, model)
+        response_text = str(result.get("text") or "")
+        actual_model = result.get("model", f"gemini:{model}")
+    else:
+        result = call_openai_compatible_images([(image_bytes, filename)], prompt, model_override=model)
+        response_text = str(result.get("text") or "")
+        actual_model = result.get("model", model)
+        if actual_model not in {model, f"gemini:{model}"}:
+            raise RuntimeError("Gemini Vision 复核响应模型与所选模型不一致，结果未采用。")
+    lines = parse_center_page_response(response_text, targets)
     return {"text": "\n".join(line["text"] for line in lines), "lines": lines,
-            "model": result.get("model", f"gemini:{model}"), "provider": "gemini",
+            "model": actual_model, "provider": "gemini",
             "recognition_scope": "whole-page"}
 
 
@@ -1914,7 +1922,7 @@ def call_qwen_page_review(image_bytes: bytes, filename: str, rows: list, model: 
 
 def review_models_payload() -> dict[str, Any]:
     return {"qwen": {"models": QWEN_REVIEW_MODELS, "configured": bool(QWEN_REVIEW_API_KEY and QWEN_REVIEW_BASE_URL)},
-            "gemini": {"models": GEMINI_REVIEW_MODELS, "configured": USE_MODEL_AGGREGATOR,
+            "gemini": {"models": GEMINI_REVIEW_MODELS, "configured": USE_MODEL_AGGREGATOR or bool(API_KEY and BASE_URL),
                        "billing_note": "免费层级与剩余额度请以 AI Studio 为准；模型列表不代表额度承诺。"}}
 
 

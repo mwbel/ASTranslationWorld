@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tibetan_ocr_bridge import call_ai_layout, call_ai_line_preview, call_ai_ocr
+from tibetan_ocr_bridge import call_ai_layout, call_ai_line_preview, call_ai_ocr, call_ai_page_review, call_ai_review_models
 from tibetan_translation_bridge import call_translation
 
 
@@ -214,6 +214,26 @@ async def ai_line_preview(
 ) -> dict[str, Any]:
     try:
         return call_ai_line_preview(await file.read(), bbox, review_image)
+    except (ValueError, KeyError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/review-models")
+def review_models() -> dict[str, Any]:
+    return call_ai_review_models()
+
+
+@app.post("/api/{provider}-page-review")
+async def ai_page_review(
+    provider: str,
+    file: UploadFile = File(...),
+    rows: str = Form(...),
+    model: str = Form(""),
+) -> dict[str, Any]:
+    if provider not in {"gemini", "qwen"}:
+        raise HTTPException(404, "未知的复核模型")
+    try:
+        return call_ai_page_review(provider, await file.read(), file.filename or "page.png", json.loads(rows), model)
     except (ValueError, KeyError, RuntimeError) as exc:
         raise HTTPException(400, str(exc)) from exc
 

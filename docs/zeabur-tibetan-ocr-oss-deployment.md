@@ -45,6 +45,12 @@ AI_VISION_API_KEY=<Gemini API key>
 AI_VISION_MODEL=gemini-2.5-flash
 AI_VISION_TIMEOUT=180
 
+# Gemini Vision 整页复核可复用上述 OpenAI-compatible 配置；复核模型会按前端所选模型发送。
+# 千问整页复核单独配置官方 DashScope 兼容接口：
+QWEN_REVIEW_API_KEY=<DashScope API key>
+QWEN_REVIEW_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_REVIEW_MODELS=qwen3.8-max,qwen3.7-plus
+
 # 藏译汉：当前线上使用相同 Gemini 入口
 TRANSLATE_PROVIDER=openai_compatible
 OPENAI_TRANSLATE_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
@@ -91,3 +97,4 @@ tibetan-proofreading/books/<book_id>/exports/<时间>-<类型>.md
 - 藏译中：真实藏文请求成功，Gemini 2.5 Flash 返回中文译文。
 - AI Vision OCR：真实图片请求成功。
 - 这条历史验证记录对应旧界面；当前服务器分支已移除 BDRC 识别入口，使用 Gemini Vision 识别。
+- `/api/review-models` 会报告 Gemini 与千问复核的模型及配置状态；对应整页复核接口使用 `/api/gemini-page-review` 和 `/api/qwen-page-review`。
