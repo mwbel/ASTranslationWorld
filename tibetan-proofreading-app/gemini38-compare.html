@@ -22,12 +22,12 @@
   </style>
 </head>
 <body>
-  <header><h1>Gemini 4 藏文整页识别对照</h1><p>原图逐页识别。正确校对文本仅供对照，结果通过“导出”保存。</p></header>
+  <header><h1>Gemini 4 藏文整页识别对照</h1><p>原图逐页识别。正确校对文本仅供对照，识别结果可导出为 TXT。</p></header>
   <div class="controls">
     <label>原始 PDF<input id="pdfFile" type="file" accept="application/pdf,.pdf"></label>
     <label>正确校对 Markdown<input id="referenceFile" type="file" accept=".md,text/markdown,text/plain"></label>
     <button id="previous">上一页</button><strong id="pageNumber">未加载 PDF</strong><button id="next">下一页</button>
-    <button id="runPage">识别当前页</button><button id="runAll">依次识别全部页</button><button id="stop">停止批量</button><button id="export">导出对照 Markdown</button>
+    <button id="runPage">识别当前页</button><button id="runAll">依次识别全部页</button><button id="stop">停止批量</button><button id="export">导出识别 TXT</button>
   </div>
   <p id="status" role="status">请选择原始 PDF 和正确校对 Markdown。请先在已设置 GEMINI_API_KEY 的终端运行 gemini4_compare_service.sh start；Gemini 4 key 需具备付费额度。</p>
   <main>

@@ -32,25 +32,16 @@
       return { index: row.index, bbox: row.bbox, text: found.text };
     });
   }
-  function fence(text) {
-    const longest = Math.max(0, ...[...String(text).matchAll(/~+/g)].map(m => m[0].length));
-    return '~'.repeat(Math.max(3, longest + 1));
-  }
-  function section(label, text) {
-    const marker = fence(text);
-    return `### ${label}\n\n${marker}text\n${text}\n${marker}`;
-  }
-  function exportMarkdown(results, reference, pageCount) {
-    const parts = ['# Gemini 4 藏文整页识别与校对对照', ''];
+  function exportText(results, pageCount) {
+    const parts = ['Gemini 4 藏文逐页识别结果', ''];
     for (let page = 1; page <= pageCount; page++) {
       const result = results.get(page);
-      parts.push(`## 第 ${page} 页`, '', `识别模型：${result?.model || MODEL}`, '',
-        section('Gemini 4 识别结果', result ? result.lines.map(line => line.text).join('\n') : ''), '',
-        section('正确校对文本', reference.get(page) || ''), '');
+      if (result) parts.push(`第 ${page} 页`, result.lines.map(line => line.text).join('\n'), '');
+      else parts.push(`第 ${page} 页（未识别）`, '');
     }
     return parts.join('\n');
   }
-  const api = { parseReference, validateReview, exportMarkdown };
+  const api = { parseReference, validateReview, exportText };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (!root.document) return;
   const $ = id => root.document.getElementById(id);
@@ -132,9 +123,9 @@
   $('stop').addEventListener('click', () => { stopped = true; status('当前页请求结束后停止。'); });
   $('export').addEventListener('click', () => {
     if (!pdf) { status('请先加载 PDF。', true); return; }
-    const blob = new Blob([exportMarkdown(results, reference, pdf.numPages)], { type: 'text/markdown;charset=utf-8' });
+    const blob = new Blob([exportText(results, pdf.numPages)], { type: 'text/plain;charset=utf-8' });
     const link = root.document.createElement('a'); link.href = URL.createObjectURL(blob);
-    link.download = 'Gemini-4-整页识别与校对对照.md'; link.click();
+    link.download = 'Gemini-4-逐页识别结果.txt'; link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     status(`已导出；其中 ${results.size} / ${pdf.numPages} 页已识别。`);
   });

@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { parseReference, validateReview, exportMarkdown } = require('../gemini38-compare.js');
+const { parseReference, validateReview, exportText } = require('../gemini38-compare.js');
 
 test('imports the 24 page corrected Markdown without mixing page text', () => {
   const md = '## 第 1 页\n\n### 正确校对文本\n\n~~~text\n甲\n~~~\n\n## 第 2 页\n\n### 当前采用的校对文本\n\n~~~text\n乙\n~~~\n';
@@ -17,7 +17,11 @@ test('rejects missing rows and wrong model before accepting OCR', () => {
   assert.deepEqual(validateReview({ model: 'gemini:gemini-4-argon', recognition_scope: 'whole-page', lines: [{ index: 1, text: 'ཁ' }, { index: 0, text: 'ཀ' }] }, expected).map(x => x.text), ['ཀ', 'ཁ']);
 });
 
-test('exports recognition and reference as separate sections', () => {
-  const out = exportMarkdown(new Map([[1, { lines: [{ text: 'ཀ' }], model: 'gemini:gemini-4-argon' }]]), new Map([[1, 'ཁ']]), 1);
-  assert.match(out, /## 第 1 页[\s\S]*### Gemini 4 识别结果[\s\S]*ཀ[\s\S]*### 正确校对文本[\s\S]*ཁ/);
+test('exports recognized text in page order and marks pages not yet recognized', () => {
+  const out = exportText(new Map([
+    [2, { lines: [{ text: 'ཁ' }, { text: 'ག' }] }],
+    [1, { lines: [{ text: 'ཀ' }] }],
+  ]), 3);
+  assert.equal(out, 'Gemini 4 藏文逐页识别结果\n\n第 1 页\nཀ\n\n第 2 页\nཁ\nག\n\n第 3 页（未识别）\n');
+  assert.doesNotMatch(out, /正确校对文本|~~~|```/);
 });
