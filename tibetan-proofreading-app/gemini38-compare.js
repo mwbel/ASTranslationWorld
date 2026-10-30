@@ -1,20 +1,6 @@
 (function (root) {
   'use strict';
   const MODEL = 'gemini:gemini-4-argon';
-  function parseReference(markdown) {
-    const source = String(markdown || '').replace(/^\uFEFF/, '');
-    const marks = [...source.matchAll(/^## 第 (\d+) 页\s*$/gm)];
-    const pages = new Map();
-    for (let i = 0; i < marks.length; i++) {
-      const page = Number(marks[i][1]);
-      const body = source.slice(marks[i].index, i + 1 < marks.length ? marks[i + 1].index : source.length);
-      const match = body.match(/^### (?:正确校对文本|当前采用的校对文本)\s*\n+~~~text\n([\s\S]*?)\n~~~\s*$/m);
-      if (!match || pages.has(page)) throw new Error(`第 ${page} 页的校对文本缺失或重复`);
-      pages.set(page, match[1]);
-    }
-    if (!pages.size) throw new Error('未找到带页码的校对文本');
-    return pages;
-  }
   function validateReview(payload, expectedRows) {
     if (payload?.model !== MODEL || payload?.recognition_scope !== 'whole-page') {
       throw new Error('返回的模型身份或识别范围不符');
@@ -41,18 +27,17 @@
     }
     return parts.join('\n');
   }
-  const api = { parseReference, validateReview, exportText };
+  const api = { validateReview, exportText };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (!root.document) return;
   const $ = id => root.document.getElementById(id);
-  let pdf = null, reference = new Map(), results = new Map(), current = 1, busy = false, stopped = false;
+  let pdf = null, results = new Map(), current = 1, busy = false, stopped = false;
   function status(message, error = false) { $('status').textContent = message; $('status').className = error ? 'error' : ''; }
   function show() {
     const count = pdf?.numPages || 0;
     $('pageNumber').textContent = count ? `${current} / ${count}` : '未加载 PDF';
     $('previous').disabled = !count || current <= 1 || busy;
     $('next').disabled = !count || current >= count || busy;
-    $('referenceText').value = reference.get(current) || '';
     $('recognizedText').value = results.get(current)?.lines.map(x => x.text).join('\n') || '';
     $('recognitionMeta').textContent = results.has(current) ? `已识别 ${results.get(current).lines.length} 行 · ${MODEL}` : '本页尚未重新识别';
   }
@@ -93,13 +78,9 @@
     const bytes = new Uint8Array(await file.arrayBuffer());
     pdf = await root.pdfjsLib.getDocument({ data: bytes }).promise;
     current = 1; results = new Map(); show(); await renderPage(current);
-    status(`已加载 ${pdf.numPages} 页 PDF。请选择校对稿，然后开始识别。`);
+    status(`已加载 ${pdf.numPages} 页 PDF。可识别当前页或依次识别全部页。`);
   }
   $('pdfFile').addEventListener('change', async e => { try { await loadPdf(e.target.files[0]); } catch (err) { status(err.message, true); } });
-  $('referenceFile').addEventListener('change', async e => {
-    try { reference = parseReference(await e.target.files[0].text()); show(); status(`已导入 ${reference.size} 页校对文本。`); }
-    catch (err) { status(err.message, true); }
-  });
   for (const [id, delta] of [['previous', -1], ['next', 1]]) $(id).addEventListener('click', async () => {
     current += delta; show(); try { await renderPage(current); } catch (err) { status(err.message, true); }
   });

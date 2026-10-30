@@ -1,12 +1,14 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { parseReference, validateReview, exportText } = require('../gemini38-compare.js');
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
+const { validateReview, exportText } = require('../gemini38-compare.js');
 
-test('imports the 24 page corrected Markdown without mixing page text', () => {
-  const md = '## 第 1 页\n\n### 正确校对文本\n\n~~~text\n甲\n~~~\n\n## 第 2 页\n\n### 当前采用的校对文本\n\n~~~text\n乙\n~~~\n';
-  const pages = parseReference(md);
-  assert.equal(pages.get(1), '甲');
-  assert.equal(pages.get(2), '乙');
+test('recognition page needs only a PDF and shows no reference comparison', () => {
+  const html = readFileSync(join(__dirname, '../gemini38-compare.html'), 'utf8');
+  assert.match(html, /id="pdfFile"/);
+  assert.match(html, /id="export">导出识别 TXT/);
+  assert.doesNotMatch(html, /referenceFile|referenceText|正确校对/);
 });
 
 test('rejects missing rows and wrong model before accepting OCR', () => {
