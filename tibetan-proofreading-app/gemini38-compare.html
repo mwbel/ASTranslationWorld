@@ -11,7 +11,7 @@
     .controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; padding: 16px 24px; background: white; border-bottom: 1px solid #dce2e8; }
     label { display: grid; gap: 5px; font-size: 13px; } button, input { font: inherit; }
     button { padding: 8px 12px; border: 1px solid #9caebb; border-radius: 7px; background: white; cursor: pointer; }
-    button:disabled { opacity: .5; cursor: default; } #runPage, #runAll { background: #246399; border-color: #246399; color: white; }
+    button:disabled { opacity: .5; cursor: default; } #runPage, #runAll, #runRemaining { background: #246399; border-color: #246399; color: white; }
     #status { margin: 12px 24px; padding: 10px 14px; background: #e5eff7; border-radius: 7px; min-height: 20px; }
     #status.error { color: #9a1f20; background: #fde8e8; }
     main { display: grid; grid-template-columns: minmax(300px, 1.2fr) minmax(300px, 1fr); gap: 14px; padding: 0 24px 24px; }
@@ -25,8 +25,9 @@
   <header><h1>Gemini 4 藏文逐页识别</h1><p>上传 PDF，逐页识别原图，并导出 Gemini 4 识别结果 TXT。</p></header>
   <div class="controls">
     <label>原始 PDF<input id="pdfFile" type="file" accept="application/pdf,.pdf"></label>
+    <label>导入已有识别 TXT（续跑）<input id="resumeFile" type="file" accept=".txt,text/plain"></label>
     <button id="previous">上一页</button><strong id="pageNumber">未加载 PDF</strong><button id="next">下一页</button>
-    <button id="runPage">识别当前页</button><button id="runAll">依次识别全部页</button><button id="stop">停止批量</button><button id="export">导出识别 TXT</button>
+    <button id="runPage">识别当前页</button><button id="runAll">依次识别全部页</button><button id="runRemaining">识别剩余页</button><button id="stop">停止批量</button><button id="export">导出识别 TXT</button>
   </div>
   <p id="status" role="status">请选择原始 PDF。请先在已设置 GEMINI_API_KEY 的终端运行 gemini4_compare_service.sh start；Gemini 4 key 需具备付费额度。</p>
   <main>
@@ -34,6 +35,6 @@
     <section><h2>Gemini 4 识别结果</h2><small id="recognitionMeta">本页尚未重新识别</small><textarea id="recognizedText" readonly aria-label="Gemini 4 识别结果"></textarea></section>
   </main>
   <script src="./vendor/pdf.min.js"></script>
-  <script src="./gemini38-compare.js?v=202610300955"></script>
+  <script src="./gemini38-compare.js?v=202610301025"></script>
 </body>
 </html>

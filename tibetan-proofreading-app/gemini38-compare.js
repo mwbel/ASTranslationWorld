@@ -27,7 +27,30 @@
     }
     return parts.join('\n');
   }
-  const api = { validateReview, exportText };
+  function parseExportText(source, pageCount) {
+    const text = String(source || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+    if (!text.startsWith('Gemini 4 藏文逐页识别结果\n')) throw new Error('请选择此页面导出的 Gemini 4 识别 TXT。');
+    const pages = [...text.matchAll(/^第 (\d+) 页(（未识别）)?$/gm)];
+    if (pages.length !== pageCount) throw new Error('TXT 页数与当前 PDF 不一致。');
+    const restored = new Map();
+    for (let i = 0; i < pages.length; i++) {
+      const [marker, number, missing] = pages[i];
+      if (Number(number) !== i + 1) throw new Error('TXT 页码与当前 PDF 不一致。');
+      const end = i + 1 < pages.length ? pages[i + 1].index : text.length;
+      const body = text.slice(pages[i].index + marker.length, end).replace(/^\n/, '').replace(/\n+$/, '');
+      if (missing) {
+        if (body.trim()) throw new Error(`TXT 第 ${number} 页标记为未识别，却含有文本。`);
+      } else {
+        if (!body.trim()) throw new Error(`TXT 第 ${number} 页识别文本为空。`);
+        restored.set(Number(number), { model: MODEL, lines: body.split('\n').map(text => ({ text })) });
+      }
+    }
+    return restored;
+  }
+  function remainingPages(results, pageCount) {
+    return Array.from({ length: pageCount }, (_, index) => index + 1).filter(page => !results.has(page));
+  }
+  const api = { validateReview, exportText, parseExportText, remainingPages };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (!root.document) return;
   const $ = id => root.document.getElementById(id);
@@ -38,6 +61,7 @@
     $('pageNumber').textContent = count ? `${current} / ${count}` : '未加载 PDF';
     $('previous').disabled = !count || current <= 1 || busy;
     $('next').disabled = !count || current >= count || busy;
+    $('runRemaining').disabled = !count || busy || remainingPages(results, count).length === 0;
     $('recognizedText').value = results.get(current)?.lines.map(x => x.text).join('\n') || '';
     $('recognitionMeta').textContent = results.has(current) ? `已识别 ${results.get(current).lines.length} 行 · ${MODEL}` : '本页尚未重新识别';
   }
@@ -81,6 +105,15 @@
     status(`已加载 ${pdf.numPages} 页 PDF。可识别当前页或依次识别全部页。`);
   }
   $('pdfFile').addEventListener('change', async e => { try { await loadPdf(e.target.files[0]); } catch (err) { status(err.message, true); } });
+  $('resumeFile').addEventListener('change', async e => {
+    try {
+      if (!pdf) throw new Error('请先加载与 TXT 对应的 PDF。');
+      const restored = parseExportText(await e.target.files[0].text(), pdf.numPages);
+      for (const [page, result] of restored) if (!results.has(page)) results.set(page, result);
+      show(); status(`已恢复 ${results.size} / ${pdf.numPages} 页识别结果，可点击“识别剩余页”。`);
+    } catch (err) { status(err.message, true); }
+    finally { e.target.value = ''; }
+  });
   for (const [id, delta] of [['previous', -1], ['next', 1]]) $(id).addEventListener('click', async () => {
     current += delta; show(); try { await renderPage(current); } catch (err) { status(err.message, true); }
   });
@@ -90,17 +123,23 @@
     catch (err) { status(`第 ${current} 页失败：${err.message}`, true); }
     finally { busy = false; show(); }
   });
-  $('runAll').addEventListener('click', async () => {
-    if (!pdf || busy) return; busy = true; stopped = false; show();
+  async function runBatch(onlyRemaining) {
+    if (!pdf || busy) return;
+    const pages = onlyRemaining ? remainingPages(results, pdf.numPages) : Array.from({ length: pdf.numPages }, (_, index) => index + 1);
+    if (!pages.length) { status('全部页已识别，可导出 TXT。'); return; }
+    busy = true; stopped = false; show();
     try {
-      for (let page = 1; page <= pdf.numPages && !stopped; page++) {
+      for (const page of pages) {
+        if (stopped) break;
         current = page; show(); await renderPage(page); status(`正在识别第 ${page} / ${pdf.numPages} 页…`);
         try { await recognize(page); } catch (err) { status(`第 ${page} 页失败：${err.message}`, true); return; }
       }
       status(stopped ? '已停止；已完成的页可导出。' : `已完成 ${results.size} 页识别。`);
     } catch (err) { status(err.message, true); }
     finally { busy = false; show(); }
-  });
+  }
+  $('runAll').addEventListener('click', () => runBatch(false));
+  $('runRemaining').addEventListener('click', () => runBatch(true));
   $('stop').addEventListener('click', () => { stopped = true; status('当前页请求结束后停止。'); });
   $('export').addEventListener('click', () => {
     if (!pdf) { status('请先加载 PDF。', true); return; }

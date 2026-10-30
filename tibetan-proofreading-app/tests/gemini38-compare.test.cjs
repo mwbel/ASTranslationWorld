@@ -2,13 +2,27 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { validateReview, exportText } = require('../gemini38-compare.js');
+const { validateReview, exportText, parseExportText, remainingPages } = require('../gemini38-compare.js');
 
 test('recognition page needs only a PDF and shows no reference comparison', () => {
   const html = readFileSync(join(__dirname, '../gemini38-compare.html'), 'utf8');
   assert.match(html, /id="pdfFile"/);
+  assert.match(html, /id="resumeFile"/);
+  assert.match(html, /id="runRemaining">识别剩余页/);
   assert.match(html, /id="export">导出识别 TXT/);
   assert.doesNotMatch(html, /referenceFile|referenceText|正确校对/);
+});
+
+test('imports a partial TXT export and resumes only missing pages', () => {
+  const partial = exportText(new Map([
+    [1, { lines: [{ text: 'ཀ' }] }],
+    [3, { lines: [{ text: 'ག' }] }],
+  ]), 4);
+  const restored = parseExportText(partial, 4);
+  assert.equal(restored.get(1).lines[0].text, 'ཀ');
+  assert.equal(restored.get(3).lines[0].text, 'ག');
+  assert.deepEqual(remainingPages(restored, 4), [2, 4]);
+  assert.throws(() => parseExportText(partial, 3), /页数|页码/);
 });
 
 test('rejects missing rows and wrong model before accepting OCR', () => {
