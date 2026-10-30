@@ -22,7 +22,7 @@
   </style>
 </head>
 <body>
-  <header><h1>Gemini 4 藏文逐页识别</h1><p>上传 PDF，逐页识别原图，并导出 Gemini 4 识别结果 TXT。</p></header>
+  <header><h1>Gemini 4 藏文逐页识别</h1><p>上传 PDF，逐页识别原图，并导出 Gemini 4 识别结果 TXT。已识别页会自动保存在此浏览器中。</p></header>
   <div class="controls">
     <label>原始 PDF<input id="pdfFile" type="file" accept="application/pdf,.pdf"></label>
     <label>导入已有识别 TXT（续跑）<input id="resumeFile" type="file" accept=".txt,text/plain"></label>
@@ -35,6 +35,6 @@
     <section><h2>Gemini 4 识别结果</h2><small id="recognitionMeta">本页尚未重新识别</small><textarea id="recognizedText" readonly aria-label="Gemini 4 识别结果"></textarea></section>
   </main>
   <script src="./vendor/pdf.min.js"></script>
-  <script src="./gemini38-compare.js?v=202610301025"></script>
+  <script src="./gemini38-compare.js?v=202610301040"></script>
 </body>
 </html>

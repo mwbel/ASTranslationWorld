@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { validateReview, exportText, parseExportText, remainingPages } = require('../gemini38-compare.js');
+const { validateReview, exportText, parseExportText, remainingPages, saveResults, loadSavedResults } = require('../gemini38-compare.js');
 
 test('recognition page needs only a PDF and shows no reference comparison', () => {
   const html = readFileSync(join(__dirname, '../gemini38-compare.html'), 'utf8');
@@ -23,6 +23,21 @@ test('imports a partial TXT export and resumes only missing pages', () => {
   assert.equal(restored.get(3).lines[0].text, 'ག');
   assert.deepEqual(remainingPages(restored, 4), [2, 4]);
   assert.throws(() => parseExportText(partial, 3), /页数|页码/);
+});
+
+test('saves recognized pages and restores them after a page reload', () => {
+  const items = new Map();
+  const storage = {
+    getItem: key => items.get(key) || null,
+    setItem: (key, value) => items.set(key, value),
+  };
+  const key = 'gemini4-results:pdf-fingerprint';
+  const results = new Map([[1, { lines: [{ text: 'ཀ' }] }]]);
+  saveResults(storage, key, results, 2);
+  const restored = loadSavedResults(storage, key, 2);
+  assert.equal(restored.get(1).lines[0].text, 'ཀ');
+  assert.deepEqual(remainingPages(restored, 2), [2]);
+  assert.equal(loadSavedResults(storage, 'gemini4-results:another-pdf', 2).size, 0);
 });
 
 test('rejects missing rows and wrong model before accepting OCR', () => {

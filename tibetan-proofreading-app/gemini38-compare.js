@@ -50,12 +50,23 @@
   function remainingPages(results, pageCount) {
     return Array.from({ length: pageCount }, (_, index) => index + 1).filter(page => !results.has(page));
   }
-  const api = { validateReview, exportText, parseExportText, remainingPages };
+  function saveResults(storage, key, results, pageCount) {
+    storage.setItem(key, exportText(results, pageCount));
+  }
+  function loadSavedResults(storage, key, pageCount) {
+    const saved = storage.getItem(key);
+    return saved ? parseExportText(saved, pageCount) : new Map();
+  }
+  const api = { validateReview, exportText, parseExportText, remainingPages, saveResults, loadSavedResults };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (!root.document) return;
   const $ = id => root.document.getElementById(id);
-  let pdf = null, results = new Map(), current = 1, busy = false, stopped = false;
+  let pdf = null, results = new Map(), current = 1, busy = false, stopped = false, cacheKey = '', cacheAvailable = true;
   function status(message, error = false) { $('status').textContent = message; $('status').className = error ? 'error' : ''; }
+  function persistResults() {
+    try { saveResults(root.localStorage, cacheKey, results, pdf.numPages); cacheAvailable = true; }
+    catch { cacheAvailable = false; }
+  }
   function show() {
     const count = pdf?.numPages || 0;
     $('pageNumber').textContent = count ? `${current} / ${count}` : '未加载 PDF';
@@ -93,6 +104,7 @@
     const response = await post('/gemini-page-review', blob, { rows: JSON.stringify(rows), model: 'gemini-4-argon' });
     const lines = validateReview(response, rows);
     results.set(number, { model: MODEL, lines });
+    persistResults();
     show();
   }
   async function loadPdf(file) {
@@ -101,8 +113,11 @@
     root.pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.js';
     const bytes = new Uint8Array(await file.arrayBuffer());
     pdf = await root.pdfjsLib.getDocument({ data: bytes }).promise;
-    current = 1; results = new Map(); show(); await renderPage(current);
-    status(`已加载 ${pdf.numPages} 页 PDF。可识别当前页或依次识别全部页。`);
+    cacheKey = `gemini4-page-results:${pdf.fingerprints?.[0] || `${file.name}:${file.size}:${file.lastModified}`}`;
+    try { results = loadSavedResults(root.localStorage, cacheKey, pdf.numPages); cacheAvailable = true; }
+    catch { results = new Map(); cacheAvailable = false; }
+    current = 1; show(); await renderPage(current);
+    status(`已加载 ${pdf.numPages} 页 PDF，自动恢复 ${results.size} 页。${cacheAvailable ? '可识别剩余页。' : '自动保存不可用，请及时导出 TXT。'}`);
   }
   $('pdfFile').addEventListener('change', async e => { try { await loadPdf(e.target.files[0]); } catch (err) { status(err.message, true); } });
   $('resumeFile').addEventListener('change', async e => {
@@ -110,7 +125,8 @@
       if (!pdf) throw new Error('请先加载与 TXT 对应的 PDF。');
       const restored = parseExportText(await e.target.files[0].text(), pdf.numPages);
       for (const [page, result] of restored) if (!results.has(page)) results.set(page, result);
-      show(); status(`已恢复 ${results.size} / ${pdf.numPages} 页识别结果，可点击“识别剩余页”。`);
+      persistResults(); show();
+      status(`已恢复 ${results.size} / ${pdf.numPages} 页识别结果，可点击“识别剩余页”。${cacheAvailable ? '结果已自动保存。' : '自动保存不可用，请及时导出 TXT。'}`);
     } catch (err) { status(err.message, true); }
     finally { e.target.value = ''; }
   });
@@ -119,7 +135,7 @@
   });
   $('runPage').addEventListener('click', async () => {
     if (!pdf || busy) return; busy = true; show();
-    try { status(`第 ${current} 页识别中…`); await recognize(current); status(`第 ${current} 页识别完成。`); }
+    try { status(`第 ${current} 页识别中…`); await recognize(current); status(`第 ${current} 页识别完成。${cacheAvailable ? '已自动保存。' : '请及时导出 TXT。'}`); }
     catch (err) { status(`第 ${current} 页失败：${err.message}`, true); }
     finally { busy = false; show(); }
   });
