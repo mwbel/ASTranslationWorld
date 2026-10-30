@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gemini 3.8 藏文整页识别对照</title>
+  <title>Gemini 4 藏文整页识别对照</title>
   <style>
     :root { font-family: system-ui, sans-serif; color: #1c2632; background: #f4f6f8; }
     body { margin: 0; } header { padding: 20px 24px; background: #18334b; color: white; }
@@ -22,17 +22,17 @@
   </style>
 </head>
 <body>
-  <header><h1>Gemini 3.8 藏文整页识别对照</h1><p>原图逐页识别。正确校对文本仅供对照，结果通过“导出”保存。</p></header>
+  <header><h1>Gemini 4 藏文整页识别对照</h1><p>原图逐页识别。正确校对文本仅供对照，结果通过“导出”保存。</p></header>
   <div class="controls">
     <label>原始 PDF<input id="pdfFile" type="file" accept="application/pdf,.pdf"></label>
     <label>正确校对 Markdown<input id="referenceFile" type="file" accept=".md,text/markdown,text/plain"></label>
     <button id="previous">上一页</button><strong id="pageNumber">未加载 PDF</strong><button id="next">下一页</button>
     <button id="runPage">识别当前页</button><button id="runAll">依次识别全部页</button><button id="stop">停止批量</button><button id="export">导出对照 Markdown</button>
   </div>
-  <p id="status" role="status">请选择原始 PDF 和正确校对 Markdown。模型聚合服务与 AI OCR 服务需已启动。</p>
+  <p id="status" role="status">请选择原始 PDF 和正确校对 Markdown。请先在已设置 GEMINI_API_KEY 的终端运行 gemini4_compare_service.sh start；Gemini 4 key 需具备付费额度。</p>
   <main>
     <section><h2>原图</h2><div class="scan"><canvas id="pageCanvas"></canvas></div></section>
-    <section><h2>Gemini 3.8 识别结果</h2><small id="recognitionMeta">本页尚未重新识别</small><textarea id="recognizedText" readonly aria-label="Gemini 3.8 识别结果"></textarea></section>
+    <section><h2>Gemini 4 识别结果</h2><small id="recognitionMeta">本页尚未重新识别</small><textarea id="recognizedText" readonly aria-label="Gemini 4 识别结果"></textarea></section>
     <section><h2>正确校对文本</h2><textarea id="referenceText" readonly aria-label="正确校对文本"></textarea></section>
   </main>
   <script src="./vendor/pdf.min.js"></script>

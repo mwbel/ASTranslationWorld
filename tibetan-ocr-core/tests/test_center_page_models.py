@@ -17,6 +17,15 @@ TRANSCRIPT = json.dumps({'lines': [
 
 
 class CenterPageModels(unittest.TestCase):
+    def test_gemini_4_is_allowed_for_whole_page_review(self):
+        self.assertIn('gemini-4-argon', server.GEMINI_REVIEW_MODELS)
+        with patch.object(server, 'USE_MODEL_AGGREGATOR', True), \
+             patch.object(server, 'post_json', return_value={'ok': True, 'answer': TRANSCRIPT,
+                 'modelRef': 'gemini:gemini-4-argon', 'finishReason': 'STOP'}) as request:
+            result = server.call_gemini_page_review(b'original-page', 'page.png', ROWS, 'gemini-4-argon')
+        self.assertEqual(request.call_args.args[1]['model'], 'gemini:gemini-4-argon')
+        self.assertEqual(result['model'], 'gemini:gemini-4-argon')
+
     def test_gemini_uses_original_page_once_and_aligns_returned_rows(self):
         with patch.object(server, 'USE_MODEL_AGGREGATOR', True), \
              patch.object(server, 'post_json', return_value={'ok': True, 'answer': TRANSCRIPT,

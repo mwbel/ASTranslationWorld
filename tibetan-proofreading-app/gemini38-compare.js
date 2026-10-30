@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  const MODEL = 'gemini:gemini-3.8-flash';
+  const MODEL = 'gemini:gemini-4-argon';
   function parseReference(markdown) {
     const source = String(markdown || '').replace(/^\uFEFF/, '');
     const marks = [...source.matchAll(/^## 第 (\d+) 页\s*$/gm)];
@@ -41,11 +41,11 @@
     return `### ${label}\n\n${marker}text\n${text}\n${marker}`;
   }
   function exportMarkdown(results, reference, pageCount) {
-    const parts = ['# Gemini 3.8 藏文整页识别与校对对照', ''];
+    const parts = ['# Gemini 4 藏文整页识别与校对对照', ''];
     for (let page = 1; page <= pageCount; page++) {
       const result = results.get(page);
       parts.push(`## 第 ${page} 页`, '', `识别模型：${result?.model || MODEL}`, '',
-        section('Gemini 3.8 识别结果', result ? result.lines.map(line => line.text).join('\n') : ''), '',
+        section('Gemini 4 识别结果', result ? result.lines.map(line => line.text).join('\n') : ''), '',
         section('正确校对文本', reference.get(page) || ''), '');
     }
     return parts.join('\n');
@@ -79,7 +79,7 @@
   async function post(path, blob, fields = {}) {
     const form = new FormData(); form.append('file', blob, `page-${current}.png`);
     for (const [key, value] of Object.entries(fields)) form.append(key, value);
-    const response = await fetch(`http://127.0.0.1:18092${path}`, { method: 'POST', body: form });
+    const response = await fetch(`http://127.0.0.1:18180${path}`, { method: 'POST', body: form });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `${path}: HTTP ${response.status}`);
     return data;
@@ -90,7 +90,7 @@
     const rows = (layout.lines || []).flatMap((line, index) => line.region_id === 'center' && line.bbox
       ? [{ index, bbox: line.bbox, region_id: 'center' }] : []);
     if (!rows.length) throw new Error('中间栏行定位失败');
-    const response = await post('/gemini-page-review', blob, { rows: JSON.stringify(rows), model: 'gemini-3.8-flash' });
+    const response = await post('/gemini-page-review', blob, { rows: JSON.stringify(rows), model: 'gemini-4-argon' });
     const lines = validateReview(response, rows);
     results.set(number, { model: MODEL, lines });
     show();
@@ -134,7 +134,7 @@
     if (!pdf) { status('请先加载 PDF。', true); return; }
     const blob = new Blob([exportMarkdown(results, reference, pdf.numPages)], { type: 'text/markdown;charset=utf-8' });
     const link = root.document.createElement('a'); link.href = URL.createObjectURL(blob);
-    link.download = 'Gemini-3.8-整页识别与校对对照.md'; link.click();
+    link.download = 'Gemini-4-整页识别与校对对照.md'; link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     status(`已导出；其中 ${results.size} / ${pdf.numPages} 页已识别。`);
   });
