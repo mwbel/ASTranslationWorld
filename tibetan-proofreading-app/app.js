@@ -1,6 +1,6 @@
 const SAMPLE_PDF_URL = "../藏文/天文历算学-本科教材 藏文40301698_部分.pdf";
 const PDF_WORKER_URL = "./vendor/pdf.worker.min.js";
-const APP_BUILD_ID = "20261018-line-vision-proofread";
+const APP_BUILD_ID = "20261022-local-oss-library-access-v2";
 let pageReviewPending = false;
 const REVIEW_MODEL_DEFAULTS = { qwen: ["qwen3.8-max", "qwen3.7-plus"], gemini: ["gemini-3.1-flash-lite", "gemini-3.8-flash"] };
 const reviewCatalogRequests = new Map();
@@ -8,6 +8,8 @@ const SOURCE_LAYOUT_VERSION = 4;
 window.__TIBETAN_PROOFREADING_APP_BUILD_ID__ = APP_BUILD_ID;
 const CACHE_PREFIX = "tibetan-proofreading-app:v1:";
 const ACTIVE_PROJECT_KEY = "tibetan-proofreading-app:active-project";
+const CLOUD_LIBRARY_SESSION_KEY = "tibetan-proofreading-app:cloud-library-token";
+const LOCAL_CLOUD_LIBRARY_SESSION_KEY = "tibetan-proofreading-app:zeabur-library-session";
 const SOURCE_DB_NAME = "tibetan-proofreading-app-sources";
 const SOURCE_STORE_NAME = "files";
 const FOLDER_PROJECTS_KEY = "tibetan-proofreading-app:folder-projects:v1";
@@ -25,6 +27,7 @@ const LEGACY_WORKSPACE_LAYOUT_KEYS = [
 const WORKSPACE_LAYOUT_KEY = "tibetan-proofreading-app:workspace-layout:v4";
 const TRANSLATION_ROLES_KEY = "tibetan-proofreading-app:translation-roles";
 const ACTIVE_TRANSLATION_ROLE_KEY = "tibetan-proofreading-app:active-translation-role";
+const TRANSLATION_MODEL_OVERRIDES_KEY = "tibetan-proofreading-app:translation-model-overrides";
 const OCR_FONT_SIZE_MIN = 16;
 const OCR_FONT_SIZE_MAX = 36;
 const OCR_FONT_SIZE_STEP = 2;
@@ -73,6 +76,7 @@ const OCR_PROFILES = Object.freeze({
   },
 });
 const DEFAULT_OCR_PROFILE = "traditional";
+const DEFAULT_OCR_MODE = "ai";
 const SOURCE_PREVIEW_SCALE_MIN = 1;
 const SOURCE_PREVIEW_SCALE_MAX = 1.75;
 const SOURCE_PREVIEW_SCALE_STEP = 0.15;
@@ -207,6 +211,20 @@ const state = {
   activeProjectRestoreInFlight: false,
 };
 
+const cloudLibrary = {
+  token: "",
+  accessToken: "",
+  apiBaseUrl: "",
+  authMode: "legacy",
+  actor: "",
+  names: [],
+  items: [],
+  path: "",
+  loaded: false,
+  loading: false,
+  uploading: false,
+};
+
 window.addEventListener("DOMContentLoaded", () => {
   document.documentElement.dataset.appBuild = APP_BUILD_ID;
   cacheElements();
@@ -216,6 +234,7 @@ window.addEventListener("DOMContentLoaded", () => {
   restoreWorkspaceLayout();
   configureDeploymentEndpoints();
   wireEvents();
+  initializeCloudLibrary();
   renderTranslationRoleOptions();
   renderActiveTranslationRoleMeta();
   configurePdfJs();
@@ -244,6 +263,19 @@ function cacheElements() {
     "homeOcrStats",
     "homeTranslationStats",
     "homeProjectList",
+    "cloudLibrary",
+    "cloudLibraryCount",
+    "cloudLibraryUploadButton",
+    "cloudLibraryUploadInput",
+    "cloudLibraryRefreshButton",
+    "cloudLibraryAuth",
+    "cloudLibraryAuthTitle", "cloudLibraryAuthHint", "collaboratorName",
+    "cloudLibraryPassword",
+    "cloudLibraryUnlockButton",
+    "cloudLibraryStatus",
+    "cloudLibraryFiles",
+    "cloudLibraryBreadcrumb",
+    "cloudLibraryRows",
     "fileLoadButton",
     "newProjectButton",
     "deleteProjectButton",
@@ -356,6 +388,14 @@ function isCloudDeployment() {
   return window.location.protocol === "https:" || !["127.0.0.1", "localhost", ""].includes(window.location.hostname);
 }
 
+function isLocalWorkbench() {
+  return !isCloudDeployment() && ["127.0.0.1", "localhost"].includes(window.location.hostname);
+}
+
+function cloudLibraryApiOrigin() {
+  return isCloudDeployment() ? window.location.origin : "https://tibetan-ocr-without-bdrc.zeabur.app";
+}
+
 function configureDeploymentEndpoints() {
   if (!isCloudDeployment()) return;
   els.endpointInput.value = `${window.location.origin}/api/ocr`;
@@ -373,6 +413,17 @@ function wireEvents() {
   bindOptionalClick("homeBrowseTranslationProjectsButton", () => browseHomeProjects("translation"));
   bindOptionalClick("homeContinueTranslationTaskButton", () => continueHomeTask("translation"));
   bindOptionalClick("homeRefreshProjectsButton", () => renderHomeDashboard());
+  bindOptionalClick("cloudLibraryRefreshButton", () => void refreshCloudLibrary());
+  bindOptionalClick("cloudLibraryUploadButton", () => els.cloudLibraryUploadInput?.click());
+  bindOptionalClick("cloudLibraryUnlockButton", () => void unlockCloudLibrary());
+  els.cloudLibraryUploadInput?.addEventListener("change", (event) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (file) void uploadCloudLibraryFile(file);
+  });
+  els.cloudLibraryPassword?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") void unlockCloudLibrary();
+  });
   document.querySelectorAll("[data-workflow-card]").forEach((card) => {
     card.addEventListener("click", (event) => {
       if (event.target.closest("button, a, input, select, textarea")) return;
@@ -484,6 +535,7 @@ function wireEvents() {
   });
   els.copyButton.addEventListener("click", copyCurrentText);
   els.downloadTextButton.addEventListener("click", downloadAllOcrText);
+  document.getElementById("prepareTbTranslationButton")?.addEventListener("click", () => void openOcrTbSegmentation());
   els.copyAiButton.addEventListener("click", copyCurrentAiText);
   els.downloadAiTextButton.addEventListener("click", downloadAllAiOcrText);
   els.decreaseOcrFontButton.addEventListener("click", () => {
@@ -500,6 +552,20 @@ function wireEvents() {
     state.activeTranslationRoleId = els.translationRoleSelect.value;
     saveActiveTranslationRole();
     renderActiveTranslationRoleMeta();
+  });
+  els.translationRoleModel.addEventListener("change", () => {
+    const role = getActiveTranslationRole();
+    role.model = els.translationRoleModel.value;
+    if (role.builtIn) {
+      const overrides = readTranslationModelOverrides();
+      overrides[role.id] = role.model;
+      window.localStorage.setItem(TRANSLATION_MODEL_OVERRIDES_KEY, JSON.stringify(overrides));
+    } else {
+      saveCustomTranslationRoles();
+    }
+    renderActiveTranslationRoleMeta();
+    renderRoleList();
+    setStatus(`当前角色模型已切换为 ${role.model}。`, "ok");
   });
   els.manageRolesButton.addEventListener("click", openRoleManager);
   els.closeRoleManagerButton.addEventListener("click", closeRoleManager);
@@ -556,7 +622,7 @@ function wireEvents() {
       updatedAt: new Date().toISOString(),
     });
     const saved = saveCachedResults() !== false;
-    setStatus(saved ? "当前页各 block 的修改已自动保存。" : "当前页修改未能保存，请重试。", saved ? "ok" : "error");
+    setStatus(saved ? "当前页各行的修改已自动保存。" : "当前页修改未能保存，请重试。", saved ? "ok" : "error");
     renderOcrLineComparison();
     updateSummary();
     updateThumbnailState();
@@ -710,6 +776,11 @@ async function restoreRouteFromLocation() {
   const workflow = getWorkflowFromLocation();
   if (workflow === "ocr" || workflow === "translation") {
     showWorkbenchView(workflow, { updateRoute: false });
+    const bookId = new URLSearchParams(window.location.search).get("book_id");
+    if (isCloudDeployment() && bookId) {
+      await resumeRemoteProject({ remoteBookId: bookId }, workflow);
+      return;
+    }
     await restoreActiveProjectForRoute(workflow);
     return;
   }
@@ -769,6 +840,7 @@ function showHomeView(options = {}) {
   els.workspace.classList.remove("translation-enabled", "translation-workflow");
   setAppTitle("藏文典籍翻译工作台");
   renderHomeDashboard();
+  if (cloudLibrary.token && !cloudLibrary.loaded) void refreshCloudLibrary();
   if (!options.silent) {
     setStatus("", "");
   }
@@ -1125,22 +1197,49 @@ async function removeStoredSourceFile(cacheKey) {
 }
 
 async function resumeRemoteProject(project, workflow = "ocr") {
+  if (workflow === "translation" && isCloudDeployment() && /^[0-9a-f]{32}$/.test(project.remoteBookId || "")) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("workflow", "translation");
+    url.searchParams.set("book_id", project.remoteBookId);
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }
   showWorkbenchView(workflow);
   setStatus(`正在恢复云端项目“${project.sourceName}”...`, "warn");
   try {
-    const baseUrl = window.location.origin;
-    const [sourceResponse, stateResponse] = await Promise.all([
-      fetch(`${baseUrl}/api/books/${encodeURIComponent(project.remoteBookId)}/source`),
-      fetch(`${baseUrl}/api/books/${encodeURIComponent(project.remoteBookId)}/state`),
+    const baseUrl = project.apiBaseUrl || window.location.origin;
+    const apiHeaders = project.apiAccessToken ? { Authorization: `Bearer ${project.apiAccessToken}` } : {};
+    const sourceUrl = `${baseUrl}/api/books/${encodeURIComponent(project.remoteBookId)}/source`;
+    const sourcePromise = findCachedRemoteSource(project).then(async (cached) => {
+      if (cached) return cached;
+      const response = await fetch(sourceUrl, { credentials: project.apiAccessToken ? "omit" : "same-origin", headers: apiHeaders });
+      if (!response.ok) throw new Error(`源文件 HTTP ${response.status}`);
+      const blob = await response.blob();
+      return new File([blob], project.sourceName || "远程项目.pdf", {
+        type: blob.type || project.sourceMime || "application/pdf",
+      });
+    });
+    let [sourceFile, stateResponse] = await Promise.all([
+      sourcePromise,
+      fetch(`${baseUrl}/api/books/${encodeURIComponent(project.remoteBookId)}/state`, {
+        credentials: project.apiAccessToken ? "omit" : "same-origin", headers: apiHeaders,
+      }),
     ]);
-    if (!sourceResponse.ok) throw new Error(`源文件 HTTP ${sourceResponse.status}`);
     const remoteState = await stateResponse.json().catch(() => ({}));
     if (!stateResponse.ok) throw new Error(remoteState.detail || `状态 HTTP ${stateResponse.status}`);
-    const sourceBlob = await sourceResponse.blob();
-    const sourceName = project.sourceName || remoteState.name || "远程项目.pdf";
-    const sourceFile = new File([sourceBlob], sourceName, {
-      type: sourceBlob.type || project.sourceMime || remoteState.content_type || "application/pdf",
-    });
+    const sourceName = remoteState.sourceName || remoteState.name || project.sourceName || sourceFile.name;
+    if (remoteState.size && sourceFile.size !== Number(remoteState.size)) {
+      const response = await fetch(sourceUrl, { credentials: project.apiAccessToken ? "omit" : "same-origin", headers: apiHeaders });
+      if (!response.ok) throw new Error(`源文件 HTTP ${response.status}`);
+      const blob = await response.blob();
+      sourceFile = new File([blob], sourceName, {
+        type: blob.type || remoteState.content_type || project.sourceMime || "application/pdf",
+      });
+    }
+    if (sourceFile.name !== sourceName || sourceFile.type !== (remoteState.content_type || sourceFile.type)) {
+      sourceFile = new File([sourceFile], sourceName, {
+        type: remoteState.content_type || sourceFile.type || project.sourceMime || "application/pdf",
+      });
+    }
     const cacheKey = makeCacheKey(sourceFile);
     window.localStorage.setItem(cacheKey, JSON.stringify({
       sourceName,
@@ -1152,11 +1251,326 @@ async function resumeRemoteProject(project, workflow = "ocr") {
       ocrProfile: remoteState.ocr_profile || remoteState.ocrProfile || DEFAULT_OCR_PROFILE,
       ocrResults: remoteState.ocr_results || remoteState.ocrResults || {},
       translationResults: remoteState.translation_results || remoteState.translationResults || {},
+      ocrQualityReviews: remoteState.ocrQualityReviews || [],
     }));
-    await loadFile(sourceFile, { skipRemoteUpload: true, remoteBookId: project.remoteBookId });
+    state.remoteRestoreInFlight = true;
+    try {
+      await loadFile(sourceFile, { skipRemoteUpload: true, remoteBookId: project.remoteBookId });
+    } finally {
+      state.remoteRestoreInFlight = false;
+    }
     setStatus(`已恢复“${sourceName}”及云端校对进度。`, "ok");
   } catch (error) {
     setStatus(`云端项目恢复失败：${error.message || error}`, "error");
+  }
+}
+
+async function findCachedRemoteSource(project) {
+  const cachedProject = project.cacheKey
+    ? project
+    : getHomeProjects().find((item) => item.remoteBookId === project.remoteBookId);
+  if (!cachedProject?.cacheKey || cachedProject.remoteBookId !== project.remoteBookId) return null;
+  try {
+    const file = await getStoredSourceFile(cachedProject.cacheKey);
+    return file instanceof File && makeCacheKey(file) === cachedProject.cacheKey ? file : null;
+  } catch (error) {
+    console.warn("Failed to read cached remote source", error);
+    return null;
+  }
+}
+
+function initializeCloudLibrary() {
+  if (!els.cloudLibrary) return;
+  els.cloudLibrary.hidden = false;
+  cloudLibrary.apiBaseUrl = cloudLibraryApiOrigin();
+  try {
+    cloudLibrary.token = window.sessionStorage.getItem(CLOUD_LIBRARY_SESSION_KEY) || "";
+  } catch (_) {
+    cloudLibrary.token = "";
+  }
+  void (async () => {
+    try {
+      const configResponse = await fetch(`${cloudLibrary.apiBaseUrl}/api/collaboration/config`);
+      const config = await configResponse.json();
+      cloudLibrary.authMode = config.enabled ? "collaboration" : "legacy";
+      cloudLibrary.names = Array.isArray(config.names) ? config.names : [];
+      const collaboratorSelect = document.getElementById("collaboratorName");
+      if (collaboratorSelect) {
+        collaboratorSelect.replaceChildren(...cloudLibrary.names.map((name) => new Option(name, name)));
+        collaboratorSelect.hidden = !config.enabled;
+      }
+      if (config.enabled && isLocalWorkbench()) {
+        try { cloudLibrary.accessToken = window.sessionStorage.getItem(LOCAL_CLOUD_LIBRARY_SESSION_KEY) || ""; } catch (_) { cloudLibrary.accessToken = ""; }
+      }
+      const headers = cloudLibrary.accessToken ? { Authorization: `Bearer ${cloudLibrary.accessToken}` } : {};
+      const me = await fetch(`${cloudLibrary.apiBaseUrl}/api/collaboration/me`, {
+        credentials: isCloudDeployment() ? "same-origin" : "omit", headers,
+      });
+      if (me.ok) cloudLibrary.actor = (await me.json()).name || "";
+      else if (cloudLibrary.accessToken) {
+        cloudLibrary.accessToken = "";
+        try { window.sessionStorage.removeItem(LOCAL_CLOUD_LIBRARY_SESSION_KEY); } catch (_) { /* Ignore storage restrictions. */ }
+      }
+      if (config.enabled) {
+        if (els.cloudLibraryAuthTitle) els.cloudLibraryAuthTitle.textContent = isLocalWorkbench() ? "连接云端 OSS 目录" : "协作者登录";
+        if (els.cloudLibraryAuthHint) els.cloudLibraryAuthHint.textContent = isLocalWorkbench()
+          ? "使用 Zeabur 协作者账号登录后，可从本地工作台浏览和打开云端文件。"
+          : "选择协作者并输入共用口令，查看私有 OSS 文件。";
+      }
+      if (cloudLibrary.actor) void refreshCloudLibrary();
+    } catch (error) {
+      setCloudLibraryStatus(`云端目录连接失败：${error.message || error}`, true);
+    }
+    els.cloudLibraryAuth.hidden = cloudLibrary.authMode === "collaboration" ? Boolean(cloudLibrary.actor) : Boolean(cloudLibrary.token);
+    els.cloudLibraryUploadButton.hidden = !cloudLibrary.actor && !cloudLibrary.token;
+  })();
+  els.cloudLibraryFiles.hidden = true;
+  els.cloudLibraryUploadButton.hidden = true;
+}
+
+async function unlockCloudLibrary() {
+  const token = els.cloudLibraryPassword?.value.trim() || "";
+  if (cloudLibrary.authMode !== "collaboration" && !token) {
+    setCloudLibraryStatus("请输入文档访问口令。", true);
+    return;
+  }
+  if (cloudLibrary.authMode === "collaboration") {
+    try {
+      const response = await fetch(`${cloudLibrary.apiBaseUrl || cloudLibraryApiOrigin()}/api/collaboration/login`, {
+        method: "POST", credentials: isCloudDeployment() ? "same-origin" : "omit",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: document.getElementById("collaboratorName")?.value || "", password: token }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      cloudLibrary.actor = payload.name || "";
+      if (isLocalWorkbench()) {
+        if (!payload.access_token) throw new Error("线上尚未支持本地会话，请刷新线上版本后重试");
+        cloudLibrary.accessToken = payload.access_token;
+        try { window.sessionStorage.setItem(LOCAL_CLOUD_LIBRARY_SESSION_KEY, cloudLibrary.accessToken); } catch (_) { /* Keep the token for this page. */ }
+      }
+    } catch (error) {
+      setCloudLibraryStatus(`登录失败：${error.message || error}`, true);
+      return;
+    }
+  } else cloudLibrary.token = token;
+  await refreshCloudLibrary();
+}
+
+function setCloudLibraryStatus(message, isError = false) {
+  if (!els.cloudLibraryStatus) return;
+  els.cloudLibraryStatus.textContent = message;
+  els.cloudLibraryStatus.classList.toggle("is-error", isError);
+  els.cloudLibraryStatus.hidden = !message;
+}
+
+async function refreshCloudLibrary() {
+  if (cloudLibrary.loading) return false;
+  if (!cloudLibrary.token && !cloudLibrary.actor) {
+    els.cloudLibraryAuth.hidden = false;
+    els.cloudLibraryFiles.hidden = true;
+    els.cloudLibraryUploadButton.hidden = true;
+    return false;
+  }
+  cloudLibrary.loading = true;
+  setCloudLibraryStatus("正在读取云端目录…");
+  try {
+    const headers = cloudLibrary.authMode === "legacy" ? { Authorization: `Bearer ${cloudLibrary.token}` } : {};
+    if (isLocalWorkbench() && cloudLibrary.accessToken) headers.Authorization = `Bearer ${cloudLibrary.accessToken}`;
+    const response = await fetch(`${cloudLibrary.apiBaseUrl || cloudLibraryApiOrigin()}/api/library`, {
+      credentials: isCloudDeployment() ? "same-origin" : "omit", headers,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw Object.assign(new Error(payload.detail || `HTTP ${response.status}`), { status: response.status });
+    cloudLibrary.items = Array.isArray(payload.items) ? payload.items.filter((item) => typeof item.path === "string") : [];
+    cloudLibrary.loaded = true;
+    try { window.sessionStorage.setItem(CLOUD_LIBRARY_SESSION_KEY, cloudLibrary.token); } catch (_) { /* Session storage can be unavailable. */ }
+    els.cloudLibraryPassword.value = "";
+    els.cloudLibraryAuth.hidden = true;
+    els.cloudLibraryFiles.hidden = false;
+    els.cloudLibraryUploadButton.hidden = false;
+    els.cloudLibraryCount.textContent = `${cloudLibrary.items.length} 项`;
+    setCloudLibraryStatus(payload.truncated ? "目录超过 1000 项，仅显示前 1000 项。" : "");
+    renderCloudLibraryRows();
+    return true;
+  } catch (error) {
+    if (error.status === 401) {
+      cloudLibrary.token = "";
+      cloudLibrary.actor = "";
+      cloudLibrary.accessToken = "";
+      cloudLibrary.loaded = false;
+      try { window.sessionStorage.removeItem(CLOUD_LIBRARY_SESSION_KEY); } catch (_) { /* Ignore storage restrictions. */ }
+      try { window.sessionStorage.removeItem(LOCAL_CLOUD_LIBRARY_SESSION_KEY); } catch (_) { /* Ignore storage restrictions. */ }
+      els.cloudLibraryAuth.hidden = false;
+      els.cloudLibraryFiles.hidden = true;
+      els.cloudLibraryUploadButton.hidden = true;
+    }
+    setCloudLibraryStatus(`云端目录读取失败：${error.message || error}`, true);
+    return false;
+  } finally {
+    cloudLibrary.loading = false;
+  }
+}
+
+function renderCloudLibraryRows() {
+  const currentPath = cloudLibrary.path;
+  const folders = new Set();
+  const files = [];
+  for (const item of cloudLibrary.items) {
+    if (!item.path.startsWith(currentPath)) continue;
+    const remainder = item.path.slice(currentPath.length);
+    const slash = remainder.indexOf("/");
+    if (slash >= 0) folders.add(remainder.slice(0, slash));
+    else if (remainder) files.push(item);
+  }
+  const collator = new Intl.Collator("zh-CN", { numeric: true });
+  files.sort((a, b) => collator.compare(a.path, b.path));
+  const breadcrumb = els.cloudLibraryBreadcrumb;
+  breadcrumb.replaceChildren();
+  let crumbPath = "";
+  ["待识别文档", ...currentPath.split("/").filter(Boolean)].forEach((name, index) => {
+    if (index) crumbPath += `${name}/`;
+    const targetPath = crumbPath;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = name;
+    button.className = "finder-crumb";
+    if (index === 0 || targetPath !== currentPath) button.addEventListener("click", () => {
+      cloudLibrary.path = targetPath;
+      renderCloudLibraryRows();
+    });
+    else button.setAttribute("aria-current", "page");
+    breadcrumb.appendChild(button);
+  });
+
+  const rows = els.cloudLibraryRows;
+  rows.replaceChildren();
+  for (const folder of [...folders].sort(collator.compare)) {
+    rows.appendChild(makeCloudLibraryRow(folder, "folder", "—", "文件夹", () => {
+      cloudLibrary.path = `${currentPath}${folder}/`;
+      renderCloudLibraryRows();
+    }));
+  }
+  for (const file of files) {
+    const name = file.path.slice(currentPath.length);
+    const updatedAt = file.updated_at ? new Date(file.updated_at) : null;
+    const date = updatedAt && !Number.isNaN(updatedAt.getTime())
+      ? new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(updatedAt) : "—";
+    rows.appendChild(makeCloudLibraryRow(name, "file-text", date,
+      cloudLibraryFileKind(name), () => void openCloudLibraryFile(file),
+      formatCloudLibrarySize(file.size)));
+  }
+  if (!folders.size && !files.length) {
+    const empty = document.createElement("p");
+    empty.className = "finder-empty";
+    empty.textContent = "此文件夹中没有文档。";
+    rows.appendChild(empty);
+  }
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function cloudLibraryFileKind(name) {
+  const extension = name.split(".").pop().toLowerCase();
+  if (extension === "pdf") return "PDF 文稿";
+  if (["png", "jpg", "jpeg", "tif", "tiff"].includes(extension)) return "图像";
+  if (extension === "docx") return "Word 文档";
+  if (["md", "markdown"].includes(extension)) return "Markdown 文档";
+  if (extension === "txt") return "纯文本";
+  return "文件";
+}
+
+async function uploadCloudLibraryFile(file) {
+  if ((!cloudLibrary.token && !cloudLibrary.actor) || cloudLibrary.uploading) return;
+  cloudLibrary.uploading = true;
+  els.cloudLibraryUploadButton.disabled = true;
+  els.cloudLibraryUploadInput.disabled = true;
+  const formData = new FormData();
+  formData.append("path", cloudLibrary.path);
+  formData.append("file", file);
+  setCloudLibraryStatus(`正在上传“${file.name}”… 0%`);
+  try {
+    const payload = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${cloudLibrary.apiBaseUrl || cloudLibraryApiOrigin()}/api/library/upload`);
+      const bearer = isLocalWorkbench() ? cloudLibrary.accessToken : cloudLibrary.authMode === "legacy" ? cloudLibrary.token : "";
+      if (bearer) xhr.setRequestHeader("Authorization", `Bearer ${bearer}`);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.min(99, Math.round((event.loaded / event.total) * 100));
+          setCloudLibraryStatus(`正在上传“${file.name}”… ${percent}%`);
+        }
+      };
+      xhr.onload = () => {
+        let response = {};
+        try { response = JSON.parse(xhr.responseText || "{}"); } catch (_) { /* Show the HTTP status below. */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(response);
+        else reject(new Error(response.detail || `HTTP ${xhr.status}`));
+      };
+      xhr.onerror = () => reject(new Error("网络连接失败"));
+      xhr.onabort = () => reject(new Error("上传已取消"));
+      xhr.send(formData);
+    });
+    const refreshed = await refreshCloudLibrary();
+    setCloudLibraryStatus(refreshed
+      ? `已上传“${payload.path || file.name}”。`
+      : `文件已上传，但目录刷新失败；请点击“刷新”查看。`, !refreshed);
+  } catch (error) {
+    setCloudLibraryStatus(`上传失败：${error.message || error}`, true);
+  } finally {
+    cloudLibrary.uploading = false;
+    els.cloudLibraryUploadButton.disabled = false;
+    els.cloudLibraryUploadInput.disabled = false;
+  }
+}
+
+function makeCloudLibraryRow(name, icon, date, kind, onClick, size = "—") {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "finder-row";
+  row.addEventListener("click", onClick);
+  const nameCell = document.createElement("span");
+  nameCell.className = "finder-row-name";
+  const iconElement = document.createElement("i");
+  iconElement.dataset.lucide = icon;
+  nameCell.append(iconElement, document.createTextNode(name));
+  for (const value of [nameCell, date, size, kind]) {
+    const cell = document.createElement("span");
+    cell.className = "finder-cell";
+    if (typeof value === "string") cell.textContent = value;
+    else cell.appendChild(value);
+    row.appendChild(cell);
+  }
+  return row;
+}
+
+function formatCloudLibrarySize(bytes) {
+  const size = Number(bytes) || 0;
+  if (size < 1024) return `${size} B`;
+  if (size < 1048576) return `${Math.round(size / 1024)} KB`;
+  return `${(size / 1048576).toFixed(1)} MB`;
+}
+
+async function openCloudLibraryFile(file) {
+  setCloudLibraryStatus(`正在打开“${file.path}”…`);
+  try {
+    const headers = { "Content-Type": "application/json", ...(cloudLibrary.authMode === "legacy" ? { Authorization: `Bearer ${cloudLibrary.token}` } : {}) };
+    if (isLocalWorkbench() && cloudLibrary.accessToken) headers.Authorization = `Bearer ${cloudLibrary.accessToken}`;
+    const response = await fetch(`${cloudLibrary.apiBaseUrl || cloudLibraryApiOrigin()}/api/library/open`, {
+      method: "POST",
+      credentials: isCloudDeployment() ? "same-origin" : "omit",
+      headers,
+      body: JSON.stringify({ path: file.path }),
+    });
+    const book = await response.json().catch(() => ({}));
+    if (!response.ok || !book.book_id) throw new Error(book.detail || `HTTP ${response.status}`);
+    setCloudLibraryStatus("");
+    await resumeRemoteProject({
+      sourceName: book.name, sourceMime: book.content_type, remoteBookId: book.book_id,
+      apiBaseUrl: cloudLibrary.apiBaseUrl || cloudLibraryApiOrigin(),
+      apiAccessToken: isLocalWorkbench() ? cloudLibrary.accessToken : "",
+    }, "ocr");
+  } catch (error) {
+    setCloudLibraryStatus(`打开文档失败：${error.message || error}`, true);
   }
 }
 
@@ -2294,6 +2708,9 @@ function resetDocumentState() {
   if (els.ocrProfileSelect) {
     els.ocrProfileSelect.value = DEFAULT_OCR_PROFILE;
   }
+  if (els.ocrModeSelect) {
+    els.ocrModeSelect.value = DEFAULT_OCR_MODE;
+  }
 }
 
 function makeCacheKey(file) {
@@ -2388,6 +2805,7 @@ function restoreCachedResults() {
       if (!isValidPageNumber(pageNum) || typeof result?.text !== "string") continue;
       state.translationResults.set(pageNum, {
         text: result.text,
+        raw: result.raw || null,
         source: result.source || "cache",
         updatedAt: result.updatedAt || payload.updatedAt || "",
       });
@@ -2419,7 +2837,7 @@ function saveCachedResults(options = {}) {
       ocrQualityReviews: state.ocrQualityReviews,
     };
     window.localStorage.setItem(state.cacheKey, JSON.stringify(payload));
-    const remoteSave = scheduleRemoteStateSave(payload, options.immediateRemote);
+    const remoteSave = scheduleRemoteStateSave(payload, options.immediateRemote, options.propagateRemoteError);
     renderHomeDashboard();
     return remoteSave ?? true;
   } catch (error) {
@@ -2442,8 +2860,8 @@ async function createRemoteBook(file) {
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
-function scheduleRemoteStateSave(payload, immediate = false) {
-  if (!isCloudDeployment() || !state.remoteBookId) return;
+function scheduleRemoteStateSave(payload, immediate = false, propagateError = false) {
+  if (!isCloudDeployment() || !state.remoteBookId || state.remoteRestoreInFlight) return;
   if (state.remoteSaveTimer) window.clearTimeout(state.remoteSaveTimer);
   const bookId = state.remoteBookId;
   const save = async () => {
@@ -2466,6 +2884,7 @@ function scheduleRemoteStateSave(payload, immediate = false) {
     } catch (error) {
       console.warn("Failed to save remote OCR state", error);
       setStatus(`本地已保存，但云端校对状态同步失败：${error.message || error}`, "warn");
+      if (propagateError) throw error;
     }
   };
   if (immediate) return save();
@@ -2536,6 +2955,10 @@ function restoreTranslationRoles() {
     ...BUILT_IN_TRANSLATION_ROLES.map((role) => ({ ...role })),
     ...normalizedCustomRoles,
   ];
+  const modelOverrides = readTranslationModelOverrides();
+  state.translationRoles.forEach((role) => {
+    if (role.builtIn && modelOverrides[role.id]) role.model = modelOverrides[role.id];
+  });
   state.activeTranslationRoleId = window.localStorage.getItem(ACTIVE_TRANSLATION_ROLE_KEY) || "academic-literal";
   if (!state.translationRoles.some((role) => role.id === state.activeTranslationRoleId)) {
     state.activeTranslationRoleId = "academic-literal";
@@ -2576,6 +2999,15 @@ function saveActiveTranslationRole() {
   window.localStorage.setItem(ACTIVE_TRANSLATION_ROLE_KEY, state.activeTranslationRoleId);
 }
 
+function readTranslationModelOverrides() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(TRANSLATION_MODEL_OVERRIDES_KEY) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch (_) {
+    return {};
+  }
+}
+
 function getActiveTranslationRole() {
   const role = state.translationRoles.find((item) => item.id === state.activeTranslationRoleId);
   if (role) return role;
@@ -2606,7 +3038,7 @@ function renderTranslationRoleOptions() {
 function renderActiveTranslationRoleMeta() {
   const role = getActiveTranslationRole();
   if (els.translationRoleModel) {
-    els.translationRoleModel.textContent = `模型：${role.model || DEFAULT_TRANSLATION_MODEL}`;
+    setModelSelectValue(els.translationRoleModel, role.model || DEFAULT_TRANSLATION_MODEL);
     els.translationRoleModel.title = `${role.name} · ${role.sourceLang} → ${role.targetLang}`;
   }
 }
@@ -2651,12 +3083,24 @@ function loadRoleForm(role) {
   els.roleIdInput.value = target.id || "";
   els.roleSourceLangInput.value = target.sourceLang || "bo";
   els.roleTargetLangInput.value = target.targetLang || "zh";
-  els.roleModelInput.value = target.model || DEFAULT_TRANSLATION_MODEL;
+  setModelSelectValue(els.roleModelInput, target.model || DEFAULT_TRANSLATION_MODEL);
   els.roleTemperatureInput.value = String(target.temperature ?? 0.2);
   els.roleMaxTokensInput.value = String(target.maxTokens ?? 2048);
   els.roleSystemPromptInput.value = target.systemPrompt || "";
   els.roleUserPromptTemplateInput.value = target.userPromptTemplate || "";
   els.deleteRoleButton.disabled = Boolean(target.builtIn);
+}
+
+function setModelSelectValue(select, model) {
+  if (!select) return;
+  const hasModelOption = Array.from(select.options).some((option) => option.value === model);
+  if (!hasModelOption) {
+    const legacyOption = document.createElement("option");
+    legacyOption.value = model;
+    legacyOption.textContent = `当前配置：${model}`;
+    select.prepend(legacyOption);
+  }
+  select.value = model;
 }
 
 function createDraftTranslationRole() {
@@ -2742,6 +3186,7 @@ function resetCustomTranslationRoles() {
   state.activeTranslationRoleId = "academic-literal";
   state.editingRoleId = "academic-literal";
   window.localStorage.removeItem(TRANSLATION_ROLES_KEY);
+  window.localStorage.removeItem(TRANSLATION_MODEL_OVERRIDES_KEY);
   saveActiveTranslationRole();
   renderTranslationRoleOptions();
   renderActiveTranslationRoleMeta();
@@ -3335,7 +3780,8 @@ async function runOcrForRemainingPages() {
 }
 
 function getOcrMode() {
-  return els.ocrModeSelect?.value === "ai" ? "ai" : "bdrc";
+  const mode = els.ocrModeSelect?.value || DEFAULT_OCR_MODE;
+  return mode === "bdrc" ? "bdrc" : DEFAULT_OCR_MODE;
 }
 
 function getSelectedOcrProfile() {
@@ -4394,6 +4840,17 @@ async function runTranslateForCurrentPage() {
   }
 
   const role = getActiveTranslationRole();
+  const pageNum = state.pageNum;
+  const cacheKey = state.cacheKey;
+  const sourceName = state.sourceName;
+  const blocks = splitTibetanTranslationBlocks(sourceInput.text);
+  const previousResult = state.translationResults.get(pageNum);
+  const savedChunks = previousResult?.raw?.incomplete && Array.isArray(previousResult.raw.chunks)
+    ? previousResult.raw.chunks : [];
+  const completedBlocks = savedChunks.length <= blocks.length && savedChunks.every((chunk, index) => (
+    chunk?.source === blocks[index] && typeof chunk?.translation === "string"
+  )) ? savedChunks.slice() : [];
+  const preservePrevious = Boolean(previousResult?.text && !completedBlocks.length);
 
   try {
     setTranslateBusy(true);
@@ -4401,56 +4858,124 @@ async function runTranslateForCurrentPage() {
     if (!ready) {
       return;
     }
-    setStatus(`正在翻译第 ${state.pageNum} 页${sourceInput.label || "源文本"}...`, "warn");
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: sourceInput.text,
-        source_text: sourceInput.text,
-        source_kind: sourceInput.source,
-        source_label: sourceInput.label,
-        source_lang: role.sourceLang || "bo",
-        target_lang: role.targetLang || "zh",
-        src_lang: "bod_Tibt",
-        tgt_lang: "zho_Hans",
-        page: state.pageNum,
-        source_name: state.sourceName,
-        role_id: role.id,
-        role_name: role.name,
-        system_prompt: role.systemPrompt,
-        user_prompt_template: role.userPromptTemplate,
-        model: role.model || DEFAULT_TRANSLATION_MODEL,
-        temperature: Number(role.temperature ?? 0.2),
-        max_tokens: Number(role.maxTokens ?? 2048),
-      }),
-    });
-
-    const parsed = await parseTranslationResponse(response);
-    if (!response.ok) {
-      throw new Error(parsed.error || `HTTP ${response.status}`);
-    }
-
-    const text = parsed.text.trim();
-    state.translationResults.set(state.pageNum, {
-      text,
-      raw: parsed.raw,
+    setStatus(`正在翻译第 ${pageNum} 页${sourceInput.label || "源文本"}（${completedBlocks.length}/${blocks.length} block）...`, "warn");
+    els.translationMeta.textContent = `翻译中 ${completedBlocks.length}/${blocks.length}`;
+    const translatedText = await translateBlocksSequentially(blocks, async (block) => {
+      if (state.cacheKey !== cacheKey) throw new Error("翻译期间已切换文件，请返回原文件重试");
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 60000);
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            text: block,
+            source_text: block,
+            source_kind: sourceInput.source,
+            source_label: sourceInput.label,
+            source_lang: role.sourceLang || "bo",
+            target_lang: role.targetLang || "zh",
+            src_lang: "bod_Tibt",
+            tgt_lang: "zho_Hans",
+            page: pageNum,
+            source_name: sourceName,
+            role_id: role.id,
+            role_name: role.name,
+            system_prompt: role.systemPrompt,
+            user_prompt_template: role.userPromptTemplate,
+            model: role.model || DEFAULT_TRANSLATION_MODEL,
+            temperature: Number(role.temperature ?? 0.2),
+            max_tokens: Number(role.maxTokens ?? 2048),
+          }),
+        });
+        const parsed = await parseTranslationResponse(response);
+        if (!response.ok) throw new Error(parsed.error || `HTTP ${response.status}`);
+        if (!parsed.text.trim()) throw new Error("翻译接口返回空译文");
+        completedBlocks.push({ source: block, translation: parsed.text.trim() });
+        return parsed.text.trim();
+      } catch (error) {
+        if (error?.name === "AbortError") throw new Error("单个 block 翻译超过 60 秒");
+        throw error;
+      } finally {
+        window.clearTimeout(timer);
+      }
+    }, (completed, total, text) => {
+      if (state.cacheKey !== cacheKey) throw new Error("翻译期间已切换文件，请返回原文件重试");
+      if (!preservePrevious) {
+        state.translationResults.set(pageNum, {
+          text,
+          raw: { chunks: completedBlocks.slice(), incomplete: completed < total },
+          source: "api",
+          roleId: role.id,
+          roleName: role.name,
+          updatedAt: new Date().toISOString(),
+        });
+        saveCachedResults();
+      }
+      if (state.pageNum === pageNum) {
+        if (!preservePrevious) updateTranslationPanelForPage();
+        els.translationMeta.textContent = `翻译中 ${completed}/${total}`;
+        updateTranslationSummary();
+        updateThumbnailState();
+      }
+      setStatus(`正在翻译第 ${pageNum} 页（已完成 ${completed}/${total} block）...`, "warn");
+    }, completedBlocks.map((chunk) => chunk.translation));
+    if (state.cacheKey !== cacheKey) throw new Error("翻译期间已切换文件，请返回原文件重试");
+    state.translationResults.set(pageNum, {
+      text: translatedText,
+      raw: { chunks: completedBlocks.slice(), incomplete: false },
       source: "api",
       roleId: role.id,
       roleName: role.name,
       updatedAt: new Date().toISOString(),
     });
     saveCachedResults();
-    els.translationText.value = text;
-    setStatus(`第 ${state.pageNum} 页藏译汉完成。`, "ok");
-    updateTranslationPanelForPage();
-    updateTranslationSummary();
-    updateThumbnailState();
+    setStatus(`第 ${pageNum} 页藏译汉完成。`, "ok");
+    if (state.pageNum === pageNum) updateTranslationPanelForPage();
   } catch (error) {
-    setStatus(`藏译汉调用失败：${formatNetworkError(error, endpoint, "translate")}`, "error");
+    const retained = preservePrevious ? "；原译文已保留"
+      : completedBlocks.length ? `；已保留 ${completedBlocks.length}/${blocks.length} block 的译文` : "";
+    setStatus(`藏译汉调用失败：${formatNetworkError(error, endpoint, "translate")}${retained}`, "error");
+    if (state.pageNum === pageNum && state.cacheKey === cacheKey) {
+      els.translationMeta.textContent = preservePrevious ? "原译文已保留"
+        : completedBlocks.length ? `部分完成 ${completedBlocks.length}/${blocks.length}` : "翻译失败";
+    }
   } finally {
     setTranslateBusy(false);
   }
+}
+
+function splitTibetanTranslationBlocks(text) {
+  const normalized = String(text || "").replace(/\r\n?/g, "\n");
+  const sentences = normalized.match(/[^།]*།+|[^།]+$/gu) || [];
+  return sentences.flatMap((sentence) => {
+    const blocks = [];
+    let remaining = sentence.trim();
+    if (/^།+$/.test(remaining)) return blocks;
+    while (remaining.length > 400) {
+      const prefix = remaining.slice(0, 400);
+      const boundary = Math.max(prefix.lastIndexOf(" "), prefix.lastIndexOf("\n"), prefix.lastIndexOf("་"));
+      const cut = boundary >= 200 ? boundary + 1 : 400;
+      blocks.push(remaining.slice(0, cut).trim());
+      remaining = remaining.slice(cut).trim();
+    }
+    if (remaining) blocks.push(remaining);
+    return blocks;
+  });
+}
+
+async function translateBlocksSequentially(blocks, translateBlock, onProgress, initialTranslations = []) {
+  const translations = initialTranslations.slice();
+  for (let index = translations.length; index < blocks.length; index += 1) {
+    try {
+      translations.push(await translateBlock(blocks[index]));
+    } catch (error) {
+      throw new Error(`第 ${index + 1}/${blocks.length} block：${error?.message || error}`);
+    }
+    onProgress(index + 1, blocks.length, translations.join("\n"));
+  }
+  return translations.join("\n");
 }
 
 async function resolveCurrentSourceTextForTranslation() {
@@ -5620,6 +6145,10 @@ function makeProofreadAiLine(compare, rawAiLine, index, fallbackBbox = null) {
     reviewImage: rawAiLine?.reviewImage || rawAiLine?.review_image || null,
     recognitionError: String(rawAiLine?.recognitionError || rawAiLine?.recognition_error || ""),
     regionLineIndex: Number(rawAiLine?.regionLineIndex ?? rawAiLine?.region_line_index ?? 0),
+    manualBaselineText: typeof rawAiLine?.manualBaselineText === "string" ? rawAiLine.manualBaselineText : undefined,
+    manuallyEdited: Boolean(rawAiLine?.manuallyEdited),
+    manualErrorChars: Math.max(0, Number(rawAiLine?.manualErrorChars || 0)),
+    manualEditRanges: getManualEditRanges(rawAiLine),
   };
   if (line.reviewImage || line.recognitionError) return line;
   if (shouldShowAiVisionDiagnostic(compare, line, index)) {
@@ -5679,6 +6208,11 @@ function proofreadModelName(provider) {
   return {bdrc:"BDRC", llm:"Gemini Vision", qwen:"千问", openai:"OpenAI"}[provider] || provider;
 }
 
+function formatProofreadModelLabel(model) {
+  const value = String(model || "").replace(/^(gemini|qwen|openai):/i, "");
+  return value.replace(/^gemini-/i, "").replace(/-/g, " ");
+}
+
 function makeProofreadModelToggle(index, provider, content) {
   const key = JSON.stringify([state.cacheKey, state.pageNum, index, provider]);
   const button = document.createElement("button");
@@ -5690,7 +6224,9 @@ function makeProofreadModelToggle(index, provider, content) {
     content.hidden = collapsed;
     button.setAttribute("aria-expanded", String(!collapsed));
     button.setAttribute("aria-label", `${collapsed ? "展开" : "折叠"}${proofreadModelName(provider)}识别结果`);
-    button.textContent = collapsed ? "展开" : "折叠";
+    button.title = `${collapsed ? "展开" : "折叠"}${proofreadModelName(provider)}识别结果`;
+    button.innerHTML = `<i data-lucide="${collapsed ? "chevrons-down" : "chevrons-up"}"></i>`;
+    if (window.lucide) window.lucide.createIcons({root: button});
   };
   button.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -5708,7 +6244,7 @@ function decorateProofreadModelSection(group, index, provider, card) {
   content.classList.add("proofread-model-content");
   const actions = renderSharedErrorActionGroup(index, card, provider);
   appendProofreadErrorActionsAfterModelSelector(null, actions, header);
-  header.append(makeProofreadModelToggle(index, provider, content));
+  header.prepend(makeProofreadModelToggle(index, provider, content));
   group.classList.add("proofread-model-section");
   return group;
 }
@@ -5731,7 +6267,7 @@ function decorateIndependentProofreadModelSection(group, index, provider, card) 
   header.append(title);
   appendProofreadErrorActionsAfterModelSelector(null, renderSharedErrorActionGroup(index, card, provider), header);
   if (optionalReview) header.append(optionalReview);
-  header.append(makeProofreadModelToggle(index, provider, content));
+  header.prepend(makeProofreadModelToggle(index, provider, content));
   group.classList.add("proofread-model-section", `is-${provider}`);
   group.replaceChildren(header, content);
   return group;
@@ -5925,11 +6461,6 @@ function renderIndependentLineReview(provider, index, sourceLine, bdrcLine, aiLi
     };
     updateCandidateQuality();
     group.append(text, quality);
-function formatProofreadModelLabel(model) {
-  const value = String(model || "").replace(/^(gemini|qwen|openai):/i, "");
-  return value.replace(/^gemini-/i, "").replace(/-/g, " ");
-}
-
   }
   button.addEventListener("click", async (event) => {
     event.stopPropagation();
@@ -6079,18 +6610,17 @@ function updateManualEditTracking(target, nextText, baselineText = target?.manua
     tokenizeOcrDiffText(baseline).map((token) => token.value),
     tokenizeOcrDiffText(normalized).map((token) => token.value),
   );
-  const changedRange = getChangedTextRange(baseline, normalized);
-  target.manualEditRanges = changedRange ? [changedRange] : [];
+  target.manualEditRanges = getChangedTextRanges(baseline, normalized);
   target.manuallyEdited = true;
   return target;
 }
 
 function getManualEditRanges(target) {
   if (!target || typeof target !== "object") return [];
+  if (target.manualErrorChars !== undefined && Number(target.manualErrorChars) === 0) return [];
   const text = String(target.text || "");
   if (target.manuallyEdited && typeof target.manualBaselineText === "string") {
-    const changedRange = getChangedTextRange(target.manualBaselineText, text);
-    return changedRange ? [changedRange] : [];
+    return getChangedTextRanges(target.manualBaselineText, text);
   }
   if (Array.isArray(target.manualEditRanges)) {
     return expandTextRangesToClusters(target.manualEditRanges, text);
@@ -6114,46 +6644,13 @@ function expandTextRangesToClusters(ranges, text) {
   return normalizeTextRanges(expanded);
 }
 
-function getChangedTextRange(previous, next) {
-  const before = tokenizeTextRangeClusters(previous);
-  const after = tokenizeTextRangeClusters(next);
-  let start = 0;
-  while (start < before.length && start < after.length && before[start].value === after[start].value) start += 1;
-  if (start === before.length && start === after.length) return null;
-  let beforeEnd = before.length;
-  let afterEnd = after.length;
-  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1].value === after[afterEnd - 1].value) {
-    beforeEnd -= 1;
-    afterEnd -= 1;
+function getChangedTextRanges(previous, next) {
+  const before = String(previous || "");
+  const after = String(next || "");
+  if (!tokenizeOcrDiffText(before).length) {
+    return tokenizeOcrDiffText(after).map(({ start, end }) => ({ start, end }));
   }
-  const rangeStart = after[start]?.start ?? String(next || "").length;
-  const rangeEnd = afterEnd > start ? after[afterEnd - 1].end : rangeStart;
-  return { start: rangeStart, end: rangeEnd };
-}
-
-function tokenizeTextRangeClusters(text) {
-  const source = String(text || "");
-  const tokens = [];
-  let cursor = 0;
-
-  const pushLooseText = (looseText, offset) => {
-    let localOffset = 0;
-    for (const char of Array.from(looseText)) {
-      const start = offset + localOffset;
-      const end = start + char.length;
-      tokens.push({ value: char, start, end });
-      localOffset += char.length;
-    }
-  };
-
-  getHighRiskClusterScan(source).forEach((cluster) => {
-    if (cluster.start > cursor) pushLooseText(source.slice(cursor, cluster.start), cursor);
-    tokens.push({ value: cluster.text, start: cluster.start, end: cluster.end });
-    cursor = cluster.end;
-  });
-
-  if (cursor < source.length) pushLooseText(source.slice(cursor), cursor);
-  return tokens;
+  return getOcrDiffRanges(after, before);
 }
 
 function levenshteinDistance(left, right) {
@@ -6241,6 +6738,9 @@ function refreshProofreadErrorMarkDisplay(index, provider = "") {
     const quality = editor.parentElement?.querySelector(".proofread-result-quality");
     if (quality) quality.textContent = formatLineQualityStats(getLineQualityStats(line, compare, side, index));
   });
+  for (const reviewProvider of ["qwen", "openai"]) {
+    refreshProofreadErrorMarkDisplay(index, reviewProvider);
+  }
 }
 
 function renderSharedErrorButton(index, card, provider) {
@@ -6560,6 +7060,7 @@ function createModelInputPreview(sourceLine, index) {
       if (entry.cacheError) note.textContent = `裁剪未能缓存：${entry.cacheError}`;
       wrapper.appendChild(note);
       const strip = document.createElement("div");
+      strip.className = "proofread-source-overview";
       strip.style.display = "flex";
       strip.style.width = "100%";
       for (const [tileIndex, url] of previewImages.entries()) {
@@ -6577,6 +7078,20 @@ function createModelInputPreview(sourceLine, index) {
       wrapper.style.overflowY = "visible";
       strip.dataset.cropStrip = "true";
       wrapper.appendChild(strip);
+      if (previewImages.length === 1) {
+        const zoom = document.createElement("details");
+        zoom.className = "proofread-source-zoom";
+        const summary = document.createElement("summary");
+        summary.textContent = "放大查看这一行";
+        const scroll = document.createElement("div");
+        scroll.className = "proofread-source-zoom-scroll";
+        const fullImage = document.createElement("img");
+        fullImage.src = previewImages[0];
+        fullImage.alt = `第 ${index + 1} 行原始细节裁图`;
+        scroll.append(fullImage);
+        zoom.append(summary, scroll);
+        wrapper.append(zoom);
+      }
       const rowIndex = payload.review_image?.source_bbox?.physical_row_index;
       if (Number.isInteger(rowIndex)) {
         wrapper.dataset.physicalRowKey = JSON.stringify([payload.review_image.source_size, rowIndex]);
@@ -6734,13 +7249,16 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
   labelMeta.textContent = `${sourceLabel} 识别结果`;
   const statusEl = document.createElement("em");
   statusEl.className = "proofread-editor-status";
-  // Keep this hook in the header for review controls, but show diagnostics only
-  // in the result editor below so the same error is not repeated twice.
-  statusEl.hidden = true;
   const qualityEl = document.createElement("div");
   qualityEl.className = "proofread-line-quality proofread-result-quality";
   const updateQuality = () => {
     qualityEl.textContent = formatLineQualityStats(getLineQualityStats(line, compare, side, index));
+  };
+  const updateManualEditStatus = () => {
+    const hasManualChanges = getManualEditRanges(line).length > 0;
+    statusEl.hidden = !hasManualChanges;
+    statusEl.textContent = hasManualChanges ? "已人工修改" : "";
+    statusEl.classList.toggle("is-manual-edit", hasManualChanges);
   };
   updateQuality();
   labelEl.append(labelTitle, labelMeta, statusEl);
@@ -6771,8 +7289,6 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     group.classList.toggle("has-diagnostic", diagnostic);
     editor.classList.toggle("is-empty", !text.trim() && !diagnostic);
     editor.classList.toggle("is-diagnostic", diagnostic);
-    statusEl.hidden = true;
-    statusEl.textContent = "";
     if (diagnostic) {
       const recognitionError = String(line?.recognitionError || "").trim();
       editor.textContent = recognitionError && !visibleText.includes(recognitionError)
@@ -6788,8 +7304,8 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     if (!text.trim() && !diagnostic) {
       editor.textContent = editor.dataset.placeholder;
     }
+    updateManualEditStatus();
   };
-      strip.className = "proofread-source-overview";
   const syncEditorValue = (fromUserInput = false) => {
     if (isDiagnosticOcrLine(line) && !fromUserInput) {
       resizeLineEditor(editor);
@@ -6797,7 +7313,6 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     }
     const value = normalizeOcrTextSpacing(getEditorText());
     if (line) {
-      line.text = value || "";
       if (fromUserInput) {
         line.error = false;
         line.missing = false;
@@ -6814,20 +7329,6 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     editor.classList.toggle("is-empty", !String(value || "").trim());
     editor.classList.toggle("is-diagnostic", isDiagnosticOcrLine(line));
     resizeLineEditor(editor);
-      if (previewImages.length === 1) {
-        const zoom = document.createElement("details");
-        zoom.className = "proofread-source-zoom";
-        const summary = document.createElement("summary");
-        summary.textContent = "放大查看这一行";
-        const scroll = document.createElement("div");
-        scroll.className = "proofread-source-zoom-scroll";
-        const fullImage = document.createElement("img");
-        fullImage.src = previewImages[0];
-        fullImage.alt = `第 ${index + 1} 行原始细节裁图`;
-        scroll.append(fullImage);
-        zoom.append(summary, scroll);
-        wrapper.append(zoom);
-      }
   };
   renderEditorMarkup();
 
@@ -6847,10 +7348,12 @@ function renderProofreadEditorGroup({ index, side, label, line, peerLine, compar
     userEdited = true;
     syncEditorValue(true);
     updateQuality();
+    updateManualEditStatus();
   });
   editor.addEventListener("blur", () => {
     if (userEdited) syncEditorValue(true);
     renderEditorMarkup();
+    if (userEdited) refreshProofreadErrorMarkDisplay(index);
     resizeLineEditor(editor);
     userEdited = false;
   });
@@ -8341,6 +8844,27 @@ function downloadAllOcrText() {
   setStatus(`已下载 Markdown 校对结果，共 ${pages.length} 页。`, "ok");
 }
 
+async function openOcrTbSegmentation() {
+  if (!state.pageCount || ![...state.ocrResults.values()].some((result) => String(result?.text || "").trim())) {
+    setStatus("请先完成 OCR 识别和校对，再预览翻译段落。", "warn");
+    return;
+  }
+  if (!/^[0-9a-f]{32}$/.test(state.remoteBookId || "")) {
+    setStatus("分段翻译需要已同步的云端书籍。请先从云端目录打开本书，或上传源文件。", "warn");
+    return;
+  }
+  const url = new URL("./ocr-tb-segmentation.html", window.location.href);
+  url.searchParams.set("book_id", state.remoteBookId);
+  try {
+    if (await saveCachedResults({ immediateRemote: true, propagateRemoteError: true }) === false) {
+      throw new Error("本机校对稿保存失败");
+    }
+    window.location.assign(url.href);
+  } catch (error) {
+    setStatus(`云端校对稿同步失败：${error.message || error}。请重试。`, "error");
+  }
+}
+
 function buildProofreadMarkdown(pages, sourceName) {
   return [
     `# ${stripFileExtension(sourceName || "藏文典籍")} 藏文 OCR 校对结果`,
@@ -8461,10 +8985,9 @@ function saveOcrQualityReview({ result, compare, pageNum, blockIndex, text, qual
     qualitySource.recognizedAt = String(result?.updatedAt || new Date().toISOString());
   }
   const metadata = getOcrQualityMetadata(compare, result, qualitySide);
-  const reviewedChars = countOcrCharacters(text);
+  const lineStats = getLineQualityStats({text, manualErrorChars}, compare, qualitySide, blockIndex);
+  const reviewedChars = lineStats.totalChars;
   if (!reviewedChars) return;
-  const markedErrorChars = countErrorRanges(text, getSharedErrorRanges(compare, qualitySide, blockIndex, text));
-  const errorChars = markedErrorChars + Math.max(0, Number(manualErrorChars) || 0);
   const matchIndex = state.ocrQualityReviews.findIndex((review) => (
     review.pageNum === pageNum &&
     review.blockIndex === blockIndex &&
@@ -8479,7 +9002,7 @@ function saveOcrQualityReview({ result, compare, pageNum, blockIndex, text, qual
     ...metadata,
     reviewedAt: new Date().toISOString(),
     reviewedChars,
-    errorChars: Math.min(errorChars, reviewedChars),
+    errorChars: lineStats.errorChars,
   };
   if (matchIndex >= 0) {
     state.ocrQualityReviews.splice(matchIndex, 1, review);

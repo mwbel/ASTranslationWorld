@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OCR 校对稿分段预览</title>
+  <link rel="stylesheet" href="./ocr-tb-segmentation.css?v=20261102-auto-draft" />
+  <script src="./ocr-tb-segmentation.js?v=20261102-auto-draft" defer></script>
+  <script src="./ocr-tb-segmentation-page.js?v=20261102-auto-draft" defer></script>
+</head>
+<body>
+  <main>
+    <header class="topbar">
+      <div><a id="backLink" href="./">← 返回校对页</a><h1>OCR 校对稿分段预览</h1><p>已自动划分第一版；可直接采用，也可按需拆分、合并或修改文字。</p></div>
+      <a id="translationLink" class="link-button" href="./" hidden>打开 TB 段落翻译</a>
+    </header>
+    <div id="status" role="status" aria-live="polite">正在读取书籍…</div>
+    <section id="existing" class="panel" hidden></section>
+    <section id="editor" hidden>
+      <div class="panel intro"><div><strong id="sourceName"></strong><p id="summary"></p><p>依据双垂符、成对单垂符和空行自动划分；单垂符保留在段内。如有不合适的边界，再修改对应段落。</p></div><div class="intro-actions"><label class="file-button" for="localFileInput">从本地添加 TXT</label><input id="localFileInput" type="file" accept=".txt,text/plain" hidden /><button id="rebuildButton" type="button">从当前原文重建候选</button></div></div>
+      <div class="panel toolbar"><div class="pager"><button id="previousPageButton" type="button">上一组</button><span id="pageLabel"></span><button id="nextPageButton" type="button">下一组</button></div><button id="confirmButton" class="primary" type="button">采用当前分段并进入翻译</button></div>
+      <div id="segments"></div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,112 @@
+import hashlib
+import json
+import unittest
+from unittest.mock import patch
+
+import oss2
+from fastapi.testclient import TestClient
+
+from zeabur_app import main
+
+
+BOOK = "1de68f20c97f46a6a645c6a8f05cbc7f"
+PREFIX = f"tibetan-proofreading/books/{BOOK}/"
+SOURCE = "[TB-0001] ཀ།\n[TB-0002] ཁ།\n"
+
+
+class FakeObject:
+    def __init__(self, body):
+        self.body = body
+
+    def read(self, *args):
+        return self.body
+
+
+class FakeBucket:
+    def __init__(self):
+        self.objects = {PREFIX + "metadata.json": b'{"name":"book.pdf"}', PREFIX + "state.json": b'{"page_count":2}'}
+
+    def get_object(self, key):
+        if key not in self.objects:
+            raise oss2.exceptions.NoSuchKey(404, {}, b"", {})
+        return FakeObject(self.objects[key])
+
+    def put_object(self, key, body, headers=None):
+        if headers and headers.get("x-oss-forbid-overwrite") == "true" and key in self.objects:
+            raise oss2.exceptions.ObjectAlreadyExists(409, {}, b"", {})
+        self.objects[key] = body
+
+    def head_object(self, key):
+        if key not in self.objects:
+            raise oss2.exceptions.NoSuchKey(404, {}, b"", {})
+        return object()
+
+
+class TbTranslationTest(unittest.TestCase):
+    def setUp(self):
+        self.bucket = FakeBucket()
+        self.client = TestClient(main.app)
+        self.patch = patch.object(main, "oss_bucket", return_value=self.bucket)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def test_attach_source_and_keep_page_state(self):
+        response = self.client.put(f"/api/books/{BOOK}/tb/source", json={"name": "book.txt", "text": SOURCE})
+        self.assertEqual(response.status_code, 200, response.text)
+        digest = hashlib.sha256(SOURCE.encode()).hexdigest()
+        self.assertEqual(response.json()["source_hash"], digest)
+        self.assertEqual(self.client.get(f"/api/books/{BOOK}/tb/source").json()["text"], SOURCE)
+        self.assertEqual(self.bucket.objects[PREFIX + "state.json"], b'{"page_count":2}')
+        self.assertEqual(self.client.put(f"/api/books/{BOOK}/tb/source", json={"name": "other.txt", "text": "[TB-0001] ག།"}).status_code, 409)
+
+    def test_reviewed_ocr_source_keeps_original_page_mapping(self):
+        payload = {"name": "reviewed.txt", "text": SOURCE,
+                   "source_pages": {"TB-0001": [1], "TB-0002": [1, 2]}}
+        response = self.client.put(f"/api/books/{BOOK}/tb/source", json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["source_pages"], payload["source_pages"])
+        self.assertEqual(self.client.get(f"/api/books/{BOOK}/tb/source").json()["source_pages"], payload["source_pages"])
+        invalid = {**payload, "text": "[TB-0001] ག།\n", "source_pages": {"TB-0001": [0]}}
+        self.assertEqual(self.client.put(f"/api/books/{BOOK}/tb/source", json=invalid).status_code, 400)
+
+    def test_model_and_final_results_are_isolated(self):
+        self.client.put(f"/api/books/{BOOK}/tb/source", json={"name": "book.txt", "text": SOURCE})
+        digest = hashlib.sha256(SOURCE.encode()).hexdigest()
+        url = f"/api/books/{BOOK}/tb/results/TB-0001"
+        self.assertEqual(self.client.put(url, json={"source_hash": digest, "kind": "model", "model": "gemini:a", "text": "甲"}).status_code, 200)
+        self.assertEqual(self.client.put(url, json={"source_hash": digest, "kind": "model", "model": "gemini:b", "text": "乙"}).status_code, 200)
+        self.assertEqual(self.client.put(url, json={"source_hash": digest, "kind": "final", "text": "定稿"}).status_code, 200)
+        result = self.client.get(f"/api/books/{BOOK}/tb/results?ids=TB-0001,TB-0002&source_hash={digest}&models=gemini:a,gemini:b")
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()["records"]["TB-0001"]["models"]["gemini:a"]["text"], "甲")
+        self.assertEqual(result.json()["records"]["TB-0001"]["models"]["gemini:b"]["text"], "乙")
+        self.assertEqual(result.json()["records"]["TB-0001"]["final"], "定稿")
+        self.assertEqual(self.client.put(url, json={"source_hash": "wrong", "kind": "final", "text": "x"}).status_code, 409)
+        self.assertEqual(self.client.put(f"/api/books/{BOOK}/tb/results/TB-9999", json={"source_hash": digest, "kind": "final", "text": "x"}).status_code, 400)
+
+    def test_progress_lists_saved_segments_by_selected_model(self):
+        self.client.put(f"/api/books/{BOOK}/tb/source", json={"name": "book.txt", "text": SOURCE})
+        digest = hashlib.sha256(SOURCE.encode()).hexdigest()
+        url = f"/api/books/{BOOK}/tb/results/TB-0001"
+        self.client.put(url, json={"source_hash": digest, "kind": "model", "model": "gemini:a", "text": "甲"})
+        self.client.put(url, json={"source_hash": digest, "kind": "model", "model": "gemini:b", "text": "乙"})
+        self.client.put(url, json={"source_hash": digest, "kind": "final", "text": "定稿"})
+        with patch("zeabur_app.tb_translation.oss2.ObjectIterator", side_effect=RuntimeError("ListObjects forbidden")):
+            response = self.client.get(f"/api/books/{BOOK}/tb/progress?source_hash={digest}&models=gemini:a,gemini:b")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["models"], {"gemini:a": ["TB-0001"], "gemini:b": ["TB-0001"]})
+        self.assertEqual(self.client.get(f"/api/books/{BOOK}/tb/progress?source_hash=wrong&models=gemini:a").status_code, 409)
+
+    def test_rejects_bad_ids_and_bad_source(self):
+        self.assertEqual(self.client.put(f"/api/books/{BOOK}/tb/source", json={"name": "x.txt", "text": "not numbered"}).status_code, 400)
+        self.assertEqual(self.client.put(f"/api/books/../tb/source", json={"name": "x.txt", "text": SOURCE}).status_code, 404)
+        self.assertEqual(self.client.get(f"/api/books/{BOOK}/tb/source").status_code, 404)
+
+    def test_reference_is_separate_from_book_state(self):
+        attached = self.client.put(f"/api/books/{BOOK}/tb/source", json={"name": "book.txt", "text": SOURCE}).json()
+        url = f"/api/books/{BOOK}/tb/references/teacher"
+        payload = {"source_hash": attached["source_hash"], "name": "teacher.txt", "entries": {"TB-0001": "教师文字"}}
+        self.assertEqual(self.client.put(url, json=payload).status_code, 200)
+        self.assertEqual(self.client.get(url).json()["entries"], {"TB-0001": "教师文字"})
+        self.assertEqual(self.bucket.objects[PREFIX + "state.json"], b'{"page_count":2}')
+        self.assertEqual(self.client.put(url, json={**payload, "entries": {"TB-9999": "x"}}).status_code, 400)

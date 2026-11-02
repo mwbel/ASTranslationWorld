@@ -4,15 +4,20 @@ import json
 import os
 import sys
 import uuid
+import hashlib
+import hmac
+import mimetypes
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import quote
 
 import oss2
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +25,7 @@ sys.path.insert(0, str(ROOT))
 
 from tibetan_ocr_bridge import call_ai_ocr
 from tibetan_translation_bridge import call_translation
+from zeabur_app.tb_translation import create_router as create_tb_translation_router
 
 
 def env(name: str, default: str = "") -> str:
@@ -31,7 +37,14 @@ OSS_BUCKET = env("OSS_BUCKET")
 OSS_ACCESS_KEY_ID = env("OSS_ACCESS_KEY_ID")
 OSS_ACCESS_KEY_SECRET = env("OSS_ACCESS_KEY_SECRET")
 OSS_PREFIX = env("OSS_PREFIX", "tibetan-proofreading").strip("/")
+LIBRARY_PREFIX = "待识别文档/"
+LIBRARY_PASSWORD = env("LIBRARY_PASSWORD") or env("PASSWORD")
+LIBRARY_LIMIT = 1000
 MAX_UPLOAD_BYTES = int(env("MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))
+LIBRARY_FILE_EXTENSIONS = {
+    ".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff",
+    ".docx", ".md", ".markdown", ".txt",
+}
 
 
 def oss_bucket() -> oss2.Bucket:
@@ -66,6 +79,47 @@ def read_json(book_id: str, suffix: str) -> dict[str, Any]:
     return json.loads(body.decode("utf-8"))
 
 
+def require_library_access(authorization: str) -> None:
+    if not LIBRARY_PASSWORD:
+        raise HTTPException(503, "云端文档目录尚未设置访问口令")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(token, LIBRARY_PASSWORD):
+        raise HTTPException(401, "云端文档目录需要访问口令", headers={"WWW-Authenticate": "Bearer"})
+
+
+def library_object_key(relative_path: str) -> str:
+    path = str(relative_path or "")
+    if (not path or path.startswith("/") or "\\" in path or "\x00" in path
+            or any(ord(char) < 32 or ord(char) == 127 for char in path)
+            or any(part in ("", ".", "..") for part in path.split("/"))):
+        raise HTTPException(400, "无效的文档路径")
+    if PurePosixPath(path).suffix.lower() not in LIBRARY_FILE_EXTENSIONS:
+        raise HTTPException(400, "不支持此文件类型")
+    return f"{LIBRARY_PREFIX}{path}"
+
+
+def library_directory_path(relative_path: str) -> str:
+    path = str(relative_path or "")
+    if not path:
+        return ""
+    if path.endswith("/"):
+        path = path[:-1]
+    if (not path or path.startswith("/") or "\\" in path or "\x00" in path
+            or any(ord(char) < 32 or ord(char) == 127 for char in path)
+            or any(part in ("", ".", "..") for part in path.split("/"))):
+        raise HTTPException(400, "无效的目标文件夹")
+    return f"{path}/"
+
+
+def library_safe_filename(filename: str) -> str:
+    if (not filename or filename in (".", "..") or "/" in filename or "\\" in filename
+            or any(ord(char) < 32 or ord(char) == 127 for char in filename)):
+        raise HTTPException(400, "文件名无效，请移除路径分隔符或控制字符")
+    if PurePosixPath(filename).suffix.lower() not in LIBRARY_FILE_EXTENSIONS:
+        raise HTTPException(400, "仅支持 PDF、图片、DOCX、Markdown 和 TXT 文件")
+    return filename
+
+
 app = FastAPI(title="Tibetan OCR Proofreading Workbench", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -87,6 +141,130 @@ def health() -> dict[str, Any]:
         "pdf_render": {"provider": "pymupdf"},
         "translation": {"provider": env("TRANSLATE_PROVIDER", "model_aggregator")},
     }
+
+
+@app.get("/api/library")
+def list_library(authorization: str = Header(default="")) -> dict[str, Any]:
+    require_library_access(authorization)
+    items = []
+    truncated = False
+    for obj in oss2.ObjectIterator(oss_bucket(), prefix=LIBRARY_PREFIX, max_keys=100):
+        relative_path = obj.key[len(LIBRARY_PREFIX):]
+        if not relative_path or relative_path.endswith("/") or relative_path.startswith("."):
+            continue
+        if len(items) >= LIBRARY_LIMIT:
+            truncated = True
+            break
+        modified = getattr(obj, "last_modified", None)
+        items.append({
+            "path": relative_path,
+            "size": int(getattr(obj, "size", 0) or 0),
+            "updated_at": datetime.fromtimestamp(modified, timezone.utc).isoformat() if isinstance(modified, (int, float)) else str(modified or ""),
+        })
+    return {"folder": LIBRARY_PREFIX.rstrip("/"), "items": items, "truncated": truncated}
+
+
+@app.post("/api/library/upload")
+async def upload_library_file(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    require_library_access(authorization)
+    async with request.form() as form:
+        file = form.get("file")
+        if not isinstance(file, StarletteUploadFile):
+            raise HTTPException(400, "请选择一个文件")
+        directory = form.get("path", "")
+        if not isinstance(directory, str):
+            raise HTTPException(400, "无效的目标文件夹")
+        directory = library_directory_path(directory)
+        filename = library_safe_filename(file.filename or "")
+        try:
+            file.file.seek(0, 2)
+            size = file.file.tell()
+            file.file.seek(0)
+        except (AttributeError, OSError) as exc:
+            raise HTTPException(400, "无法读取上传文件") from exc
+        if not size:
+            raise HTTPException(400, "上传文件为空")
+        if size > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, f"文件超过上限 {MAX_UPLOAD_BYTES} bytes")
+
+        relative_path = f"{directory}{filename}"
+        source_key = library_object_key(relative_path)
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        if PurePosixPath(filename).suffix.lower() == ".txt":
+            content_type = "text/plain; charset=utf-8"
+        elif PurePosixPath(filename).suffix.lower() in {".md", ".markdown"}:
+            content_type = "text/markdown; charset=utf-8"
+        bucket = oss_bucket()
+        try:
+            versioning_status = getattr(bucket.get_bucket_versioning(), "status", None)
+        except Exception as exc:
+            raise HTTPException(503, "无法确认 Bucket 版本管理状态，暂不能安全上传") from exc
+        if versioning_status in {"Enabled", "Suspended"}:
+            raise HTTPException(503, "当前 Bucket 启用了版本控制，暂不能保证同名文件不被覆盖")
+        try:
+            bucket.head_object(source_key)
+        except oss2.exceptions.NoSuchKey:
+            pass
+        except Exception as exc:
+            raise HTTPException(502, "无法确认云端文件是否重名，请稍后重试") from exc
+        else:
+            raise HTTPException(409, "此文件夹中已存在同名文件，请重命名后重试")
+        try:
+            bucket.put_object(
+                source_key,
+                file.file,
+                headers={"Content-Type": content_type, "x-oss-forbid-overwrite": "true"},
+            )
+        except oss2.exceptions.ObjectAlreadyExists as exc:
+            raise HTTPException(409, "此文件夹中已存在同名文件，请重命名后重试") from exc
+        except oss2.exceptions.ServerError as exc:
+            if getattr(exc, "status", None) in (409, 412):
+                raise HTTPException(409, "此文件夹中已存在同名文件，请重命名后重试") from exc
+            raise HTTPException(502, "上传到云端失败，请稍后重试") from exc
+        except Exception as exc:
+            raise HTTPException(502, "上传到云端失败，请稍后重试") from exc
+
+        updated_at = datetime.now(timezone.utc).isoformat()
+        return {"path": relative_path, "size": size, "updated_at": updated_at}
+
+
+@app.post("/api/library/open")
+async def open_library_book(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    require_library_access(authorization)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "文档请求必须为 JSON object")
+    source_key = library_object_key(payload.get("path", ""))
+    try:
+        source = oss_bucket().head_object(source_key)
+    except oss2.exceptions.NoSuchKey as exc:
+        raise HTTPException(404, "文档不存在") from exc
+
+    index_name = hashlib.sha256(source_key.encode("utf-8")).hexdigest() + ".json"
+    try:
+        existing = read_json("_library-index", index_name)
+        if existing.get("source_key") == source_key and existing.get("book_id"):
+            return existing
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+
+    book_id = uuid.uuid4().hex
+    name = PurePosixPath(source_key).name
+    created_at = datetime.now(timezone.utc).isoformat()
+    metadata = {
+        "book_id": book_id,
+        "name": name,
+        "size": int(source.content_length),
+        "content_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
+        "source_key": source_key,
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
+    write_json(book_id, "metadata.json", metadata)
+    write_json(book_id, "state.json", {**metadata, "page_count": 0, "ocr_results": {}, "translation_results": {}})
+    write_json("_library-index", index_name, metadata)
+    return metadata
 
 
 @app.post("/api/books")
@@ -127,14 +305,29 @@ def get_book_source(book_id: str) -> Response:
     if not source_key:
         raise HTTPException(404, "书籍源文件不存在")
     try:
-        body = oss_bucket().get_object(source_key).read()
+        source = oss_bucket().get_object(source_key)
     except oss2.exceptions.NoSuchKey as exc:
         raise HTTPException(404, "书籍源文件不存在") from exc
     safe_name = Path(str(metadata.get("name") or "source.pdf")).name
-    return Response(
-        content=body,
+    def chunks():
+        try:
+            while chunk := source.read(1024 * 1024):
+                yield chunk
+        finally:
+            close = getattr(source, "close", None)
+            if close:
+                close()
+
+    headers = {
+        "Content-Disposition": f"attachment; filename=source; filename*=UTF-8''{quote(safe_name)}",
+        "Cache-Control": "private, max-age=3600",
+    }
+    if int(metadata.get("size") or 0) > 0:
+        headers["Content-Length"] = str(metadata["size"])
+    return StreamingResponse(
+        chunks(),
         media_type=str(metadata.get("content_type") or "application/octet-stream"),
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        headers=headers,
     )
 
 
@@ -214,4 +407,5 @@ def root() -> RedirectResponse:
     return RedirectResponse("/tibetan-proofreading-app/")
 
 
+app.include_router(create_tb_translation_router(sys.modules[__name__]))
 app.mount("/tibetan-proofreading-app", StaticFiles(directory=ROOT / "tibetan-proofreading-app", html=True), name="workbench")

@@ -4,16 +4,171 @@
   const PAGE_SIZE = 15;
   const DB_NAME = 'tb-paragraph-translations-v1';
   const STORE_NAME = 'results';
-  const settingsKey = 'tb-paragraph-translations:settings-v1';
+  const settingsKey = 'tb-paragraph-translations:settings-v2';
+  const routeBookId = new URLSearchParams(location.search).get('book_id');
+  const bookId = /^[0-9a-f]{32}$/.test(routeBookId || '') ? routeBookId : '';
+  const cloudBase = bookId ? `/api/books/${bookId}/tb` : '';
   const byId = (id) => document.getElementById(id);
   const ui = Object.fromEntries([
-    'fileInput', 'endpointInput', 'modelAInput', 'modelBInput', 'healthButton', 'status', 'workspace',
-    'documentTitle', 'documentSummary', 'previousPageButton', 'nextPageButton', 'pageInput', 'pageTotal',
-    'segmentList', 'segmentTitle', 'segmentProgress', 'sourceText', 'translateAButton', 'translateBButton',
-    'pilotButton', 'stopButton', 'exportButton', 'modelATitle', 'modelBTitle', 'modelAText', 'modelBText',
-    'useAButton', 'useBButton', 'finalText', 'saveFinalButton', 'saveState',
+    'sourceImportControl', 'fileInput', 'endpointInput', 'modelAInput', 'modelBInput', 'customModelBInput', 'healthButton', 'status', 'workspace',
+    'firstPageButton', 'previousPageButton', 'nextPageButton', 'lastPageButton', 'pageInput', 'pageTotal',
+    'progressOverview', 'progressModelLabel',
+    'bookProgressText', 'segmentProgressText', 'bookProgressBar', 'pageProgressGrid',
+    'currentPageProgressText', 'currentPageProgressBar',
+    'segmentTitle', 'segmentProgress', 'previousSegmentButton', 'nextSegmentButton', 'sourceText', 'translateAButton', 'translateAllAButton', 'translateRemainingAButton', 'translateBButton',
+    'batchProgressA', 'batchProgressABar', 'batchProgressAText', 'pilotButton', 'stopButton', 'pauseAButton', 'exportButton', 'modelATitle', 'modelBTitle', 'modelAText', 'modelBText',
+    'useAButton', 'useBButton', 'teacherImport', 'yigdzin1Import', 'teacherText', 'yigdzin1Text',
+    'teacherMeta', 'yigdzin1Meta', 'useTeacherButton', 'useYigdzin1Button',
+    'finalText', 'saveFinalButton', 'saveState',
   ].map((id) => [id, byId(id)]));
-  const state = { rows: [], records: {}, hash: '', name: '', selected: 0, page: 1, db: null, busy: false, controller: null, draftDirty: false };
+  const state = { rows: [], records: {}, sourcePages: {}, progress: { models: {} }, progressSlot: 0,
+    references: { teacher: {}, yigdzin1: {} }, hash: '', name: '', selected: 0, page: 1, db: null, busy: false, controller: null, draftDirty: false };
+
+  async function cloudJson(path, options = {}) {
+    const response = await fetch(`${cloudBase}${path}`, { credentials: 'same-origin', ...options });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401) throw new Error('协作登录已失效，请返回原书页面重新登录后再打开 TB 翻译。');
+      throw Object.assign(new Error(payload.detail || payload.error || `云端请求失败：HTTP ${response.status}`), { status: response.status });
+    }
+    return payload;
+  }
+
+  async function readOriginalBookSource() {
+    status('正在读取已选的云端编号 TXT 并关联到 TB 段落…');
+    const response = await fetch(`/api/books/${bookId}/source`, { credentials: 'same-origin' });
+    if (!response.ok) {
+      if (response.status === 401) throw new Error('协作登录已失效，请返回书籍目录重新登录。');
+      throw new Error(`读取已选文件失败：HTTP ${response.status}`);
+    }
+    const disposition = response.headers.get('content-disposition') || '';
+    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+    let name = '云端原文.txt';
+    if (encodedName) {
+      try { name = decodeURIComponent(encodedName); } catch (_) { /* Use the fallback name. */ }
+    }
+    if (!/\.txt$/i.test(name)) throw new Error('所选书籍不是编号 TXT；请从云端目录选择含 [TB-0001] 段号的 TXT。');
+    return { name, text: await response.text() };
+  }
+
+  function ensureCloudSource() {
+    return core.ensureBookTbSource({
+      readAttached: () => cloudJson('/source'),
+      readOriginal: readOriginalBookSource,
+      attach: ({ name, text }) => cloudJson('/source', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, text }),
+      }),
+    });
+  }
+
+  async function loadCloudRows(rows, signal) {
+    if (!bookId || !rows.length) return;
+    const models = modelIds().filter(Boolean);
+    for (let start = 0; start < rows.length; start += 30) {
+      if (signal?.aborted) throw new Error('已停止翻译');
+      const ids = rows.slice(start, start + 30).map((row) => row.id).join(',');
+      const query = new URLSearchParams({ ids, models: models.join(','), source_hash: state.hash });
+      const result = await cloudJson(`/results?${query}`, signal ? { signal } : {});
+      for (const [id, record] of Object.entries(result.records || {})) {
+        state.records[id] = { ...(state.records[id] || {}), ...record,
+          models: { ...(state.records[id]?.models || {}), ...(record.models || {}) } };
+      }
+    }
+    render(false);
+  }
+
+  async function loadCloudProgress() {
+    if (!bookId || !state.rows.length) return;
+    const model = modelIds()[state.progressSlot];
+    if (!model) return;
+    const query = new URLSearchParams({ models: model, source_hash: state.hash });
+    const result = await cloudJson(`/progress?${query}`);
+    if (result.source_hash !== state.hash) return;
+    state.progress.models[model] = new Set(result.models?.[model] || []);
+    render(false);
+  }
+
+  function completedIdsFor(model) {
+    if (bookId) return state.progress.models[model] || null;
+    return new Set(state.rows.filter((row) => state.records[row.id]?.models?.[model]?.text).map((row) => row.id));
+  }
+
+  function selectProgressModel(slot) {
+    if (state.progressSlot === slot) return;
+    state.progressSlot = slot;
+    if (!state.rows.length) return;
+    renderProgress();
+    if (bookId && !completedIdsFor(modelIds()[slot])) void loadCloudProgress().catch(showError);
+  }
+
+  function renderProgress() {
+    if (!state.rows.length) return;
+    ui.progressOverview.hidden = false;
+    const pageCount = Math.ceil(state.rows.length / PAGE_SIZE);
+    const model = modelIds()[state.progressSlot];
+    ui.progressModelLabel.textContent = state.progressSlot === 0
+      ? ui.modelAInput.selectedOptions[0]?.textContent || model
+      : ui.modelBInput.value === 'custom' ? model : ui.modelBInput.selectedOptions[0]?.textContent || model;
+    const completed = completedIdsFor(model);
+    if (!completed) {
+      ui.bookProgressText.textContent = '正在统计云端进度…';
+      ui.segmentProgressText.textContent = '';
+      ui.bookProgressBar.value = 0;
+      ui.pageProgressGrid.replaceChildren();
+      ui.currentPageProgressText.textContent = '正在统计当前页…';
+      ui.currentPageProgressBar.value = 0;
+      return;
+    }
+    const progress = core.calculateModelProgress(state.rows, completed, PAGE_SIZE);
+    const pagePercent = Math.round(100 * progress.completedPages / pageCount);
+    const segmentPercent = Math.round(100 * progress.completedSegments / state.rows.length);
+    ui.bookProgressText.textContent = `已完成 ${progress.completedPages} / ${pageCount} 页（${pagePercent}%）`;
+    ui.segmentProgressText.textContent = `已译 ${progress.completedSegments} / ${state.rows.length} 段（${segmentPercent}%）`;
+    ui.bookProgressBar.max = pageCount;
+    ui.bookProgressBar.value = progress.completedPages;
+    const current = progress.pages[state.page - 1];
+    ui.currentPageProgressText.textContent = `第 ${state.page} 页：${current.completed} / ${current.total} 段（${Math.round(100 * current.completed / current.total)}%）`;
+    ui.currentPageProgressBar.max = current.total;
+    ui.currentPageProgressBar.value = current.completed;
+    ui.pageProgressGrid.replaceChildren(...progress.pages.map((page) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = String(page.page);
+      button.className = page.page === state.page ? 'current' : '';
+      button.style.setProperty('--fill', `${Math.round(100 * page.completed / page.total)}%`);
+      button.title = `第 ${page.page} 页：${page.completed} / ${page.total} 段（${Math.round(100 * page.completed / page.total)}%）`;
+      button.setAttribute('aria-label', button.title);
+      button.setAttribute('aria-current', page.page === state.page ? 'page' : 'false');
+      button.disabled = state.busy;
+      button.addEventListener('click', () => void goPage(page.page).catch(showError));
+      return button;
+    }));
+  }
+
+  async function loadReferences() {
+    if (!bookId) return;
+    for (const kind of ['teacher', 'yigdzin1']) {
+      try {
+        const saved = await cloudJson(`/references/${kind}`);
+        if (saved.source_hash === state.hash) state.references[kind] = saved.entries || {};
+        ui[kind === 'teacher' ? 'teacherMeta' : 'yigdzin1Meta'].textContent = `${saved.name || '参考稿'} · ${Object.keys(state.references[kind]).length} 段`;
+      } catch (error) {
+        if (!/不存在|404|Not Found/.test(error.message)) throw error;
+      }
+    }
+  }
+
+  async function importReference(kind, file) {
+    if (!file || !state.rows.length) throw new Error('请先打开 TB 编号原文');
+    const entries = core.parseReferenceDocument(await file.text(), state.rows);
+    if (bookId) await cloudJson(`/references/${kind}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_hash: state.hash, name: file.name, entries }) });
+    state.references[kind] = entries;
+    ui[kind === 'teacher' ? 'teacherMeta' : 'yigdzin1Meta'].textContent = `${file.name} · ${Object.keys(entries).length} 段`;
+    renderEditor(false);
+    status(`${kind === 'teacher' ? '教师校正稿' : 'Yigdzin1'} 已导入 ${Object.keys(entries).length} 段。`, 'success');
+  }
 
   function status(message, type = '') {
     ui.status.textContent = message;
@@ -54,6 +209,14 @@
     });
   }
 
+  async function saveCloudResult(id, kind, text, model = '') {
+    if (!bookId) return;
+    await cloudJson(`/results/${encodeURIComponent(id)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_hash: state.hash, kind, model, text }),
+    });
+  }
+
   async function documentHash(text) {
     const bytes = new TextEncoder().encode(text);
     const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -62,27 +225,36 @@
 
   function currentRow() { return state.rows[state.selected]; }
   function recordFor(id) { return state.records[id] ||= { id, models: {}, final: '' }; }
-  function modelIds() { return [ui.modelAInput.value.trim(), ui.modelBInput.value.trim()]; }
+  function modelIds() { return [ui.modelAInput.value.trim(), ui.modelBInput.value === 'custom' ? ui.customModelBInput.value.trim() : ui.modelBInput.value.trim()]; }
   function validateModels(both = false) {
     const models = modelIds();
-    if (!models[0] || !models[1]) throw new Error('请填写模型 A 和模型 B 的完整模型 ID');
+    if (!models[0] || !models[1]) throw new Error('请分别选择 Gemini 和 GPT 模型');
     if (both && models[0] === models[1]) throw new Error('两个对照模型必须使用不同的模型 ID');
     return models;
   }
 
   function saveSettings() {
     localStorage.setItem(settingsKey, JSON.stringify({
-      endpoint: ui.endpointInput.value.trim(), modelA: ui.modelAInput.value.trim(), modelB: ui.modelBInput.value.trim(),
+      endpoint: ui.endpointInput.value.trim(), modelA: ui.modelAInput.value.trim(), modelB: modelIds()[1],
     }));
-    if (state.rows.length) renderEditor(false);
+    if (state.rows.length) {
+      renderEditor(false);
+      if (bookId) void loadCloudRows(core.getVirtualPage(state.rows, state.page, PAGE_SIZE)).catch(showError);
+      if (bookId) void loadCloudProgress().catch(showError);
+      renderProgress();
+    }
   }
 
   function restoreSettings() {
     try {
       const saved = JSON.parse(localStorage.getItem(settingsKey) || '{}');
       if (saved.endpoint) ui.endpointInput.value = saved.endpoint;
-      if (saved.modelA) ui.modelAInput.value = saved.modelA;
-      if (saved.modelB) ui.modelBInput.value = saved.modelB;
+      if (saved.modelA && [...ui.modelAInput.options].some((option) => option.value === saved.modelA)) ui.modelAInput.value = saved.modelA;
+      if (saved.modelB) {
+        if ([...ui.modelBInput.options].some((option) => option.value === saved.modelB)) ui.modelBInput.value = saved.modelB;
+        else { ui.modelBInput.value = 'custom'; ui.customModelBInput.value = saved.modelB; }
+      }
+      ui.customModelBInput.hidden = ui.modelBInput.value !== 'custom';
     } catch (_) { /* Keep visible defaults. */ }
   }
 
@@ -91,48 +263,54 @@
     if (state.busy) throw new Error('翻译进行中，请先停止再导入文件');
     if (state.draftDirty) await saveFinal();
     const text = await file.text();
+    core.parseTbDocument(text);
+    const attached = bookId ? await cloudJson('/source', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: file.name, text }),
+    }) : null;
+    await loadDocument(attached?.text || text, attached?.name || file.name, attached?.source_hash);
+  }
+
+  async function loadDocument(text, name, cloudHash = '', sourcePages = {}) {
     const rows = core.parseTbDocument(text);
-    const hash = await documentHash(text);
+    const hash = cloudHash || await documentHash(text);
     state.db ||= await openDb();
     const stored = await loadRecords(hash);
     state.rows = rows;
+    state.sourcePages = sourcePages || {};
     state.hash = hash;
-    state.name = file.name;
-    state.records = Object.fromEntries(stored.map(({ key, ...record }) => [record.id, record]));
+    state.name = name;
+    state.records = bookId ? {} : Object.fromEntries(stored.map(({ key, ...record }) => [record.id, record]));
+    state.progress = { models: {} };
+    state.references = { teacher: {}, yigdzin1: {} };
     state.selected = 0;
     state.page = 1;
     state.draftDirty = false;
     ui.workspace.hidden = false;
+    if (bookId) ui.sourceImportControl.hidden = true;
     render(true);
-    status(`已导入 ${file.name}：${rows.length} 段，${Math.ceil(rows.length / PAGE_SIZE)} 个浏览页。已恢复此文件的本机译文。`, 'success');
+    if (bookId) {
+      await loadCloudRows(rows.slice(0, 30));
+      await loadCloudProgress();
+      await loadReferences();
+      render(true);
+    }
+    status(`已打开 ${name}：${rows.length} 段，${Math.ceil(rows.length / PAGE_SIZE)} 个浏览页。${bookId ? '云端译文已同步。' : '本机译文已恢复。'}`, 'success');
   }
 
   function render(resetDraft = false) {
-    ui.documentTitle.textContent = state.name;
-    const models = modelIds();
-    const done = state.rows.filter((row) => models.every((model) => state.records[row.id]?.models?.[model]?.text)).length;
-    const final = state.rows.filter((row) => state.records[row.id]?.final?.trim()).length;
-    ui.documentSummary.textContent = `${state.rows.length} 段 · 双模型完成 ${done} · 定稿 ${final}`;
     const count = Math.ceil(state.rows.length / PAGE_SIZE);
     ui.pageInput.max = String(count);
     ui.pageInput.value = String(state.page);
     ui.pageTotal.textContent = `/ ${count}`;
+    ui.firstPageButton.disabled = state.busy || state.page <= 1;
     ui.previousPageButton.disabled = state.busy || state.page <= 1;
     ui.nextPageButton.disabled = state.busy || state.page >= count;
-    ui.segmentList.replaceChildren(...core.getVirtualPage(state.rows, state.page, PAGE_SIZE).map((row) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `segment-item${row.id === currentRow().id ? ' active' : ''}`;
-      button.disabled = state.busy;
-      const label = document.createElement('strong');
-      label.textContent = row.id;
-      const stateLabel = document.createElement('small');
-      const record = state.records[row.id];
-      stateLabel.textContent = record?.final?.trim() ? '已定稿' : models.every((model) => record?.models?.[model]?.text) ? '双模型已译' : '待处理';
-      button.append(label, stateLabel);
-      button.addEventListener('click', () => void showSegment(state.rows.indexOf(row)).catch(showError));
-      return button;
-    }));
+    ui.lastPageButton.disabled = state.busy || state.page >= count;
+    ui.previousSegmentButton.disabled = state.busy || state.selected <= 0;
+    ui.nextSegmentButton.disabled = state.busy || state.selected >= state.rows.length - 1;
+    updateGeminiBatchControls();
+    renderProgress();
     renderEditor(resetDraft);
   }
 
@@ -141,14 +319,19 @@
     const record = recordFor(row.id);
     const [modelA, modelB] = modelIds();
     ui.segmentTitle.textContent = row.id;
-    ui.segmentProgress.textContent = `${state.selected + 1} / ${state.rows.length}`;
+    const originalPages = core.formatSourcePages(state.sourcePages[row.id]);
+    ui.segmentProgress.textContent = `${state.selected + 1} / ${state.rows.length}${originalPages ? ` · ${originalPages}` : ''}`;
     ui.sourceText.textContent = row.text;
-    ui.modelATitle.textContent = `模型 A · ${modelA}`;
-    ui.modelBTitle.textContent = `模型 B · ${modelB}`;
+    ui.modelATitle.textContent = ui.modelAInput.selectedOptions[0]?.textContent || modelA;
+    ui.modelBTitle.textContent = ui.modelBInput.value === 'custom' ? modelB : ui.modelBInput.selectedOptions[0]?.textContent || modelB;
     ui.modelAText.value = record.models[modelA]?.text || '';
     ui.modelBText.value = record.models[modelB]?.text || '';
+    ui.teacherText.value = state.references.teacher[row.id] || '';
+    ui.yigdzin1Text.value = state.references.yigdzin1[row.id] || '';
     ui.useAButton.disabled = !ui.modelAText.value;
     ui.useBButton.disabled = !ui.modelBText.value;
+    ui.useTeacherButton.disabled = !ui.teacherText.value;
+    ui.useYigdzin1Button.disabled = !ui.yigdzin1Text.value;
     if (resetDraft) {
       ui.finalText.value = record.final || '';
       state.draftDirty = false;
@@ -161,6 +344,7 @@
     const row = currentRow();
     const record = recordFor(row.id);
     if (!state.draftDirty && record.final === ui.finalText.value) return;
+    await saveCloudResult(row.id, 'final', ui.finalText.value);
     record.final = ui.finalText.value;
     await saveRecord(row.id);
     state.draftDirty = false;
@@ -175,6 +359,7 @@
     if (state.draftDirty) await saveFinal();
     state.selected = index;
     state.page = Math.floor(index / PAGE_SIZE) + 1;
+    if (bookId) await loadCloudRows(core.getVirtualPage(state.rows, state.page, PAGE_SIZE));
     render(true);
   }
 
@@ -186,19 +371,40 @@
 
   function setBusy(busy) {
     state.busy = busy;
-    [ui.translateAButton, ui.translateBButton, ui.pilotButton, ui.healthButton].forEach((button) => { button.disabled = busy; });
+    [ui.translateAButton, ui.translateAllAButton, ui.translateRemainingAButton, ui.translateBButton, ui.pilotButton, ui.healthButton].forEach((button) => { button.disabled = busy; });
     ui.stopButton.disabled = !busy;
-    [ui.fileInput, ui.endpointInput, ui.modelAInput, ui.modelBInput, ui.pageInput,
-      ui.previousPageButton, ui.nextPageButton].forEach((input) => { input.disabled = busy; });
-    ui.segmentList.querySelectorAll('button').forEach((button) => { button.disabled = busy; });
+    ui.pauseAButton.disabled = !busy;
+    [ui.fileInput, ui.teacherImport, ui.yigdzin1Import, ui.endpointInput, ui.modelAInput, ui.modelBInput, ui.customModelBInput, ui.pageInput,
+      ui.firstPageButton, ui.previousPageButton, ui.nextPageButton, ui.lastPageButton, ui.previousSegmentButton, ui.nextSegmentButton].forEach((input) => { input.disabled = busy; });
+    ui.pageProgressGrid.querySelectorAll('button').forEach((button) => { button.disabled = busy; });
     if (!busy && state.rows.length) render(false);
+  }
+
+  function updateGeminiBatchControls() {
+    const available = state.rows.length > 0 && !state.busy;
+    ui.translateAllAButton.disabled = !available;
+    ui.translateRemainingAButton.disabled = !available || !core.selectModelBatchRows(state.rows, state.records, modelIds()[0], 'remaining').length;
+  }
+
+  function addAvailableModels(data) {
+    const choices = data.aggregator_config?.unifiedModels;
+    if (!Array.isArray(choices)) return;
+    for (const entry of choices) {
+      const model = typeof entry === 'string' ? entry : entry?.id || entry?.model || '';
+      const select = model.startsWith('gemini:') ? ui.modelAInput : /gpt/i.test(model) ? ui.modelBInput : null;
+      if (!select || [...select.options].some((option) => option.value === model)) continue;
+      const option = new Option(model.replace(/^[^:]+:/, ''), model);
+      select.add(option);
+    }
   }
 
   async function checkHealth() {
     const endpoint = ui.endpointInput.value.trim();
     if (!/^https?:\/\//.test(endpoint)) throw new Error('请填写有效的 HTTP 翻译接口地址');
     const aggregator = /\/api\/aggregate\/chat\/?$/.test(endpoint);
-    const url = aggregator ? endpoint.replace(/\/chat\/?$/, '/health') : endpoint.replace(/\/translate\/?$/, '/health');
+    const url = aggregator ? endpoint.replace(/\/chat\/?$/, '/health')
+      : /\/api\/translate\/?$/.test(endpoint) ? `${endpoint.replace(/\/$/, '')}/health`
+      : endpoint.replace(/\/translate\/?$/, '/health');
     const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error(`翻译服务健康检查 HTTP ${response.status}`);
     const data = await response.json();
@@ -206,11 +412,13 @@
       if (data.ok !== true) throw new Error(data.error || '模型聚合服务未就绪');
       return { ...data, provider: 'model_aggregator' };
     }
-    if (!(data.loaded || data.status === 'ready')) throw new Error(data.error || `翻译服务未就绪：${data.status || 'unknown'}`);
-    if (!['model_aggregator', 'model-aggregator', 'aggregator'].includes(data.provider)) {
-      throw new Error(`当前接口使用 ${data.provider || '未知提供者'}，不支持按模型 ID 切换；请使用模型聚合接口或配置为 model_aggregator 的翻译服务。`);
+    const provider = data.provider || data.translation?.provider;
+    if (!(data.loaded || data.status === 'ready' || data.translation?.status === 'ready' || (data.ok === true && data.translation?.provider))) throw new Error(data.error || `翻译服务未就绪：${data.status || 'unknown'}`);
+    if (!['model_aggregator', 'model-aggregator', 'aggregator'].includes(provider)) {
+      throw new Error(`当前接口使用 ${provider || '未知提供者'}，不支持按模型 ID 切换；请使用模型聚合接口或配置为 model_aggregator 的翻译服务。`);
     }
-    return data;
+    addAvailableModels(data);
+    return { ...data, provider };
   }
 
   async function translateRow(row, model, signal) {
@@ -227,8 +435,20 @@
       const aggregator = /\/api\/aggregate\/chat\/?$/.test(endpoint);
       const body = aggregator ? core.buildAggregatorRequest(request) : request;
       const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal });
-      const data = await response.json().catch(() => ({}));
+      let data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      if (response.status === 202 && data.status_url) {
+        if (!/^\/api\/translate\/jobs\/[0-9a-f]{32}$/.test(data.status_url)) throw new Error('翻译任务地址无效');
+        const jobUrl = data.status_url;
+        while (true) {
+          if (controller.signal.aborted) throw new Error('已停止翻译');
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          const progress = await fetch(jobUrl, { credentials: 'same-origin', signal: controller.signal });
+          data = await progress.json().catch(() => ({}));
+          if (!progress.ok) throw new Error(data.detail || data.error || `翻译任务 HTTP ${progress.status}`);
+          if (data.status !== 'running' && data.status !== 'queued') break;
+        }
+      }
       if (data.ok === false) throw new Error(data.error || data.message || '模型聚合服务返回失败');
       if (data.model && !core.modelsMatch(model, data.model)) throw new Error(`实际返回模型 ${data.model} 与请求模型 ${model} 不一致，译文未保存`);
       return core.extractTranslation(data);
@@ -242,8 +462,10 @@
   }
 
   async function saveModel(row, model, text) {
+    await saveCloudResult(row.id, 'model', text, model);
     const record = recordFor(row.id);
     record.models[model] = { text, updatedAt: new Date().toISOString() };
+    state.progress.models[model]?.add(row.id);
     await saveRecord(row.id);
     render(false);
   }
@@ -252,6 +474,7 @@
     if (!state.rows.length || state.busy) return;
     const model = modelIds()[which];
     if (!model) { showError(new Error(`请填写模型 ${which === 0 ? 'A' : 'B'} 的完整模型 ID`)); return; }
+    selectProgressModel(which);
     const row = currentRow();
     setBusy(true);
     state.controller = new AbortController();
@@ -274,6 +497,7 @@
     setBusy(true);
     state.controller = new AbortController();
     try {
+      if (bookId) await loadCloudRows(rows);
       await checkHealth();
       status(`从 ${rows[0].id} 开始试译 ${rows.length} 段。已有结果将跳过。`);
       const completed = await core.runTranslationBatch(rows, models, state.records,
@@ -287,17 +511,76 @@
     finally { state.controller = null; setBusy(false); }
   }
 
-  function useModel(which) {
-    ui.finalText.value = which === 0 ? ui.modelAText.value : ui.modelBText.value;
+  async function runGeminiBatch(mode) {
+    if (!state.rows.length || state.busy) return;
+    const model = modelIds()[0];
+    if (!model) { showError(new Error('请先选择 Gemini 翻译模型')); return; }
+    setBusy(true);
+    state.controller = new AbortController();
+    let completed = 0;
+    let failed = 0;
+    let total = 0;
+    const updateProgress = (label) => {
+      const percentage = total ? completed / total * 100 : 0;
+      ui.batchProgressA.hidden = false;
+      ui.batchProgressABar.value = percentage;
+      ui.batchProgressAText.textContent = `${label}：${percentage.toFixed(1)}%（已保存 ${completed}/${total} 段，失败 ${failed} 段）`;
+    };
+    updateProgress('准备中');
+    try {
+      await checkHealth();
+      if (mode === 'remaining' && bookId) {
+        status('正在读取本书已有的 Gemini 译文…');
+        await loadCloudRows(state.rows, state.controller.signal);
+      }
+      const rows = core.selectModelBatchRows(state.rows, state.records, model, mode);
+      total = rows.length;
+      updateProgress(total ? '翻译中' : '无待翻译段落');
+      if (!rows.length) {
+        status(`${model} 的所有段落已有译文。`, 'success');
+        return;
+      }
+      status(`${mode === 'all' ? '重新翻译所有段' : '翻译剩余段'}：${rows.length} 段，模型 ${model}。每段完成后保存，可随时停止。`);
+      await core.runTranslationBatch(rows, [model], state.records,
+        (row) => translateRow(row, model, state.controller.signal),
+        async (row, selectedModel, text) => {
+          await saveModel(row, selectedModel, text);
+          completed += 1;
+          updateProgress(state.controller.signal.aborted ? '已暂停' : '翻译中');
+          status(`已保存 ${completed}/${rows.length}：${row.id} / ${selectedModel}，可随时停止。`, 'success');
+        }, state.controller.signal, {
+          skipExisting: mode !== 'all',
+          continueOnError: true,
+          onError: (row, selectedModel, error) => {
+            failed += 1;
+            updateProgress('翻译中');
+            status(`${row.id} / ${selectedModel} 失败：${error.message || error}。继续下一段；稍后可用“翻译剩余段”补译。`, 'error');
+          },
+        });
+      updateProgress(state.controller.signal.aborted ? '已暂停' : '本轮结束');
+      status(`${mode === 'all' ? '全部' : '剩余'}段落翻译结束：已保存 ${completed} 段，失败 ${failed} 段。${failed ? '可用“翻译剩余段”补译。' : ''}`, failed ? 'error' : 'success');
+    } catch (error) {
+      updateProgress(state.controller.signal.aborted ? '已暂停' : '已中断');
+      if (state.controller.signal.aborted) status(`已暂停；本次已保存 ${completed} 段，可点击“翻译剩余段”继续。`);
+      else showError(new Error(`${error.message || error}；本次已保存 ${completed} 段。`));
+    } finally {
+      state.controller = null;
+      setBusy(false);
+    }
+  }
+
+  function useCandidate(text) {
+    ui.finalText.value = text;
     state.draftDirty = true;
     ui.saveState.textContent = '未保存';
     void saveFinal().catch(showError);
   }
 
-  function exportAll() {
+  async function exportAll() {
     if (!state.rows.length) return;
+    if (bookId) await loadCloudRows(state.rows);
     const models = [...new Set([...modelIds(), ...Object.values(state.records).flatMap((record) => Object.keys(record.models || {}))])].filter(Boolean);
-    const content = core.exportTranslationMarkdown(state.rows, state.records, models);
+    const content = core.exportTranslationMarkdown(state.rows, state.records, models, state.references);
     const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
@@ -310,21 +593,73 @@
   function showError(error) { status(error?.message || String(error), 'error'); }
 
   restoreSettings();
+  ui.sourceImportControl.hidden = Boolean(bookId);
+  if (bookId) {
+    ui.endpointInput.value = `${location.origin}/api/translate`;
+    byId('backLink').href = `./?workflow=translation&book_id=${encodeURIComponent(bookId)}`;
+    status('正在读取本书的 TB 编号原文…');
+    void ensureCloudSource().then((source) => loadDocument(source.text, source.name, source.source_hash, source.source_pages)).catch((error) => {
+      if (error.code === 'TB_SOURCE_UNNUMBERED') {
+        const url = new URL('./ocr-tb-segmentation.html', location.href);
+        url.searchParams.set('book_id', bookId);
+        url.searchParams.set('source', 'txt');
+        window.top.location.assign(url.href);
+        return;
+      }
+      if (!state.rows.length) ui.sourceImportControl.hidden = false;
+      showError(error);
+    });
+  }
   ui.fileInput.addEventListener('change', () => void importFile(ui.fileInput.files[0]).catch(showError));
-  [ui.endpointInput, ui.modelAInput, ui.modelBInput].forEach((input) => input.addEventListener('change', saveSettings));
+  [ui.endpointInput, ui.modelAInput, ui.modelBInput, ui.customModelBInput].forEach((input) => input.addEventListener('change', () => {
+    if (input === ui.modelAInput) selectProgressModel(0);
+    if (input === ui.modelBInput || input === ui.customModelBInput) selectProgressModel(1);
+    saveSettings();
+  }));
+  ui.modelAInput.addEventListener('focus', () => selectProgressModel(0));
+  [ui.modelBInput, ui.customModelBInput].forEach((input) => input.addEventListener('focus', () => selectProgressModel(1)));
+  ui.modelBInput.addEventListener('change', () => { ui.customModelBInput.hidden = ui.modelBInput.value !== 'custom'; });
   [ui.modelAInput, ui.modelBInput].forEach((input) => input.addEventListener('input', () => {
-    if (state.rows.length) renderEditor(false);
+    if (state.rows.length) {
+      renderEditor(false);
+      renderProgress();
+      updateGeminiBatchControls();
+    }
   }));
   ui.healthButton.addEventListener('click', () => void checkHealth().then((data) => status(`翻译服务已就绪：${data.provider || ''} ${data.model || ''}`, 'success')).catch(showError));
+  ui.firstPageButton.addEventListener('click', () => void goPage(1).catch(showError));
   ui.previousPageButton.addEventListener('click', () => void goPage(state.page - 1).catch(showError));
   ui.nextPageButton.addEventListener('click', () => void goPage(state.page + 1).catch(showError));
-  ui.pageInput.addEventListener('change', () => void goPage(Number(ui.pageInput.value)).catch(showError));
+  ui.lastPageButton.addEventListener('click', () => void goPage(Math.ceil(state.rows.length / PAGE_SIZE)).catch(showError));
+  let pageNavigationPending = false;
+  async function navigateFromPageInput() {
+    if (pageNavigationPending || Number(ui.pageInput.value) === state.page) return;
+    pageNavigationPending = true;
+    try { await goPage(Number(ui.pageInput.value)); }
+    catch (error) { ui.pageInput.value = String(state.page); showError(error); }
+    finally { pageNavigationPending = false; }
+  }
+  ui.pageInput.addEventListener('change', () => void navigateFromPageInput());
+  ui.pageInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    void navigateFromPageInput();
+  });
+  ui.previousSegmentButton.addEventListener('click', () => void showSegment(state.selected - 1).catch(showError));
+  ui.nextSegmentButton.addEventListener('click', () => void showSegment(state.selected + 1).catch(showError));
   ui.translateAButton.addEventListener('click', () => void runOne(0));
+  ui.translateAllAButton.addEventListener('click', () => void runGeminiBatch('all'));
+  ui.translateRemainingAButton.addEventListener('click', () => void runGeminiBatch('remaining'));
   ui.translateBButton.addEventListener('click', () => void runOne(1));
   ui.pilotButton.addEventListener('click', () => void runPilot());
   ui.stopButton.addEventListener('click', () => state.controller?.abort());
-  ui.useAButton.addEventListener('click', () => useModel(0));
-  ui.useBButton.addEventListener('click', () => useModel(1));
+  ui.pauseAButton.addEventListener('click', () => state.controller?.abort());
+  ui.useAButton.addEventListener('click', () => useCandidate(ui.modelAText.value));
+  ui.useBButton.addEventListener('click', () => useCandidate(ui.modelBText.value));
+  ui.useTeacherButton.addEventListener('click', () => useCandidate(ui.teacherText.value));
+  ui.useYigdzin1Button.addEventListener('click', () => useCandidate(ui.yigdzin1Text.value));
+  ui.teacherImport.addEventListener('change', () => void importReference('teacher', ui.teacherImport.files[0]).catch(showError));
+  ui.yigdzin1Import.addEventListener('change', () => void importReference('yigdzin1', ui.yigdzin1Import.files[0]).catch(showError));
   ui.finalText.addEventListener('input', () => { state.draftDirty = true; ui.saveState.textContent = '未保存'; });
   ui.saveFinalButton.addEventListener('click', () => void saveFinal().catch(showError));
   ui.exportButton.addEventListener('click', () => void saveFinal().then(exportAll).catch(showError));

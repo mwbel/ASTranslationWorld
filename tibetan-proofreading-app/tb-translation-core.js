@@ -21,9 +21,70 @@
     return rows;
   }
 
+  async function ensureBookTbSource({ readAttached, readOriginal, attach }) {
+    try {
+      return await readAttached();
+    } catch (error) {
+      if (error.status !== 404) throw error;
+    }
+    const original = await readOriginal();
+    try {
+      parseTbDocument(original.text);
+    } catch (error) {
+      throw Object.assign(new Error(`所选书籍的 TXT 不是有效的 TB 编号原文：${error.message}`),
+        { code: 'TB_SOURCE_UNNUMBERED' });
+    }
+    try {
+      return await attach(original);
+    } catch (error) {
+      if (error.status !== 409) throw error;
+      const attached = await readAttached();
+      const normalize = (text) => String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+      if (normalize(attached.text) === normalize(original.text)) return attached;
+      throw error;
+    }
+  }
+
   function getVirtualPage(rows, page, size = 15) {
     const start = Math.max(0, (Math.max(1, Math.trunc(page)) - 1) * size);
     return rows.slice(start, start + size);
+  }
+
+  function formatSourcePages(pages) {
+    return Array.isArray(pages) && pages.length ? `原第 ${pages.join('、')} 页` : '';
+  }
+
+  function calculateModelProgress(rows, completedIds, size = 15) {
+    const completed = completedIds instanceof Set ? completedIds : new Set(completedIds || []);
+    const pages = [];
+    let completedSegments = 0;
+    for (let start = 0; start < rows.length; start += size) {
+      const pageRows = rows.slice(start, start + size);
+      const count = pageRows.filter((row) => completed.has(row.id)).length;
+      completedSegments += count;
+      pages.push({ page: pages.length + 1, completed: count, total: pageRows.length });
+    }
+    return { completedSegments, completedPages: pages.filter((page) => page.completed === page.total).length, pages };
+  }
+
+  function parseReferenceDocument(text, rows) {
+    const allowed = new Set(rows.map((row) => row.id));
+    const entries = {};
+    let current = '';
+    String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').forEach((line, index) => {
+      const match = /^\[TB-(\d{4,})\]\s*(.*)$/.exec(line);
+      if (match) {
+        current = `TB-${match[1]}`;
+        if (!allowed.has(current)) throw new Error(`第 ${index + 1} 行的 ${current} 不属于当前原文`);
+        if (Object.hasOwn(entries, current)) throw new Error(`${current} 编号重复`);
+        entries[current] = match[2].trim();
+      } else if (line.trim()) {
+        if (!current) throw new Error(`第 ${index + 1} 行缺少 TB 编号`);
+        entries[current] += `${entries[current] ? '\n' : ''}${line.trim()}`;
+      }
+    });
+    if (!Object.keys(entries).length || Object.values(entries).some((value) => !value)) throw new Error('参考稿没有有效的编号段落');
+    return entries;
   }
 
   function buildTranslationRequest(row, neighbors, options) {
@@ -78,7 +139,13 @@
     return colon > 0 && requested.slice(colon + 1) === actual;
   }
 
-  function exportTranslationMarkdown(rows, records, models) {
+  function selectModelBatchRows(rows, records, model, mode) {
+    if (mode === 'all') return rows.slice();
+    if (mode === 'remaining') return rows.filter((row) => !records[row.id]?.models?.[model]?.text);
+    throw new Error(`未知的批量翻译范围：${mode}`);
+  }
+
+  function exportTranslationMarkdown(rows, records, models, references = {}) {
     const lines = ['# TB 段落翻译对照', ''];
     rows.forEach((row) => {
       const record = records[row.id] || {};
@@ -86,21 +153,28 @@
       models.forEach((model) => {
         lines.push(`### ${model}`, '', record.models?.[model]?.text || '（未翻译）', '');
       });
+      for (const [kind, label] of [['teacher', '教师校正稿'], ['yigdzin1', 'Yigdzin1']]) {
+        lines.push(`### ${label}`, '', references[kind]?.[row.id] || '（未导入）', '');
+      }
       lines.push('### 人工定稿', '', record.final || '（未定稿）', '');
     });
     return lines.join('\n');
   }
 
-  async function runTranslationBatch(rows, modelIds, existing, translate, onResult, signal) {
+  async function runTranslationBatch(rows, modelIds, existing, translate, onResult, signal, options = {}) {
     let completed = 0;
     for (const row of rows) {
       for (const model of modelIds) {
         if (signal?.aborted) throw new Error('已停止翻译');
-        if (existing[row.id]?.models?.[model]?.text) continue;
+        if (options.skipExisting !== false && existing[row.id]?.models?.[model]?.text) continue;
         let text;
         try {
           text = await translate(row, model);
         } catch (error) {
+          if (options.continueOnError && !signal?.aborted) {
+            await options.onError?.(row, model, error);
+            continue;
+          }
           throw new Error(`${row.id} / ${model}：${error?.message || error}`);
         }
         if (signal?.aborted) throw new Error('已停止翻译');
@@ -111,5 +185,5 @@
     return completed;
   }
 
-  return { parseTbDocument, getVirtualPage, buildTranslationRequest, buildAggregatorRequest, modelsMatch, extractTranslation, exportTranslationMarkdown, runTranslationBatch };
+  return { parseTbDocument, ensureBookTbSource, parseReferenceDocument, getVirtualPage, formatSourcePages, calculateModelProgress, buildTranslationRequest, buildAggregatorRequest, modelsMatch, selectModelBatchRows, extractTranslation, exportTranslationMarkdown, runTranslationBatch };
 });
