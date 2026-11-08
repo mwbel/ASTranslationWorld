@@ -68,8 +68,21 @@ case "${1:-}" in
   *) echo "用法：$0 start|stop" >&2; exit 2 ;;
 esac
 
-if [ -z "${GEMINI_API_KEY:-}" ]; then
-  echo "缺少 GEMINI_API_KEY：请先在当前终端设置具备 Gemini 4 Argon 额度的 key。" >&2
+gemini_keys="${GEMINI_API_KEY:-${GEMINI_API_KEYS:-}}"
+if [ -z "$gemini_keys" ] && [ -f "$AGGREGATOR_DIR/.env" ]; then
+  gemini_keys="$("$PYTHON_BIN" - "$AGGREGATOR_DIR/.env" <<'PY'
+import pathlib
+import sys
+
+for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    if line.lstrip().startswith("GEMINI_API_KEYS="):
+        print(line.split("=", 1)[1].strip().strip('"').strip("'"))
+        break
+PY
+)"
+fi
+if [ -z "$gemini_keys" ]; then
+  echo "缺少 Gemini API key：请设置 GEMINI_API_KEY，或在 ModelAggregatorService/.env 配置 GEMINI_API_KEYS。" >&2
   exit 1
 fi
 if [ -n "$(port_pid "$OCR_PORT")" ] || [ -n "$(port_pid "$AGGREGATOR_PORT")" ]; then
@@ -79,7 +92,7 @@ fi
 
 mkdir -p "$RUNTIME_DIR"
 aggregator_pid="$(
-  GEMINI_API_KEYS="$GEMINI_API_KEY" AGGREGATOR_PORT="$AGGREGATOR_PORT" \
+  GEMINI_API_KEYS="$gemini_keys" AGGREGATOR_PORT="$AGGREGATOR_PORT" \
     OCR_CORRECTION_TIMEOUT_SECONDS=300 PYTHONPATH="$AGGREGATOR_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     start_detached "$RUNTIME_DIR/aggregator.log" "$PYTHON_BIN" -m model_aggregator.server
 )"
