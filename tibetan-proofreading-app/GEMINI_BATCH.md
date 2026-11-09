@@ -1,6 +1,6 @@
 # Gemini 4 Batch API 离线处理
 
-本工具为现有实时识别页提供独立的离线批量路径，不改变 `gemini38-compare.html` 的同步调用和本地缓存。适用于图片藏文识别，也可通过 manifest 对文字执行翻译等任务。
+本工具为现有实时识别页提供独立的离线批量路径，不改变 `gemini38-compare.html` 的同步调用和本地缓存。浏览器页面适用于 PDF 或页图藏文识别；下面的命令行 manifest 方式也可用于文字翻译等任务。
 
 Google 的 Gemini Batch API 是异步任务。官方文档说明 Batch 定价为标准价格的 50%，目标处理时间可到 24 小时；任务在排队/运行超过 48 小时后会过期。Gemini 4 Argon 的 Batch 价格仅适用于可计费的付费 API 访问，不代表该账号一定已开通权限。创建任务前请先确认 AI Studio 结算账户和额度。
 
@@ -10,11 +10,30 @@ Google 的 Gemini Batch API 是异步任务。官方文档说明 Batch 定价为
 python3 -m pip install -r tibetan-proofreading-app/requirements-gemini-batch.txt
 ```
 
-在当前终端设置 API key。不要把 key 写入脚本、清单或 Git：
+命令行使用时，或需要明确指定可视化页面使用的计费项目时，在当前终端设置 API key。不要把 key 写入脚本、清单或 Git：
 
 ```bash
 export GEMINI_API_KEY='你的 Gemini API key'
 ```
+
+## 本地可视化界面
+
+启动独立服务：
+
+```bash
+python3 tibetan-proofreading-app/tools/gemini_batch_web.py
+```
+
+打开 [本地 Gemini Batch 页面](http://127.0.0.1:8795/gemini-batch.html)。页面流程：
+
+1. 选择一个扫描 PDF，或者一次选择多张 PNG/JPEG/WebP/GIF 页图；填写任务名称、模型与提示词。
+2. 点击“生成 Batch 请求”。PDF 会在本地浏览器逐页渲染，页图转换为 JPEG 后送往本机服务，生成可下载的请求 JSONL；这一步不会联系 Google。
+3. 点击“提交到 Gemini（付费）”才会上传 JSONL 并创建异步任务。页面每 30 秒自动查询一次，也可点击“刷新状态”；关掉页面后，重新打开并从左侧选择原任务即可继续查看。
+4. 任务完成后点击“获取完成结果”，下载原始结果 JSONL 或按页排序的 TXT。
+
+服务只监听本机地址。它优先使用 `GEMINI_API_KEY` 环境变量；如果没有，则沿用现有本地识别服务的 `GEMINI_API_KEYS` 环境变量或 `ModelAggregatorService/.env` 密钥池中的第一个 key。页面只显示密钥来源，不显示密钥值；若不同 key 对应不同的计费项目，请在启动服务前显式设置 `GEMINI_API_KEY`。任务页图、提示词、JSONL 和状态默认保存在 `~/Library/Application Support/TibetanGeminiBatch/`，可以用 `--data-dir` 指定其他本地目录。停止服务时在终端按 `Ctrl+C`。如状态栏提示缺少 key 或 SDK，请检查本地密钥配置与上面的安装步骤。
+
+可视化页面当前处理图片识别；若要对 TXT 逐页翻译，请使用下方的 manifest 命令行方式。
 
 ## 图片目录：为 PDF 页图打包
 

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gemini 4 离线批量识别</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; color: #1b2c3a; background: #f2f5f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { background: #18334b; color: #fff; padding: 23px max(24px, calc((100vw - 1340px) / 2)); }
+    header h1 { font-size: 23px; margin: 0 0 7px; font-weight: 700; }
+    header p { margin: 0; color: #dce8f1; font-size: 14px; line-height: 1.6; }
+    .shell { max-width: 1388px; margin: auto; padding: 22px 24px 42px; display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 20px; }
+    aside, section { background: #fff; border: 1px solid #d8e1e9; border-radius: 10px; }
+    aside { align-self: start; position: sticky; top: 18px; padding: 17px; }
+    aside h2, section h2 { font-size: 17px; margin: 0; }
+    aside h2 { margin-bottom: 12px; }
+    .job-list { display: grid; gap: 6px; max-height: 60vh; overflow: auto; }
+    .job-item { width: 100%; text-align: left; border: 1px solid transparent; background: #f4f7fa; padding: 10px; border-radius: 7px; color: #263b4b; cursor: pointer; }
+    .job-item.active { background: #e7f1fa; border-color: #79a9d2; }
+    .job-item strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .job-item small { display: block; margin-top: 4px; color: #5a6d7c; }
+    main { min-width: 0; display: grid; gap: 16px; }
+    section { padding: 20px 22px; }
+    .section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; }
+    .step { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 27px; border-radius: 50%; background: #246399; color: white; font-weight: 700; font-size: 13px; flex: none; }
+    label { display: grid; gap: 7px; font-size: 13px; font-weight: 600; color: #33495b; }
+    input, textarea, button { font: inherit; }
+    input[type="text"], input[type="number"], textarea { width: 100%; border: 1px solid #adbecb; border-radius: 7px; padding: 9px 10px; color: #1b2c3a; background: white; }
+    textarea { min-height: 95px; line-height: 1.5; resize: vertical; }
+    input[type="file"] { max-width: 100%; font-size: 13px; font-weight: 400; }
+    input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 3px solid #99caed; outline-offset: 2px; }
+    .form-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(220px, .7fr); gap: 14px; }
+    .form-grid .wide { grid-column: 1 / -1; }
+    .muted { color: #5b7080; font-size: 13px; line-height: 1.5; }
+    .note { margin: 8px 0 0; }
+    .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 15px; }
+    button { border: 1px solid #9fb4c4; border-radius: 7px; background: white; color: #21445f; padding: 9px 14px; font-size: 14px; font-weight: 650; cursor: pointer; }
+    button.primary { color: white; background: #246399; border-color: #246399; }
+    button:disabled { opacity: .45; cursor: default; }
+    button:hover:not(:disabled) { filter: brightness(.95); }
+    .status { min-height: 22px; margin: 11px 0 0; color: #2f5973; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+    .status.error { color: #a12525; }
+    .source-row { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 16px; align-items: start; }
+    .preview { border: 1px solid #d8e1e9; background: #f7f9fb; border-radius: 7px; width: 190px; height: 145px; object-fit: contain; display: none; }
+    .preview.visible { display: block; }
+    .summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .summary div { background: #f4f7fa; border-radius: 7px; padding: 11px 12px; min-width: 0; }
+    .summary span { display: block; color: #647a8b; font-size: 12px; }
+    .summary strong { display: block; margin-top: 5px; font-size: 15px; overflow-wrap: anywhere; }
+    .download-links { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 13px; }
+    .download-links a { color: #205b8c; border: 1px solid #9fb4c4; border-radius: 7px; padding: 9px 12px; font-size: 13px; font-weight: 650; text-decoration: none; }
+    .download-links a[hidden] { display: none; }
+    .empty { color: #6a7b87; font-size: 13px; line-height: 1.5; }
+    @media (max-width: 800px) { .shell { grid-template-columns: 1fr; padding: 14px; } aside { position: static; } .job-list { max-height: 150px; } .form-grid, .source-row { grid-template-columns: 1fr; } .preview { width: 100%; max-width: 240px; } .summary { grid-template-columns: 1fr; } section { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Gemini 4 离线批量识别</h1>
+    <p>选择扫描 PDF 或页图，先在本机生成请求，再提交 Gemini Batch。任务可以关闭页面后继续查询。</p>
+  </header>
+  <div class="shell">
+    <aside>
+      <h2>本地任务</h2>
+      <div id="jobList" class="job-list"><p class="empty">正在读取任务…</p></div>
+      <p id="keyStatus" class="muted" role="status">正在检查本地服务…</p>
+    </aside>
+    <main>
+      <section aria-labelledby="sourceTitle">
+        <div class="section-head"><span class="step">1</span><h2 id="sourceTitle">选择文档与提示词</h2></div>
+        <div class="source-row">
+          <div class="form-grid">
+            <label class="wide">PDF 或页图
+              <input id="sourceFiles" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/gif" multiple>
+            </label>
+            <label>任务名称<input id="taskTitle" type="text" maxlength="120" placeholder="例如：1.pdf 藏文识别"></label>
+            <label>模型<input id="modelName" type="text" value="gemini-4-argon" spellcheck="false"></label>
+            <label class="wide">识别提示词<textarea id="promptText" spellcheck="false">请逐行准确转录图片中间栏的藏文，只返回藏文原文。保留原有段落、标点和行序，不要翻译或解释。</textarea></label>
+          </div>
+          <img id="sourcePreview" class="preview" alt="所选文档第一页预览">
+        </div>
+        <p class="muted note">可选 1 个 PDF，或一次选择多张页图。文件名按自然顺序排列；页面在本机转换为 JPEG。API key 只由本地 Python 服务读取。</p>
+        <div class="actions"><button id="prepareButton" class="primary" type="button">生成 Batch 请求</button><span id="sourceCount" class="muted"></span></div>
+        <p id="prepareStatus" class="status" role="status"></p>
+      </section>
+      <section aria-labelledby="submitTitle">
+        <div class="section-head"><span class="step">2</span><h2 id="submitTitle">提交与查看任务</h2></div>
+        <div class="summary">
+          <div><span>当前任务</span><strong id="currentTitle">尚未选择</strong></div>
+          <div><span>页数</span><strong id="currentPages">—</strong></div>
+          <div><span>Gemini 状态</span><strong id="currentState">未提交</strong></div>
+        </div>
+        <p class="muted note">“提交到 Gemini”会上传请求文件并创建计费任务。Batch 异步处理期间可以关闭此页面。</p>
+        <div class="actions">
+          <button id="submitButton" class="primary" type="button" disabled>提交到 Gemini（付费）</button>
+          <button id="refreshButton" type="button" disabled>刷新状态</button>
+        </div>
+        <p id="batchStatus" class="status" role="status"></p>
+      </section>
+      <section aria-labelledby="resultTitle">
+        <div class="section-head"><span class="step">3</span><h2 id="resultTitle">下载识别结果</h2></div>
+        <p class="muted note">原始结果保留每条请求的 key 与错误；TXT 按页码排序，可直接用于后续校对。</p>
+        <div class="actions"><button id="fetchButton" type="button" disabled>获取完成结果</button></div>
+        <div class="download-links">
+          <a id="inputLink" href="#" hidden>下载请求 JSONL</a>
+          <a id="jsonlLink" href="#" hidden>下载结果 JSONL</a>
+          <a id="txtLink" href="#" hidden>下载逐页 TXT</a>
+        </div>
+        <p id="downloadStatus" class="status" role="status"></p>
+      </section>
+    </main>
+  </div>
+  <script src="./vendor/pdf.min.js"></script>
+  <script src="./gemini-batch.js"></script>
+</body>
+</html>
