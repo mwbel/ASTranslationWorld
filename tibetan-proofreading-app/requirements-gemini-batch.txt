@@ -1,0 +1,2 @@
+# Optional dependency for the offline Gemini Batch API helper.
+google-genai>=1.64.0,<2
