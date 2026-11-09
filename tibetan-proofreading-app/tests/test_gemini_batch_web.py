@@ -87,7 +87,11 @@ class LocalBatchStoreTests(unittest.TestCase):
                 state = json.loads(Path(state_path).read_text(encoding="utf-8"))
                 page = int(state["job_name"].split("/")[1].split("-")[0])
                 key = f"page-{page:04d}"
-                row = {"key": key, "response": {"candidates": [{"content": {"parts": [{"text": f"text {page}"}]}}]}}
+                row = {"key": key, "response": {
+                    "candidates": [{"content": {"parts": [{"text": f"text {page}"}]}}],
+                    "usageMetadata": {"promptTokenCount": 100 + page, "candidatesTokenCount": 20,
+                                      "thoughtsTokenCount": 5, "totalTokenCount": 125 + page},
+                }}
                 Path(output_jsonl).write_text(json.dumps(row) + "\n", encoding="utf-8")
                 Path(output_text).write_text(f"第 {page} 页\ntext {page}\n", encoding="utf-8")
                 return [{"key": key, "text": f"text {page}", "error": None}]
@@ -100,6 +104,8 @@ class LocalBatchStoreTests(unittest.TestCase):
                     store.process_once()
                 checkpoint = store.describe(job["id"])["checkpoint"]
                 self.assertEqual((checkpoint["saved"], checkpoint["failed"]), (9, 1))
+                self.assertEqual(checkpoint["usage_attempts"], 9)
+                self.assertEqual(checkpoint["usage"], {"prompt": 946, "candidates": 180, "thoughts": 45, "total": 1171})
                 before = store.download_path(job["id"], "txt").read_text(encoding="utf-8")
                 self.assertIn("第 1 页\ntext 1", before)
                 self.assertIn("第 10 页\ntext 10", before)
@@ -118,10 +124,45 @@ class LocalBatchStoreTests(unittest.TestCase):
                 restarted.process_once()
                 restarted.process_once()
                 self.assertEqual(restarted.describe(job["id"])["checkpoint"]["saved"], 10)
+                self.assertEqual(restarted.describe(job["id"])["checkpoint"]["usage"],
+                                 {"prompt": 1055, "candidates": 200, "thoughts": 50, "total": 1305})
                 self.assertEqual(len(submitted), 11)
                 self.assertEqual(submitted[-1], (9, 2))
                 after = restarted.download_path(job["id"], "txt").read_text(encoding="utf-8")
                 self.assertIn(before, after.replace("第 9 页\ntext 9\n\n", ""))
+
+    def test_token_usage_includes_retry_attempts_and_leaves_missing_values_blank(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = LocalBatchStore(root)
+            job = store.create({"title": "book", "prompt": "OCR", "expected_pages": 2})
+            for page in (1, 2):
+                store.add_page(job["id"], {"page": page, "mime_type": "image/jpeg",
+                                           "data": base64.b64encode(JPEG_BYTES).decode("ascii")})
+            store.prepare(job["id"])
+            store.submit(job["id"])
+            directory = root / job["id"]
+            attempts = directory / "batch_pages" / "page-0001"
+            first = attempts / "attempt-0001"
+            second = attempts / "attempt-0002"
+            first.mkdir()
+            second.mkdir()
+            (first / "output.jsonl").write_text(json.dumps({
+                "key": "page-0001", "response": {"usageMetadata": {
+                    "promptTokenCount": 10, "totalTokenCount": 10,
+                }},
+            }) + "\n", encoding="utf-8")
+            (second / "output.jsonl").write_text(json.dumps({
+                "key": "page-0001", "response": {"usage_metadata": {
+                    "prompt_token_count": 11, "response_token_count": 5,
+                    "thoughts_token_count": 2, "total_token_count": 18,
+                }},
+            }) + "\n", encoding="utf-8")
+            summary = store.describe(job["id"])["checkpoint"]
+            self.assertEqual(summary["usage_attempts"], 2)
+            self.assertEqual(summary["usage"], {"prompt": 21, "candidates": 5, "thoughts": 2, "total": 28})
+            self.assertEqual(summary["pages"][0]["usage"]["total"], 28)
+            self.assertIsNone(summary["pages"][1]["usage"]["total"])
 
     def test_unknown_submission_is_not_retried_automatically(self):
         with tempfile.TemporaryDirectory() as temp:

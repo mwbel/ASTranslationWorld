@@ -40,6 +40,12 @@ MAX_BODY_BYTES = 22 * 1024**2
 MAX_PAGE_BYTES = 14 * 1024**2
 MAX_ACTIVE_BATCHES = 8
 POLL_SECONDS = 30
+TOKEN_FIELDS = {
+    "prompt": ("promptTokenCount", "prompt_token_count"),
+    "candidates": ("candidatesTokenCount", "candidates_token_count", "responseTokenCount", "response_token_count"),
+    "thoughts": ("thoughtsTokenCount", "thoughts_token_count"),
+    "total": ("totalTokenCount", "total_token_count"),
+}
 JOB_ID_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 STATIC_FILES = {
     "/gemini-batch.html": (APP_DIR / "gemini-batch.html", "text/html; charset=utf-8"),
@@ -108,6 +114,42 @@ def _atomic_bytes(path: Path, value: bytes) -> None:
             Path(temporary).unlink(missing_ok=True)
 
 
+def _token_usage_from_output(path: Path) -> dict[str, int | None] | None:
+    """Read reported token usage from one Batch result file, without estimating missing values."""
+    if not path.is_file():
+        return None
+    values: dict[str, int | None] = {name: None for name in TOKEN_FIELDS}
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+        for raw_line in lines:
+            if not raw_line.strip():
+                continue
+            row = json.loads(raw_line)
+            if not isinstance(row, dict):
+                continue
+            response = row.get("response")
+            if not isinstance(response, dict):
+                continue
+            metadata = response.get("usageMetadata") or response.get("usage_metadata")
+            if not isinstance(metadata, dict):
+                continue
+            for name, aliases in TOKEN_FIELDS.items():
+                raw = next((metadata[key] for key in aliases if key in metadata), None)
+                if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+                    values[name] = (values[name] or 0) + raw
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return values if any(value is not None for value in values.values()) else None
+
+
+def _sum_token_usage(usages: list[dict[str, int | None]]) -> dict[str, int | None]:
+    return {
+        name: sum(value for usage in usages if (value := usage.get(name)) is not None)
+        if any(usage.get(name) is not None for usage in usages) else None
+        for name in TOKEN_FIELDS
+    }
+
+
 class LocalBatchStore:
     def __init__(self, data_dir: Path, *, key_source: str = "未配置"):
         self.data_dir = data_dir.expanduser().resolve()
@@ -140,16 +182,31 @@ class LocalBatchStore:
     def _attempt_dir(self, directory: Path, page: int, attempt: int) -> Path:
         return self._page_dir(directory, page) / f"attempt-{attempt:04d}"
 
+    def _attempt_usage(self, attempt_dir: Path) -> dict[str, int | None] | None:
+        usage_path = attempt_dir / "usage.json"
+        if usage_path.is_file():
+            try:
+                return json.loads(usage_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+        return _token_usage_from_output(attempt_dir / "output.jsonl")
+
     def _checkpoint_summary(self, directory: Path, workflow: dict[str, Any]) -> dict[str, Any]:
         pages = []
+        all_usages: list[dict[str, int | None]] = []
         for page_text, entry in sorted(workflow["pages"].items(), key=lambda item: int(item[0])):
             page = int(page_text)
             cached = (directory / "cache" / f"page-{page:04d}.json").is_file()
+            page_usages = [usage for attempt_dir in sorted(self._page_dir(directory, page).glob("attempt-*"))
+                           if (usage := self._attempt_usage(attempt_dir)) is not None]
+            all_usages.extend(page_usages)
             pages.append({
                 "page": page,
                 "status": "saved" if cached else entry["status"],
                 "attempt": entry.get("attempt", 0),
                 "error": entry.get("error"),
+                "usage": _sum_token_usage(page_usages),
+                "usage_attempts": len(page_usages),
             })
         return {
             "submitted_at": workflow.get("submitted_at"),
@@ -158,6 +215,8 @@ class LocalBatchStore:
             "active": sum(item["status"] in {"creating", "submitted", "running"} for item in pages),
             "failed": sum(item["status"] == "failed" for item in pages),
             "review": sum(item["status"] == "review" for item in pages),
+            "usage": _sum_token_usage(all_usages),
+            "usage_attempts": len(all_usages),
             "pages": pages,
         }
 
@@ -172,6 +231,9 @@ class LocalBatchStore:
         meta["batch"] = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else None
         workflow_path = directory / "workflow.json"
         meta["checkpoint"] = self._checkpoint_summary(directory, self._workflow(directory)) if workflow_path.is_file() else None
+        if meta["checkpoint"] is None:
+            legacy_usage = _token_usage_from_output(directory / "output.jsonl")
+            meta["usage"] = legacy_usage or _sum_token_usage([])
         return meta
 
     def list_jobs(self) -> list[dict[str, Any]]:
@@ -405,6 +467,9 @@ class LocalBatchStore:
                         output_text=attempt_dir / "output.txt",
                     )
                     os.replace(attempt_dir / "output-downloading.jsonl", raw_path)
+                usage = _token_usage_from_output(raw_path)
+                if usage:
+                    _atomic_json(attempt_dir / "usage.json", usage)
                 expected_key = f"page-{page:04d}"
                 if len(rows) != 1 or rows[0]["key"] != expected_key:
                     self._update_page(directory, page, status="failed", error="返回结果与当前页不对应。")

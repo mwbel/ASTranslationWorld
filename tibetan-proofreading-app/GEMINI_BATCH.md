@@ -46,6 +46,8 @@ python3 tibetan-proofreading-app/tools/gemini_batch_web.py
 4. 每页成功后，原始响应与识别文字立即保存在任务目录。已完成的页可随时通过页面下载 JSONL 或按页排序的 TXT；后续页失败不会清除之前的结果。
 5. 失败页可点击“重试失败页（付费）”，只重新提交失败页。若页面显示“需核对”，表示提交期间中断，不能确认远端是否已创建任务；先到 Google 核对，避免重复计费。
 
+页面的“总消耗 Token / 输入 Token / 输出 Token / 思考 Token”来自 Gemini Batch 结果中的 `usageMetadata`，按已返回用量的请求汇总，并计入重试中已返回的用量。逐页状态也显示该页已返回请求的总 Token。未返回结果或没有 `usageMetadata` 的请求显示“—”，不会根据文字长度估算；Token 数不是实际收费金额。旧任务已有原始结果 JSONL 时也可直接读取其中的用量。
+
 可视化页面的任务元数据、逐页 Batch 状态与缓存分别保存在 `workflow.json`、`batch_pages/page-0001/attempt-0001/` 和 `cache/page-0001.json`。恢复服务后会读取这些文件继续查询和导出。这里的缓存只保证**已经返回并成功下载到本机**的页；Google 仍在处理、或整页 Batch 失败时，尚未返回的结果无法从本地恢复。已缓存页导出时不会重新识别。
 
 服务只监听本机地址。自动启动服务默认沿用现有 `ModelAggregatorService/.env` 密钥池中的第一个 key；临时启动时优先使用当前终端的 `GEMINI_API_KEY` 环境变量。页面只显示密钥来源，不显示密钥值；若不同 key 对应不同计费项目，使用临时启动方式并明确设置 `GEMINI_API_KEY`。任务页图、提示词、JSONL 和状态默认保存在 `~/Library/Application Support/TibetanGeminiBatch/`。自动启动配置位于 `~/Library/LaunchAgents/com.min369.tibetan-gemini-batch.plist`，日志位于 `~/Library/Logs/TibetanGeminiBatch/`。如状态栏提示缺少 key 或 SDK，请检查本地密钥配置与上面的安装步骤。

@@ -8,6 +8,8 @@
     prepareButton: $('prepareButton'), prepareStatus: $('prepareStatus'),
     jobList: $('jobList'), keyStatus: $('keyStatus'), currentTitle: $('currentTitle'),
     currentPages: $('currentPages'), currentState: $('currentState'),
+    tokenTotal: $('tokenTotal'), tokenInput: $('tokenInput'), tokenOutput: $('tokenOutput'),
+    tokenThoughts: $('tokenThoughts'), tokenNote: $('tokenNote'),
     submitButton: $('submitButton'), refreshButton: $('refreshButton'), retryButton: $('retryButton'),
     batchStatus: $('batchStatus'), pageProgress: $('pageProgress'),
     fetchButton: $('fetchButton'), downloadStatus: $('downloadStatus'),
@@ -80,11 +82,27 @@
     if (enabled) element.href = `/api/jobs/${job.id}/files/${kind}`;
   }
 
+  function showTokenUsage(job) {
+    const usage = job?.checkpoint?.usage || job?.usage;
+    const format = (value) => Number.isInteger(value) ? value.toLocaleString('zh-CN') : '—';
+    elements.tokenTotal.textContent = format(usage?.total);
+    elements.tokenInput.textContent = format(usage?.prompt);
+    elements.tokenOutput.textContent = format(usage?.candidates);
+    elements.tokenThoughts.textContent = format(usage?.thoughts);
+    const attempts = job?.checkpoint?.usage_attempts;
+    elements.tokenNote.textContent = attempts
+      ? `已统计 ${attempts} 次返回用量的请求（包括重试）。未返回用量的请求不计入；此处是 Token 数，不是费用。`
+      : usage?.total !== null && usage?.total !== undefined
+        ? '来自已下载结果；未返回用量的请求不计入。此处是 Token 数，不是费用。'
+        : '暂无 Token 用量数据；仅统计 Gemini 已返回用量信息的请求。';
+  }
+
   function showJob(job) {
     currentJob = job;
     elements.currentTitle.textContent = job?.title || '尚未选择';
     elements.currentPages.textContent = job ? `${job.uploaded_pages} / ${job.expected_pages}` : '—';
     elements.currentState.textContent = job ? jobState(job) : '未提交';
+    showTokenUsage(job);
     if (job) {
       setDownloadLink(elements.inputLink, job, 'input', job.prepared);
       setDownloadLink(elements.jsonlLink, job, 'jsonl', job.has_result_jsonl);
@@ -102,7 +120,8 @@
         for (const page of progress.pages) {
           const item = document.createElement('span');
           item.className = page.status;
-          item.textContent = `第 ${page.page} 页 · ${pageLabels[page.status] || page.status}`;
+          const tokens = page.usage?.total;
+          item.textContent = `第 ${page.page} 页 · ${pageLabels[page.status] || page.status}${Number.isInteger(tokens) ? ` · ${tokens.toLocaleString('zh-CN')} Token` : ''}`;
           if (page.error) item.title = page.error;
           elements.pageProgress.append(item);
         }
