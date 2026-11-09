@@ -18,7 +18,21 @@ export GEMINI_API_KEY='你的 Gemini API key'
 
 ## 本地可视化界面
 
-启动独立服务：
+首次使用时安装 macOS 用户级自动启动服务。安装后服务会在登录时运行，关闭 Codex 或终端不会让页面失效：
+
+```bash
+python3 tibetan-proofreading-app/tools/install_gemini_batch_service.py install
+```
+
+之后可检查状态，或在手动停止后重新启动：
+
+```bash
+python3 tibetan-proofreading-app/tools/install_gemini_batch_service.py status
+python3 tibetan-proofreading-app/tools/install_gemini_batch_service.py stop
+python3 tibetan-proofreading-app/tools/install_gemini_batch_service.py install
+```
+
+如果只想临时运行，也可在终端启动独立服务（保持终端打开）：
 
 ```bash
 python3 tibetan-proofreading-app/tools/gemini_batch_web.py
@@ -31,7 +45,7 @@ python3 tibetan-proofreading-app/tools/gemini_batch_web.py
 3. 点击“提交到 Gemini（付费）”才会上传 JSONL 并创建异步任务。页面每 30 秒自动查询一次，也可点击“刷新状态”；关掉页面后，重新打开并从左侧选择原任务即可继续查看。
 4. 任务完成后点击“获取完成结果”，下载原始结果 JSONL 或按页排序的 TXT。
 
-服务只监听本机地址。它优先使用 `GEMINI_API_KEY` 环境变量；如果没有，则沿用现有本地识别服务的 `GEMINI_API_KEYS` 环境变量或 `ModelAggregatorService/.env` 密钥池中的第一个 key。页面只显示密钥来源，不显示密钥值；若不同 key 对应不同的计费项目，请在启动服务前显式设置 `GEMINI_API_KEY`。任务页图、提示词、JSONL 和状态默认保存在 `~/Library/Application Support/TibetanGeminiBatch/`，可以用 `--data-dir` 指定其他本地目录。停止服务时在终端按 `Ctrl+C`。如状态栏提示缺少 key 或 SDK，请检查本地密钥配置与上面的安装步骤。
+服务只监听本机地址。自动启动服务默认沿用现有 `ModelAggregatorService/.env` 密钥池中的第一个 key；临时启动时优先使用当前终端的 `GEMINI_API_KEY` 环境变量。页面只显示密钥来源，不显示密钥值；若不同 key 对应不同计费项目，使用临时启动方式并明确设置 `GEMINI_API_KEY`。任务页图、提示词、JSONL 和状态默认保存在 `~/Library/Application Support/TibetanGeminiBatch/`。自动启动配置位于 `~/Library/LaunchAgents/com.min369.tibetan-gemini-batch.plist`，日志位于 `~/Library/Logs/TibetanGeminiBatch/`。如状态栏提示缺少 key 或 SDK，请检查本地密钥配置与上面的安装步骤。
 
 可视化页面当前处理图片识别；若要对 TXT 逐页翻译，请使用下方的 manifest 命令行方式。
 
