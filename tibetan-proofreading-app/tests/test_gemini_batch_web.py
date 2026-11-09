@@ -21,6 +21,32 @@ JPEG_BYTES = b"\xff\xd8\xff" + b"sample-page" + b"\xff\xd9"
 
 
 class LocalBatchStoreTests(unittest.TestCase):
+    def test_pool_selection_and_invalid_index_never_fall_back(self):
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "", "GEMINI_API_KEYS": "free-key,paid-key", "GEMINI_BATCH_KEY_INDEX": "2"}):
+            self.assertIn("第 2 个", configure_api_key())
+            self.assertEqual(os.environ["GEMINI_API_KEY"], "paid-key")
+        for index in ("0", "3", "bad"):
+            with patch.dict(os.environ, {"GEMINI_API_KEY": "", "GEMINI_API_KEYS": "free-key,paid-key", "GEMINI_BATCH_KEY_INDEX": index}):
+                with self.assertRaisesRegex(Exception, "GEMINI_BATCH_KEY_INDEX"):
+                    configure_api_key()
+                self.assertEqual(os.environ["GEMINI_API_KEY"], "")
+
+    def test_review_blocks_later_submissions_across_worker_restarts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = LocalBatchStore(root)
+            job = store.create({"title": "book", "prompt": "OCR", "expected_pages": 2})
+            for page in (1, 2):
+                store.add_page(job["id"], {"page": page, "mime_type": "image/jpeg", "data": base64.b64encode(JPEG_BYTES).decode("ascii")})
+            store.prepare(job["id"])
+            store.submit(job["id"])
+            with patch("gemini_batch_web.submit_batch", side_effect=RuntimeError("rejected")) as submit:
+                store.process_once()
+                LocalBatchStore(root).process_once()
+                self.assertEqual(submit.call_count, 1)
+            states = store.describe(job["id"])["checkpoint"]["pages"]
+            self.assertEqual([p["status"] for p in states], ["review", "ready"])
+
     def test_existing_key_pool_is_used_without_exposing_key(self):
         with tempfile.TemporaryDirectory() as temp:
             pool = Path(temp) / ".env"

@@ -67,7 +67,7 @@ def _sdk_available() -> bool:
 
 
 def configure_api_key(key_pool_file: Path = EXISTING_KEY_POOL) -> str:
-    """Reuse the first local comparison key without returning or logging its value."""
+    """Select a local pool key without returning or logging its value."""
     if os.environ.get("GEMINI_API_KEY", "").strip():
         return "GEMINI_API_KEY 环境变量"
     pool = os.environ.get("GEMINI_API_KEYS", "").strip()
@@ -78,11 +78,17 @@ def configure_api_key(key_pool_file: Path = EXISTING_KEY_POOL) -> str:
                 pool = line.split("=", 1)[1].strip()
                 source = "现有本地密钥池文件"
                 break
-    first_key = pool.strip().strip('"').strip("'").split(",", 1)[0].strip()
-    if not first_key:
+    keys = [key.strip() for key in pool.strip().strip('"').strip("'").split(",")]
+    if not pool:
         return "未配置"
-    os.environ["GEMINI_API_KEY"] = first_key
-    return f"{source}（第 1 个 key）"
+    try:
+        index = int(os.environ.get("GEMINI_BATCH_KEY_INDEX", "1"))
+    except ValueError as exc:
+        raise BatchToolError("GEMINI_BATCH_KEY_INDEX 必须是正整数。") from exc
+    if not 1 <= index <= len(keys) or not keys[index - 1]:
+        raise BatchToolError("GEMINI_BATCH_KEY_INDEX 对应的密钥不存在；请检查密钥池序号。")
+    os.environ["GEMINI_API_KEY"] = keys[index - 1]
+    return f"{source}（第 {index} 个 key）"
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -534,6 +540,9 @@ class LocalBatchStore:
             if active >= MAX_ACTIVE_BATCHES:
                 break
             workflow = self._workflow(directory)
+            # Continue polling accepted jobs, but never advance an uncertain submission.
+            if any(entry["status"] == "review" for entry in workflow["pages"].values()):
+                continue
             for page_text, entry in sorted(workflow["pages"].items(), key=lambda item: int(item[0])):
                 if active >= MAX_ACTIVE_BATCHES:
                     break

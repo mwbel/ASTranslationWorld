@@ -49,11 +49,16 @@ def _port_occupied() -> bool:
         return connection.connect_ex(("127.0.0.1", PORT)) == 0
 
 
-def install() -> None:
+def install(key_index: int | None = None) -> None:
     if sys.platform != "darwin":
         raise RuntimeError("此启动配置仅适用于 macOS。")
     if not SERVER.is_file():
         raise RuntimeError(f"找不到服务脚本：{SERVER}")
+    if key_index is None:
+        previous = plistlib.loads(PLIST.read_bytes()) if PLIST.is_file() else {}
+        key_index = int(previous.get("EnvironmentVariables", {}).get("GEMINI_BATCH_KEY_INDEX", "1"))
+    if key_index < 1:
+        raise RuntimeError("密钥池序号必须是正整数。")
     if _port_occupied() and not _loaded():
         raise RuntimeError(f"端口 {PORT} 已被其他程序占用；不会接管该进程。")
 
@@ -66,7 +71,7 @@ def install() -> None:
         "RunAtLoad": True,
         "KeepAlive": True,
         "ThrottleInterval": 5,
-        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1"},
+        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1", "GEMINI_BATCH_KEY_INDEX": str(key_index)},
         "StandardOutPath": str(LOG_DIR / "out.log"),
         "StandardErrorPath": str(LOG_DIR / "error.log"),
     }
@@ -110,10 +115,12 @@ def stop() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="安装或管理 Gemini Batch 本地开机启动服务")
     parser.add_argument("action", choices=["install", "status", "stop"])
-    action = parser.parse_args().action
+    parser.add_argument("--key-index", type=int, help="使用密钥池中的第几个 key（从 1 开始）；省略时保留现有配置")
+    args = parser.parse_args()
+    action = args.action
     try:
         if action == "install":
-            install()
+            install(args.key_index)
         elif action == "status":
             return status()
         else:

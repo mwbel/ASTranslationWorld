@@ -50,7 +50,7 @@ python3 tibetan-proofreading-app/tools/gemini_batch_web.py
 
 可视化页面的任务元数据、逐页 Batch 状态与缓存分别保存在 `workflow.json`、`batch_pages/page-0001/attempt-0001/` 和 `cache/page-0001.json`。恢复服务后会读取这些文件继续查询和导出。这里的缓存只保证**已经返回并成功下载到本机**的页；Google 仍在处理、或整页 Batch 失败时，尚未返回的结果无法从本地恢复。已缓存页导出时不会重新识别。
 
-服务只监听本机地址。自动启动服务默认沿用现有 `ModelAggregatorService/.env` 密钥池中的第一个 key；临时启动时优先使用当前终端的 `GEMINI_API_KEY` 环境变量。页面只显示密钥来源，不显示密钥值；若不同 key 对应不同计费项目，使用临时启动方式并明确设置 `GEMINI_API_KEY`。任务页图、提示词、JSONL 和状态默认保存在 `~/Library/Application Support/TibetanGeminiBatch/`。自动启动配置位于 `~/Library/LaunchAgents/com.min369.tibetan-gemini-batch.plist`，日志位于 `~/Library/Logs/TibetanGeminiBatch/`。如状态栏提示缺少 key 或 SDK，请检查本地密钥配置与上面的安装步骤。
+服务只监听本机地址。自动启动服务默认沿用现有 `ModelAggregatorService/.env` 密钥池中的第一个 key；临时启动时优先使用当前终端的 `GEMINI_API_KEY` 环境变量。页面只显示密钥来源，不显示密钥值；不同 key 可能属于不同计费项目；有余额的结算账号不代表密钥池中的每个项目都已开通付费。可用 `python3 tibetan-proofreading-app/tools/install_gemini_batch_service.py install --key-index 2` 明确选择密钥池第 2 个 key（请先在 AI Studio 核实其项目结算层级）。序号保存在本机 LaunchAgent 中，不保存密钥值；后续省略该参数会保留序号。临时启动可设置 `GEMINI_BATCH_KEY_INDEX=2`。无效序号会报错，不会静默退回第一个 key。任务页图、提示词、JSONL 和状态默认保存在 `~/Library/Application Support/TibetanGeminiBatch/`。自动启动配置位于 `~/Library/LaunchAgents/com.min369.tibetan-gemini-batch.plist`，日志位于 `~/Library/Logs/TibetanGeminiBatch/`。如状态栏提示缺少 key 或 SDK，请检查本地密钥配置与上面的安装步骤。
 
 可视化页面当前处理图片识别；若要对 TXT 逐页翻译，请使用下方的 manifest 命令行方式。
 
@@ -135,3 +135,5 @@ python3 -m unittest tibetan-proofreading-app/tests/test_gemini_batch_ocr.py tibe
 ```
 
 这些检查不会连接 Gemini API。要真正创建任务，需由用户运行上面的 `submit` 命令。
+
+提交结果为“需核对”时，该本地任务暂停后续页提交；已受理的页仍继续查询和保存。必须先查明任务是否已被 Google 创建，避免重复付费。切换到另一项目后，原项目的远端上传文件不能视为可复用；本机页图和请求文件仍保留。
