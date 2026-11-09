@@ -77,6 +77,7 @@ def install() -> None:
     with PLIST.open("wb") as stream:
         plistlib.dump(config, stream)
     PLIST.chmod(0o644)
+    _launchctl("enable", TARGET)
     result = _launchctl("bootstrap", DOMAIN, str(PLIST), check=False)
     if result.returncode != 0:
         raise RuntimeError(f"LaunchAgent 安装失败：{result.stderr.strip()}")

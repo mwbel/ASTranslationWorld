@@ -42,8 +42,11 @@ python3 tibetan-proofreading-app/tools/gemini_batch_web.py
 
 1. 选择一个扫描 PDF，或者一次选择多张 PNG/JPEG/WebP/GIF 页图；填写任务名称、模型与提示词。
 2. 点击“生成 Batch 请求”。PDF 会在本地浏览器逐页渲染，页图转换为 JPEG 后送往本机服务，生成可下载的请求 JSONL；这一步不会联系 Google。
-3. 点击“提交到 Gemini（付费）”才会上传 JSONL 并创建异步任务。页面每 30 秒自动查询一次，也可点击“刷新状态”；关掉页面后，重新打开并从左侧选择原任务即可继续查看。
-4. 任务完成后点击“获取完成结果”，下载原始结果 JSONL 或按页排序的 TXT。
+3. 点击“提交到 Gemini（付费）”才会逐页上传请求并创建异步 Batch 任务，最多同时有 8 页在处理中。本地服务每 30 秒检查一次；只要本地服务仍在运行，关闭网页也会继续检查。
+4. 每页成功后，原始响应与识别文字立即保存在任务目录。已完成的页可随时通过页面下载 JSONL 或按页排序的 TXT；后续页失败不会清除之前的结果。
+5. 失败页可点击“重试失败页（付费）”，只重新提交失败页。若页面显示“需核对”，表示提交期间中断，不能确认远端是否已创建任务；先到 Google 核对，避免重复计费。
+
+可视化页面的任务元数据、逐页 Batch 状态与缓存分别保存在 `workflow.json`、`batch_pages/page-0001/attempt-0001/` 和 `cache/page-0001.json`。恢复服务后会读取这些文件继续查询和导出。这里的缓存只保证**已经返回并成功下载到本机**的页；Google 仍在处理、或整页 Batch 失败时，尚未返回的结果无法从本地恢复。已缓存页导出时不会重新识别。
 
 服务只监听本机地址。自动启动服务默认沿用现有 `ModelAggregatorService/.env` 密钥池中的第一个 key；临时启动时优先使用当前终端的 `GEMINI_API_KEY` 环境变量。页面只显示密钥来源，不显示密钥值；若不同 key 对应不同计费项目，使用临时启动方式并明确设置 `GEMINI_API_KEY`。任务页图、提示词、JSONL 和状态默认保存在 `~/Library/Application Support/TibetanGeminiBatch/`。自动启动配置位于 `~/Library/LaunchAgents/com.min369.tibetan-gemini-batch.plist`，日志位于 `~/Library/Logs/TibetanGeminiBatch/`。如状态栏提示缺少 key 或 SDK，请检查本地密钥配置与上面的安装步骤。
 
@@ -112,7 +115,7 @@ python3 tibetan-proofreading-app/tools/gemini_batch_ocr.py status --state '/path
 python3 tibetan-proofreading-app/tools/gemini_batch_ocr.py status --state '/path/to/gemini-batch-state.json' --wait --poll-seconds 30
 ```
 
-任务名持久保存在状态 JSON 中；关闭终端后仍可继续查询。成功后下载原始 JSONL，并可额外导出按页码排序的 TXT：
+命令行路径仍以整批 JSONL 为一个 Batch 任务，任务名持久保存在状态 JSON 中；关闭终端后仍可继续查询。成功后下载原始 JSONL，并可额外导出按页码排序的 TXT。需要逐页自动缓存与失败页重试时请使用上方本地可视化页面：
 
 ```bash
 python3 tibetan-proofreading-app/tools/gemini_batch_ocr.py download \
@@ -126,7 +129,7 @@ TXT 中每个 `page-0001` key 会转换成“第 1 页”。逐条错误会保�
 ## 运行本地检查
 
 ```bash
-python3 -m unittest tibetan-proofreading-app/tests/test_gemini_batch_ocr.py
+python3 -m unittest tibetan-proofreading-app/tests/test_gemini_batch_ocr.py tibetan-proofreading-app/tests/test_gemini_batch_web.py
 ```
 
 这些检查不会连接 Gemini API。要真正创建任务，需由用户运行上面的 `submit` 命令。

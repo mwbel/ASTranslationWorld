@@ -8,7 +8,8 @@
     prepareButton: $('prepareButton'), prepareStatus: $('prepareStatus'),
     jobList: $('jobList'), keyStatus: $('keyStatus'), currentTitle: $('currentTitle'),
     currentPages: $('currentPages'), currentState: $('currentState'),
-    submitButton: $('submitButton'), refreshButton: $('refreshButton'), batchStatus: $('batchStatus'),
+    submitButton: $('submitButton'), refreshButton: $('refreshButton'), retryButton: $('retryButton'),
+    batchStatus: $('batchStatus'), pageProgress: $('pageProgress'),
     fetchButton: $('fetchButton'), downloadStatus: $('downloadStatus'),
     inputLink: $('inputLink'), jsonlLink: $('jsonlLink'), txtLink: $('txtLink'),
   };
@@ -18,6 +19,7 @@
     JOB_STATE_CANCELLED: '已取消', JOB_STATE_EXPIRED: '已过期',
   };
   const terminalStates = new Set(['JOB_STATE_SUCCEEDED', 'JOB_STATE_FAILED', 'JOB_STATE_CANCELLED', 'JOB_STATE_EXPIRED']);
+  const pageLabels = { ready: '待提交', creating: '提交中', submitted: '已提交', running: '处理中', saved: '已保存', failed: '失败', review: '需核对' };
   let currentJob = null;
   let busy = false;
   let pdfDocument = null;
@@ -56,12 +58,19 @@
   function setBusy(value) {
     busy = value;
     elements.prepareButton.disabled = value;
-    elements.submitButton.disabled = value || !currentJob?.prepared || Boolean(currentJob?.batch);
-    elements.refreshButton.disabled = value || !currentJob?.batch;
-    elements.fetchButton.disabled = value || currentJob?.batch?.state !== 'JOB_STATE_SUCCEEDED';
+    const checkpoint = currentJob?.checkpoint;
+    elements.submitButton.disabled = value || !currentJob?.prepared || Boolean(checkpoint ? checkpoint.submitted_at : currentJob?.batch);
+    elements.refreshButton.disabled = value || !(checkpoint ? checkpoint.submitted_at : currentJob?.batch);
+    elements.retryButton.disabled = value || !checkpoint?.failed;
+    elements.fetchButton.disabled = value || !(checkpoint ? checkpoint.saved : currentJob?.batch?.state === 'JOB_STATE_SUCCEEDED');
   }
 
   function jobState(job) {
+    if (job.checkpoint) {
+      const { submitted_at, saved, total, failed, review } = job.checkpoint;
+      if (!submitted_at) return '已生成请求';
+      return `已缓存 ${saved}/${total} 页${failed ? ` · ${failed} 页失败` : ''}${review ? ` · ${review} 页需核对` : ''}`;
+    }
     if (!job.batch) return job.prepared ? '已生成请求' : '待生成请求';
     return stateLabels[job.batch.state] || job.batch.state || '状态未知';
   }
@@ -80,16 +89,36 @@
       setDownloadLink(elements.inputLink, job, 'input', job.prepared);
       setDownloadLink(elements.jsonlLink, job, 'jsonl', job.has_result_jsonl);
       setDownloadLink(elements.txtLink, job, 'txt', job.has_result_txt);
-      if (job.batch?.job_name) {
+      if (job.checkpoint) {
+        const progress = job.checkpoint;
+        const summary = progress.submitted_at
+          ? `已保存 ${progress.saved}/${progress.total} 页；${progress.active} 页处理中。关闭网页后，本地服务会继续检查并保存结果。`
+          : '请求已在本机生成，可以提交到 Gemini。';
+        const review = progress.review ? `\n${progress.review} 页提交结果不明，请先在 Google 核对，避免重复计费。` : '';
+        const errors = progress.pages.filter((page) => page.status === 'failed' || page.status === 'review')
+          .map((page) => `第 ${page.page} 页：${page.error || pageLabels[page.status]}`);
+        showStatus(elements.batchStatus, [summary + review, ...errors].join('\n'), Boolean(errors.length));
+        elements.pageProgress.replaceChildren();
+        for (const page of progress.pages) {
+          const item = document.createElement('span');
+          item.className = page.status;
+          item.textContent = `第 ${page.page} 页 · ${pageLabels[page.status] || page.status}`;
+          if (page.error) item.title = page.error;
+          elements.pageProgress.append(item);
+        }
+      } else if (job.batch?.job_name) {
         showStatus(elements.batchStatus, `任务编号：${job.batch.job_name}${job.batch.error ? `\n错误：${job.batch.error}` : ''}`, Boolean(job.batch.error));
       } else {
         showStatus(elements.batchStatus, job.prepared ? '请求已在本机生成，可以提交到 Gemini。' : '尚未生成完整请求。');
       }
-      showStatus(elements.downloadStatus, job.has_result_txt ? '结果已保存，可通过下方链接下载。' : '');
+      if (!job.checkpoint) elements.pageProgress.replaceChildren();
+      showStatus(elements.downloadStatus, job.has_result_txt ? `已缓存 ${job.checkpoint?.saved ?? '完成'} 页，可通过下方链接下载。` : '');
       try { localStorage.setItem('tibetan-gemini-batch-current-job', job.id); } catch (_) { /* 仅保存任务编号，存储不可用时仍能继续使用 */ }
     } else {
       [elements.inputLink, elements.jsonlLink, elements.txtLink].forEach((link) => { link.hidden = true; });
       showStatus(elements.batchStatus, '');
+      showStatus(elements.downloadStatus, '');
+      elements.pageProgress.replaceChildren();
     }
     setBusy(busy);
   }
@@ -249,10 +278,10 @@
   }
 
   async function submitJob() {
-    if (busy || !currentJob?.prepared || currentJob.batch) return;
+    if (busy || !currentJob?.prepared || currentJob.checkpoint?.submitted_at || currentJob.batch) return;
     const jobId = currentJob.id;
     setBusy(true);
-    showStatus(elements.batchStatus, '正在上传 JSONL 并创建 Gemini Batch 任务；请保持页面打开直到返回任务编号。');
+    showStatus(elements.batchStatus, '正在启动逐页 Batch 任务…');
     try {
       const { job } = await request(`/api/jobs/${jobId}/submit`, 'POST');
       await loadJobs(job.id);
@@ -264,7 +293,7 @@
   }
 
   async function refreshJob() {
-    if (busy || !currentJob?.batch) return;
+    if (busy || !(currentJob?.checkpoint?.submitted_at || currentJob?.batch)) return;
     const jobId = currentJob.id;
     setBusy(true);
     showStatus(elements.batchStatus, '正在查询 Gemini 任务状态…');
@@ -279,16 +308,32 @@
   }
 
   async function fetchResults() {
-    if (busy || currentJob?.batch?.state !== 'JOB_STATE_SUCCEEDED') return;
+    if (busy || !(currentJob?.checkpoint?.saved || currentJob?.batch?.state === 'JOB_STATE_SUCCEEDED')) return;
     const jobId = currentJob.id;
     setBusy(true);
     showStatus(elements.downloadStatus, '正在下载并解析 Gemini 结果…');
     try {
       const result = await request(`/api/jobs/${jobId}/fetch`, 'POST');
       await loadJobs(jobId);
-      showStatus(elements.downloadStatus, `已下载 ${result.count} 条结果，其中 ${result.errors} 条失败。可通过下方链接下载。`);
+      showStatus(elements.downloadStatus, `已保存 ${result.count} 页${result.errors ? `；${result.errors} 页失败，可单独重试` : ''}。可通过下方链接下载。`);
     } catch (error) {
       showStatus(elements.downloadStatus, error.message, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryFailed() {
+    if (busy || !currentJob?.checkpoint?.failed) return;
+    const jobId = currentJob.id;
+    setBusy(true);
+    showStatus(elements.batchStatus, '正在将失败页重新排队…');
+    try {
+      const result = await request(`/api/jobs/${jobId}/retry`, 'POST');
+      await loadJobs(jobId);
+      showStatus(elements.batchStatus, `已重新排队 ${result.retried} 页；本地服务将在后台继续处理。`);
+    } catch (error) {
+      showStatus(elements.batchStatus, error.message, true);
     } finally {
       setBusy(false);
     }
@@ -304,8 +349,11 @@
   elements.submitButton.addEventListener('click', submitJob);
   elements.refreshButton.addEventListener('click', refreshJob);
   elements.fetchButton.addEventListener('click', fetchResults);
+  elements.retryButton.addEventListener('click', retryFailed);
   setInterval(() => {
-    if (!busy && currentJob?.batch && !terminalStates.has(currentJob.batch.state)) refreshJob();
+    if (!busy && currentJob?.checkpoint?.submitted_at && currentJob.checkpoint.saved < currentJob.checkpoint.total) {
+      loadJobs(currentJob.id).catch((error) => showStatus(elements.batchStatus, error.message, true));
+    } else if (!busy && currentJob?.batch && !terminalStates.has(currentJob.batch.state)) refreshJob();
   }, 30000);
   Promise.all([loadHealth(), loadJobs()]).catch((error) => {
     showStatus(elements.prepareStatus, error.message, true);

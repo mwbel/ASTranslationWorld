@@ -26,7 +26,9 @@ from gemini_batch_ocr import (
     DEFAULT_MODEL,
     check_status,
     download_results,
+    parse_result_jsonl,
     prepare_jsonl,
+    render_text_results,
     submit_batch,
 )
 
@@ -36,6 +38,8 @@ DEFAULT_DATA_DIR = Path.home() / "Library" / "Application Support" / "TibetanGem
 EXISTING_KEY_POOL = APP_DIR.parent.parent / "ModelAggregatorService" / ".env"
 MAX_BODY_BYTES = 22 * 1024**2
 MAX_PAGE_BYTES = 14 * 1024**2
+MAX_ACTIVE_BATCHES = 8
+POLL_SECONDS = 30
 JOB_ID_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 STATIC_FILES = {
     "/gemini-batch.html": (APP_DIR / "gemini-batch.html", "text/html; charset=utf-8"),
@@ -90,11 +94,27 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
             Path(temporary).unlink(missing_ok=True)
 
 
+def _atomic_bytes(path: Path, value: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as stream:
+            temporary = stream.name
+            stream.write(value)
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary:
+            Path(temporary).unlink(missing_ok=True)
+
+
 class LocalBatchStore:
     def __init__(self, data_dir: Path, *, key_source: str = "未配置"):
         self.data_dir = data_dir.expanduser().resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._wake = threading.Event()
+        self._worker: threading.Thread | None = None
         self.key_source = key_source
 
     def _job_dir(self, job_id: str) -> Path:
@@ -108,6 +128,39 @@ class LocalBatchStore:
     def _meta(self, job_id: str) -> dict[str, Any]:
         return json.loads((self._job_dir(job_id) / "meta.json").read_text(encoding="utf-8"))
 
+    def _workflow(self, directory: Path) -> dict[str, Any]:
+        return json.loads((directory / "workflow.json").read_text(encoding="utf-8"))
+
+    def _write_workflow(self, directory: Path, workflow: dict[str, Any]) -> None:
+        _atomic_json(directory / "workflow.json", workflow)
+
+    def _page_dir(self, directory: Path, page: int) -> Path:
+        return directory / "batch_pages" / f"page-{page:04d}"
+
+    def _attempt_dir(self, directory: Path, page: int, attempt: int) -> Path:
+        return self._page_dir(directory, page) / f"attempt-{attempt:04d}"
+
+    def _checkpoint_summary(self, directory: Path, workflow: dict[str, Any]) -> dict[str, Any]:
+        pages = []
+        for page_text, entry in sorted(workflow["pages"].items(), key=lambda item: int(item[0])):
+            page = int(page_text)
+            cached = (directory / "cache" / f"page-{page:04d}.json").is_file()
+            pages.append({
+                "page": page,
+                "status": "saved" if cached else entry["status"],
+                "attempt": entry.get("attempt", 0),
+                "error": entry.get("error"),
+            })
+        return {
+            "submitted_at": workflow.get("submitted_at"),
+            "total": len(pages),
+            "saved": sum(item["status"] == "saved" for item in pages),
+            "active": sum(item["status"] in {"creating", "submitted", "running"} for item in pages),
+            "failed": sum(item["status"] == "failed" for item in pages),
+            "review": sum(item["status"] == "review" for item in pages),
+            "pages": pages,
+        }
+
     def describe(self, job_id: str) -> dict[str, Any]:
         directory = self._job_dir(job_id)
         meta = self._meta(job_id)
@@ -117,6 +170,8 @@ class LocalBatchStore:
         meta["has_result_txt"] = (directory / "output.txt").is_file()
         state_path = directory / "state.json"
         meta["batch"] = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else None
+        workflow_path = directory / "workflow.json"
+        meta["checkpoint"] = self._checkpoint_summary(directory, self._workflow(directory)) if workflow_path.is_file() else None
         return meta
 
     def list_jobs(self) -> list[dict[str, Any]]:
@@ -193,6 +248,8 @@ class LocalBatchStore:
             meta = self._meta(job_id)
             if (directory / "state.json").exists():
                 raise BatchToolError("任务已提交，不能重新打包。")
+            if (directory / "workflow.json").is_file() and self._workflow(directory).get("submitted_at"):
+                raise BatchToolError("任务已提交，不能重新打包。")
             pages = directory / "pages"
             missing = [page for page in range(1, meta["expected_pages"] + 1) if not (pages / f"page-{page:04d}.jpg").is_file()]
             if missing:
@@ -200,6 +257,13 @@ class LocalBatchStore:
             prompt_path = directory / "prompt.txt"
             prompt_path.write_text(meta["prompt"], encoding="utf-8")
             count = prepare_jsonl(images_dir=pages, prompt_file=prompt_path, output=directory / "input.jsonl", overwrite=True)
+            workflow = {"version": 2, "submitted_at": None, "pages": {}}
+            with (directory / "input.jsonl").open("r", encoding="utf-8") as stream:
+                for page, line in enumerate(stream, start=1):
+                    page_dir = self._page_dir(directory, page)
+                    _atomic_bytes(page_dir / "input.jsonl", line.encode("utf-8"))
+                    workflow["pages"][str(page)] = {"status": "ready", "attempt": 0, "error": None}
+            self._write_workflow(directory, workflow)
             meta["prepared_at"] = _now()
             _atomic_json(directory / "meta.json", meta)
             return {"count": count, "input_bytes": (directory / "input.jsonl").stat().st_size, "job": self.describe(job_id)}
@@ -210,6 +274,14 @@ class LocalBatchStore:
             meta = self._meta(job_id)
             if not (directory / "input.jsonl").is_file():
                 raise BatchToolError("请先生成 JSONL。")
+            if (directory / "workflow.json").is_file():
+                workflow = self._workflow(directory)
+                if workflow.get("submitted_at"):
+                    raise BatchToolError("任务已经提交；请查看逐页状态。")
+                workflow["submitted_at"] = _now()
+                self._write_workflow(directory, workflow)
+                self._wake.set()
+                return self.describe(job_id)
             if (directory / "state.json").exists():
                 raise BatchToolError("任务已经提交；请刷新状态。")
             submit_batch(directory / "input.jsonl", directory / "state.json", model=meta["model"], display_name=meta["title"])
@@ -217,13 +289,207 @@ class LocalBatchStore:
 
     def refresh(self, job_id: str) -> dict[str, Any]:
         directory = self._job_dir(job_id)
+        if (directory / "workflow.json").is_file():
+            self._wake.set()
+            return self.describe(job_id)
         check_status(directory / "state.json")
         return self.describe(job_id)
 
     def fetch(self, job_id: str) -> dict[str, Any]:
         directory = self._job_dir(job_id)
+        if (directory / "workflow.json").is_file():
+            self._rebuild_exports(directory)
+            summary = self._checkpoint_summary(directory, self._workflow(directory))
+            return {"count": summary["saved"], "errors": summary["failed"], "job": self.describe(job_id)}
         rows = download_results(directory / "state.json", output_jsonl=directory / "output.jsonl", output_text=directory / "output.txt")
         return {"count": len(rows), "errors": sum(bool(row.get("error")) for row in rows), "job": self.describe(job_id)}
+
+    def retry_failed(self, job_id: str) -> dict[str, Any]:
+        with self._lock:
+            directory = self._job_dir(job_id)
+            if not (directory / "workflow.json").is_file():
+                raise BatchToolError("该任务不支持逐页重试。")
+            workflow = self._workflow(directory)
+            if not workflow.get("submitted_at"):
+                raise BatchToolError("任务尚未提交。")
+            retried = 0
+            for page_text, entry in workflow["pages"].items():
+                if entry["status"] == "failed" and not (directory / "cache" / f"page-{int(page_text):04d}.json").exists():
+                    entry["status"] = "ready"
+                    entry["error"] = None
+                    retried += 1
+            if not retried:
+                raise BatchToolError("没有可安全重试的失败页；提交结果不明的页需先到 Google 核对。")
+            self._write_workflow(directory, workflow)
+            self._wake.set()
+            return {"retried": retried, "job": self.describe(job_id)}
+
+    def _update_page(self, directory: Path, page: int, **values: Any) -> None:
+        with self._lock:
+            workflow = self._workflow(directory)
+            workflow["pages"][str(page)].update(values)
+            self._write_workflow(directory, workflow)
+
+    def _rebuild_exports(self, directory: Path) -> None:
+        with self._lock:
+            workflow = self._workflow(directory)
+            text_rows: list[dict[str, str | None]] = []
+            raw_rows: list[bytes] = []
+            for page_text in sorted(workflow["pages"], key=int):
+                page = int(page_text)
+                cache_path = directory / "cache" / f"page-{page:04d}.json"
+                if not cache_path.is_file():
+                    continue
+                cache = json.loads(cache_path.read_text(encoding="utf-8"))
+                text_rows.append({"key": f"page-{page:04d}", "text": cache["text"], "error": None})
+                raw_path = self._attempt_dir(directory, page, cache["attempt"]) / "output.jsonl"
+                if raw_path.is_file():
+                    raw_rows.append(raw_path.read_bytes().strip() + b"\n")
+            if text_rows:
+                _atomic_bytes(directory / "output.txt", render_text_results(text_rows).encode("utf-8"))
+                _atomic_bytes(directory / "output.jsonl", b"".join(raw_rows))
+
+    def _submit_page(self, directory: Path, page: int) -> bool:
+        with self._lock:
+            workflow = self._workflow(directory)
+            entry = workflow["pages"][str(page)]
+            if entry["status"] != "ready":
+                return True
+            attempt = int(entry.get("attempt", 0)) + 1
+            entry.update({"status": "creating", "attempt": attempt, "error": None, "last_changed_at": _now()})
+            self._write_workflow(directory, workflow)
+        attempt_dir = self._attempt_dir(directory, page, attempt)
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        state_path = attempt_dir / "state.json"
+        try:
+            meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+            state = submit_batch(
+                self._page_dir(directory, page) / "input.jsonl",
+                state_path,
+                model=meta["model"],
+                display_name=f"{meta['title']} 第 {page} 页",
+            )
+        except Exception as exc:
+            if state_path.is_file():
+                self._update_page(directory, page, status="submitted", error=str(exc))
+            else:
+                self._update_page(
+                    directory, page, status="review",
+                    error=f"提交结果不明（{type(exc).__name__}）。请先在 Google 核对，再决定是否重试。",
+                )
+            return False
+        self._update_page(directory, page, status="submitted", job_name=state["job_name"], error=None)
+        return True
+
+    def _poll_page(self, directory: Path, page: int, attempt: int) -> None:
+        attempt_dir = self._attempt_dir(directory, page, attempt)
+        state_path = attempt_dir / "state.json"
+        try:
+            state = check_status(state_path)
+            status = state["state"]
+            if status == "JOB_STATE_SUCCEEDED":
+                raw_path = attempt_dir / "output.jsonl"
+                if raw_path.is_file():
+                    try:
+                        rows = parse_result_jsonl(raw_path.read_bytes())
+                    except (BatchToolError, UnicodeError):
+                        # A process may have stopped while writing this generated file.
+                        rows = download_results(
+                            state_path, output_jsonl=attempt_dir / "output-recovered.jsonl",
+                            output_text=attempt_dir / "output.txt",
+                        )
+                        os.replace(attempt_dir / "output-recovered.jsonl", raw_path)
+                else:
+                    rows = download_results(
+                        state_path, output_jsonl=attempt_dir / "output-downloading.jsonl",
+                        output_text=attempt_dir / "output.txt",
+                    )
+                    os.replace(attempt_dir / "output-downloading.jsonl", raw_path)
+                expected_key = f"page-{page:04d}"
+                if len(rows) != 1 or rows[0]["key"] != expected_key:
+                    self._update_page(directory, page, status="failed", error="返回结果与当前页不对应。")
+                    return
+                row = rows[0]
+                if row.get("error") or not row.get("text"):
+                    self._update_page(directory, page, status="failed", error=str(row.get("error") or "响应没有可用文字。"))
+                    return
+                _atomic_json(directory / "cache" / f"page-{page:04d}.json", {
+                    "page": page, "text": row["text"], "attempt": attempt,
+                    "job_name": state["job_name"], "saved_at": _now(),
+                })
+                self._rebuild_exports(directory)
+                self._update_page(directory, page, status="saved", error=None)
+            elif status in {"JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"}:
+                self._update_page(directory, page, status="failed", error=str(state.get("error") or status))
+            else:
+                self._update_page(directory, page, status="running", error=None)
+        except Exception as exc:
+            self._update_page(directory, page, error=f"状态检查暂不可用（{type(exc).__name__}）；稍后自动重试。")
+
+    def _pending_job_dirs(self) -> list[Path]:
+        directories = []
+        for path in self.data_dir.iterdir():
+            if path.is_dir() and (path / "workflow.json").is_file():
+                try:
+                    if self._workflow(path).get("submitted_at"):
+                        directories.append(path)
+                except (OSError, ValueError):
+                    continue
+        return sorted(directories, key=lambda path: path.name)
+
+    def process_once(self) -> None:
+        """Advance all submitted jobs once; safe to call after a server restart."""
+        directories = self._pending_job_dirs()
+        for directory in directories:
+            workflow = self._workflow(directory)
+            for page_text, entry in sorted(workflow["pages"].items(), key=lambda item: int(item[0])):
+                page = int(page_text)
+                if (directory / "cache" / f"page-{page:04d}.json").is_file():
+                    if entry["status"] != "saved":
+                        self._rebuild_exports(directory)
+                        self._update_page(directory, page, status="saved", error=None)
+                    continue
+                if entry["status"] == "creating":
+                    state_path = self._attempt_dir(directory, page, int(entry["attempt"])) / "state.json"
+                    if state_path.is_file():
+                        self._update_page(directory, page, status="submitted", error=None)
+                    else:
+                        self._update_page(directory, page, status="review", error="服务中断时提交结果不明；请先在 Google 核对。")
+                elif entry["status"] in {"submitted", "running"}:
+                    self._poll_page(directory, page, int(entry["attempt"]))
+
+        active = sum(
+            self._checkpoint_summary(directory, self._workflow(directory))["active"]
+            for directory in directories
+        )
+        for directory in directories:
+            if active >= MAX_ACTIVE_BATCHES:
+                break
+            workflow = self._workflow(directory)
+            for page_text, entry in sorted(workflow["pages"].items(), key=lambda item: int(item[0])):
+                if active >= MAX_ACTIVE_BATCHES:
+                    break
+                if entry["status"] != "ready":
+                    continue
+                if not self._submit_page(directory, int(page_text)):
+                    break
+                active += 1
+
+    def start_background(self) -> None:
+        if self._worker and self._worker.is_alive():
+            return
+
+        def run() -> None:
+            while True:
+                try:
+                    self.process_once()
+                except Exception as exc:
+                    print(f"Gemini Batch 后台检查失败：{type(exc).__name__}", flush=True)
+                self._wake.wait(POLL_SECONDS)
+                self._wake.clear()
+
+        self._worker = threading.Thread(target=run, name="gemini-batch-checkpoints", daemon=True)
+        self._worker.start()
 
     def download_path(self, job_id: str, kind: str) -> Path:
         directory = self._job_dir(job_id)
@@ -375,6 +641,8 @@ class BatchPageHandler(BaseHTTPRequestHandler):
                     self._json({"job": self.store.refresh(job_id)})
                 elif action == "fetch":
                     self._json(self.store.fetch(job_id))
+                elif action == "retry":
+                    self._json(self.store.retry_failed(job_id))
                 else:
                     self._error(BatchToolError("未知的操作。"), 404)
             else:
@@ -394,6 +662,7 @@ def main() -> None:
     store = LocalBatchStore(args.data_dir, key_source=configure_api_key())
     handler = partial(BatchPageHandler, store=store)
     server = ThreadingHTTPServer((args.host, args.port), handler)
+    store.start_background()
     print(f"Gemini Batch 本地页面：http://{args.host}:{args.port}/gemini-batch.html", flush=True)
     print(f"任务资料目录：{store.data_dir}", flush=True)
     server.serve_forever()

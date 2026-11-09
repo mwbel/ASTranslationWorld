@@ -53,13 +53,17 @@
     .download-links a { color: #205b8c; border: 1px solid #9fb4c4; border-radius: 7px; padding: 9px 12px; font-size: 13px; font-weight: 650; text-decoration: none; }
     .download-links a[hidden] { display: none; }
     .empty { color: #6a7b87; font-size: 13px; line-height: 1.5; }
+    .page-progress { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .page-progress span { border-radius: 6px; padding: 5px 8px; background: #edf2f6; color: #40566a; font-size: 12px; }
+    .page-progress .saved { background: #e5f3e9; color: #23623c; }
+    .page-progress .failed, .page-progress .review { background: #fff0e9; color: #9b3c1b; }
     @media (max-width: 800px) { .shell { grid-template-columns: 1fr; padding: 14px; } aside { position: static; } .job-list { max-height: 150px; } .form-grid, .source-row { grid-template-columns: 1fr; } .preview { width: 100%; max-width: 240px; } .summary { grid-template-columns: 1fr; } section { padding: 16px; } }
   </style>
 </head>
 <body>
   <header>
     <h1>Gemini 4 离线批量识别</h1>
-    <p>选择扫描 PDF 或页图，先在本机生成请求，再提交 Gemini Batch。任务可以关闭页面后继续查询。</p>
+    <p>选择扫描 PDF 或页图，先在本机生成请求，再提交 Gemini Batch。每页完成后自动保存，关闭页面仍会继续处理。</p>
   </header>
   <div class="shell">
     <aside>
@@ -92,17 +96,19 @@
           <div><span>页数</span><strong id="currentPages">—</strong></div>
           <div><span>Gemini 状态</span><strong id="currentState">未提交</strong></div>
         </div>
-        <p class="muted note">“提交到 Gemini”会上传请求文件并创建计费任务。Batch 异步处理期间可以关闭此页面。</p>
+        <p class="muted note">“提交到 Gemini”会逐页创建计费任务，后台最多同时处理 8 页；每页完成后立即保存到本机。Batch 异步处理期间可以关闭此页面。</p>
         <div class="actions">
           <button id="submitButton" class="primary" type="button" disabled>提交到 Gemini（付费）</button>
           <button id="refreshButton" type="button" disabled>刷新状态</button>
+          <button id="retryButton" type="button" disabled>重试失败页（付费）</button>
         </div>
         <p id="batchStatus" class="status" role="status"></p>
+        <div id="pageProgress" class="page-progress" aria-label="逐页处理状态"></div>
       </section>
       <section aria-labelledby="resultTitle">
         <div class="section-head"><span class="step">3</span><h2 id="resultTitle">下载识别结果</h2></div>
-        <p class="muted note">原始结果保留每条请求的 key 与错误；TXT 按页码排序，可直接用于后续校对。</p>
-        <div class="actions"><button id="fetchButton" type="button" disabled>获取完成结果</button></div>
+        <p class="muted note">已完成的页会自动写入本地缓存；TXT 按页码排序，可随时导出当前已保存的结果。失败页修复后会补入导出文件。</p>
+        <div class="actions"><button id="fetchButton" type="button" disabled>更新已缓存结果</button></div>
         <div class="download-links">
           <a id="inputLink" href="#" hidden>下载请求 JSONL</a>
           <a id="jsonlLink" href="#" hidden>下载结果 JSONL</a>
