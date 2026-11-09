@@ -2,6 +2,7 @@ import base64
 import json
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 from pathlib import Path
 import sys
 
@@ -9,6 +10,28 @@ TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 
 import gemini_batch_ocr as batch  # noqa: E402
+
+
+class SubmissionErrorTests(unittest.TestCase):
+    def test_reused_upload_records_rejected_creation_and_redacts_key(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "input.jsonl"
+            source.write_text(json.dumps({"key": "page-0001", "request": {"contents": [{"parts": [{"text": "OCR"}]}]}}) + "\n")
+            client = Mock()
+            error = RuntimeError("denied AIzaSecretExample")
+            error.code = 403
+            client.batches.create.side_effect = error
+            with patch.object(batch, "_sdk_client", return_value=client):
+                with self.assertRaises(batch.BatchToolError):
+                    batch.submit_batch(source, root / "state.json", uploaded_file_name="files/existing")
+            client.files.upload.assert_not_called()
+            self.assertEqual(client.batches.create.call_count, 1)
+            detail = json.loads((root / "submission-error.json").read_text())
+            self.assertEqual(detail["http_code"], 403)
+            self.assertEqual(detail["stage"], "create_batch")
+            self.assertNotIn("AIzaSecretExample", detail["message"])
+            self.assertFalse((root / "state.json").exists())
 
 
 class PrepareJsonlTests(unittest.TestCase):

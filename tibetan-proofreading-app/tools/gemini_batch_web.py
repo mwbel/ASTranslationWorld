@@ -432,12 +432,15 @@ class LocalBatchStore:
                 display_name=f"{meta['title']} 第 {page} 页",
             )
         except Exception as exc:
+            detail_path = state_path.with_name("submission-error.json")
+            detail = json.loads(detail_path.read_text(encoding="utf-8")) if detail_path.is_file() else None
             if state_path.is_file():
                 self._update_page(directory, page, status="submitted", error=str(exc))
             else:
                 self._update_page(
                     directory, page, status="review",
-                    error=f"提交结果不明（{type(exc).__name__}）。请先在 Google 核对，再决定是否重试。",
+                    error=(f"{detail['stage']} 失败（HTTP {detail['http_code']}）：{detail['message']}"
+                           if detail else f"提交结果不明（{type(exc).__name__}）。请先在 Google 核对，再决定是否重试。"),
                 )
             return False
         self._update_page(directory, page, status="submitted", job_name=state["job_name"], error=None)

@@ -275,12 +275,26 @@ def _enum_name(value: Any) -> str:
     return str(getattr(value, "name", value or "UNKNOWN"))
 
 
+def record_submission_error(state_path: Path, exc: Exception, stage: str) -> dict[str, Any]:
+    message = str(exc)
+    for name in ("GEMINI_API_KEY", "GEMINI_API_KEYS", "GOOGLE_API_KEY"):
+        for secret in os.environ.get(name, "").split(","):
+            if secret.strip():
+                message = message.replace(secret.strip(), "[已隐藏的密钥]")
+    message = re.sub(r"AIza[\w-]+", "[已隐藏的密钥]", message)
+    detail = {"stage": stage, "type": type(exc).__name__, "http_code": getattr(exc, "code", None),
+              "message": message[:8000], "recorded_at": datetime.now(timezone.utc).isoformat()}
+    _state_write(state_path.with_name("submission-error.json"), detail)
+    return detail
+
+
 def submit_batch(
     input_jsonl: str | Path,
     state_file: str | Path,
     *,
     model: str = DEFAULT_MODEL,
     display_name: str | None = None,
+    uploaded_file_name: str | None = None,
 ) -> dict[str, Any]:
     input_path = Path(input_jsonl).expanduser().resolve()
     state_path = Path(state_file).expanduser()
@@ -292,17 +306,25 @@ def submit_batch(
     client = _sdk_client()
     from google.genai import types
 
-    uploaded = client.files.upload(
-        file=str(input_path),
-        config=types.UploadFileConfig(display_name=input_path.stem, mime_type="jsonl"),
-    )
-    if not uploaded.name:
-        raise BatchToolError("JSONL 已上传，但 Files API 没有返回文件名，未创建 Batch 任务。")
-    job = client.batches.create(
-        model=model,
-        src=uploaded.name,
-        config={"display_name": display_name or input_path.stem},
-    )
+    stage = "upload"
+    try:
+        if not uploaded_file_name:
+            uploaded = client.files.upload(
+                file=str(input_path),
+                config=types.UploadFileConfig(display_name=input_path.stem, mime_type="jsonl"),
+            )
+            uploaded_file_name = uploaded.name
+        if not uploaded_file_name:
+            raise BatchToolError("Files API 没有返回文件名，未创建 Batch 任务。")
+        _state_write(state_path.with_name("uploaded-file.json"), {"file_name": uploaded_file_name})
+        stage = "create_batch"
+        job = client.batches.create(
+            model=model, src=uploaded_file_name,
+            config={"display_name": display_name or input_path.stem},
+        )
+    except Exception as exc:
+        detail = record_submission_error(state_path, exc, stage)
+        raise BatchToolError(f"{stage} 失败（HTTP {detail['http_code']}）：{detail['message']}") from exc
     if not job.name:
         raise BatchToolError("Batch API 没有返回任务名。请到 AI Studio 核对是否已创建任务。")
     state = {
@@ -310,7 +332,7 @@ def submit_batch(
         "model": model,
         "display_name": display_name or input_path.stem,
         "input_jsonl": str(input_path),
-        "uploaded_file_name": uploaded.name,
+        "uploaded_file_name": uploaded_file_name,
         "state": _enum_name(job.state),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
